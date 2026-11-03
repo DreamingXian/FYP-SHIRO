@@ -1,0 +1,132 @@
+<!-- 4 Quick Metric Cards -->
+      <div class="lab-grid">
+        <!-- Card 1: Heart Rate (BPM) -->
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-header">
+            <span class="card-title">Heart Rate (Pulse)</span>
+            <span style="color: #EF4444; font-size: 18px;">❤️</span>
+          </div>
+          <div class="metric-value" id="val-bpm">-- <span class="metric-unit">BPM</span></div>
+          <div class="metric-unit" id="bpm-status">Waiting for finger touch...</div>
+        </div>
+
+        <!-- Card 2: Blood Oxygen (SpO2) -->
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-header">
+            <span class="card-title">Blood Oxygen (SpO2)</span>
+            <span class="badge badge-live" id="spo2-badge">Standby</span>
+          </div>
+          <div class="metric-value" id="val-spo2">-- <span class="metric-unit">%</span></div>
+          <div class="metric-unit">Normal Range: 95% - 100%</div>
+        </div>
+
+        <!-- Card 3: Kinematic G-Force Vector -->
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-header">
+            <span class="card-title">Kinematic G-Force</span>
+            <span class="badge badge-info" id="g-badge">Normal</span>
+          </div>
+          <div class="metric-value" id="val-g">1.00 <span class="metric-unit">g</span></div>
+          <div class="progress-bar-bg" style="height: 10px; margin-top: 10px;">
+            <div class="progress-bar-fill" id="g-meter" style="width: 33%; background: linear-gradient(90deg, #1E60F2, #6366F1);"></div>
+          </div>
+        </div>
+
+        <!-- Card 4: Sensor Contact Status -->
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-header">
+            <span class="card-title">Sensor Contact Status</span>
+            <span class="badge badge-live" id="finger-badge">No Finger</span>
+          </div>
+          <div class="metric-value" style="font-size: 26px; margin-top: 8px;" id="contact-status">Idle</div>
+          <div class="metric-unit mono" id="raw-ir-preview">IR: 0 | Red: 0</div>
+        </div>
+      </div>
+
+      <!-- Card: Full Width Optical PPG Waveform -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Live Photoplethysmography (PPG) Pulse Stream (Infrared Absorption Waveform)</span>
+          <span style="font-size: 12px; color: var(--text-muted);" id="latency-display">Interval: 0 ms</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="ppgCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Card: Anchor Radio Distance -->
+      <div class="form-grid-2">
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Anchor A (ESP32-E) - Radio Distance</span>
+            <span class="badge badge-live" id="anchor-a-badge">Tracking Active</span>
+          </div>
+          <div class="metric-value" id="val-dist-a">-- <span class="metric-unit">meters</span></div>
+          <div style="display: flex; gap: 16px; margin-top: 8px; font-size: 13px;">
+            <span style="color: var(--status-warning-text); font-weight: 600;">Raw RSSI: <b class="mono" id="val-raw-a">--</b> dBm</span>
+            <span style="color: var(--primary); font-weight: 600;">Kalman Filtered: <b class="mono" id="val-filt-a">--</b> dBm</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Anchor B (ESP32-E) - Radio Distance</span>
+            <span class="badge badge-neutral" id="anchor-b-badge">Standby</span>
+          </div>
+          <div class="metric-value" id="val-dist-b">-- <span class="metric-unit">meters</span></div>
+          <div style="display: flex; gap: 16px; margin-top: 8px; font-size: 13px;">
+            <span style="color: var(--status-warning-text); font-weight: 600;">Raw RSSI: <b class="mono" id="val-raw-b">--</b> dBm</span>
+            <span style="color: var(--primary); font-weight: 600;">Kalman Filtered: <b class="mono" id="val-filt-b">--</b> dBm</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card: Live Kalman Filter Signal Conditioning Comparison Canvas -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <span class="card-title">Linear Kalman Filter Signal Conditioning (Multipath Jitter Suppression)</span>
+            <div style="font-size: 12px; margin-top: 4px; display: flex; gap: 16px;">
+              <span style="color: var(--status-warning-text); font-weight: 600;">── Raw Multipath RSSI (Jittery RF)</span>
+              <span style="color: var(--primary); font-weight: 700;">── EKF Filtered State (Smoothed Estimate)</span>
+            </div>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <label style="font-size: 12px; color: var(--text-secondary); font-weight: 600;">1m Ref (A): 
+              <input type="number" id="input-cal-a" value="-58" style="width: 58px; background: var(--input-bg); border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 4px 6px; font-size: 12px;"> dBm
+            </label>
+            <label style="font-size: 12px; color: var(--text-secondary); font-weight: 600;">Path Loss (n): 
+              <input type="number" id="input-cal-n" value="2.4" step="0.1" style="width: 58px; background: var(--input-bg); border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 4px 6px; font-size: 12px;">
+            </label>
+            <button id="btn-save-cal" class="btn btn-outline btn-sm" style="color: var(--primary); border-color: var(--primary-border);">Save Calibration</button>
+          </div>
+        </div>
+        <div class="canvas-container">
+          <canvas id="rssiCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Card: Real-Time MQTT Telemetry Inspector -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Real-Time MQTT Telemetry Inspector</span>
+          <span style="font-size: 12px; color: var(--text-muted);" id="packet-counter">Packets Received: 0</span>
+        </div>
+        <div class="data-table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Server Timestamp</th>
+                <th>MQTT Topic</th>
+                <th>Decoded Physiological Payload</th>
+                <th>Delivery Status</th>
+              </tr>
+            </thead>
+            <tbody id="log-body">
+              <tr>
+                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Waiting for packets from ESP32-S3 Gateway...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>

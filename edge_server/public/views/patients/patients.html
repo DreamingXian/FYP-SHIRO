@@ -1,0 +1,205 @@
+<!-- ============================================================================= -->
+<!-- SHIRO Hospital Edge Admin - Patients Module                                    -->
+<!-- Inpatient Admission, Photo Management, Bed Sync & Census Directory             -->
+<!-- ============================================================================= -->
+
+<!-- Upper Section: New Patient Admission Form -->
+<div class="card" style="margin-bottom: 24px;">
+  <div class="card-header">
+    <div class="card-title">
+      <span>➕ New Patient Admission &amp; Electronic Registration</span>
+      <span class="badge badge-info" id="adm-next-id-badge">ID: P-001</span>
+      <span class="badge badge-live" style="font-size: 11px;">MySQL Atomic Sync</span>
+    </div>
+    <span style="font-size: 12px; color: var(--text-muted);">Inpatient Registry</span>
+  </div>
+  <div class="card-subtitle">
+    Enroll admitted patient, optionally assign physical bed cubicle, upload clinical identification photo, and configure fall-risk stratification.
+  </div>
+
+  <form id="form-patient-admission" onsubmit="handlePatientAdmission(event)" novalidate>
+    <!-- Centered Larger Photo & Avatar Selection Box -->
+    <div class="photo-uploader-box-center">
+      <div class="photo-preview-avatar-lg" id="adm-photo-preview" title="Patient Face Photo">
+        <img id="adm-photo-img" src="/uploads/patients/preset_elderly_male.svg" alt="Patient Avatar">
+      </div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center;">
+          <label class="btn btn-outline btn-sm" style="cursor: pointer; margin: 0; display: inline-flex; align-items: center; gap: 6px;">
+            <span>📷 Upload Photo</span>
+            <input type="file" id="adm-photo-file" accept="image/*" style="display: none;" onchange="handlePhotoFileUpload(event)">
+          </label>
+          <span style="font-size: 12px; color: var(--text-muted);">or select clinical avatar preset:</span>
+          <div class="photo-preset-row">
+            <button type="button" class="preset-avatar-btn active" title="Elderly Male (Default)" onclick="selectAvatarPreset('/uploads/patients/preset_elderly_male.svg', this)">
+              <img src="/uploads/patients/preset_elderly_male.svg" alt="Elderly Male">
+            </button>
+            <button type="button" class="preset-avatar-btn" title="Elderly Female" onclick="selectAvatarPreset('/uploads/patients/preset_elderly_female.svg', this)">
+              <img src="/uploads/patients/preset_elderly_female.svg" alt="Elderly Female">
+            </button>
+            <button type="button" class="preset-avatar-btn" title="Adult Male" onclick="selectAvatarPreset('/uploads/patients/preset_adult_male.svg', this)">
+              <img src="/uploads/patients/preset_adult_male.svg" alt="Adult Male">
+            </button>
+            <button type="button" class="preset-avatar-btn" title="Adult Female" onclick="selectAvatarPreset('/uploads/patients/preset_adult_female.svg', this)">
+              <img src="/uploads/patients/preset_adult_female.svg" alt="Adult Female">
+            </button>
+          </div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted);">
+          Standard JCI/WHO Patient Identification photo for Meta Quest 3 Bedside MR HUD &amp; Inpatient Safety.
+        </div>
+        <input type="hidden" id="adm-photo-url" value="/uploads/patients/preset_elderly_male.svg">
+      </div>
+    </div>
+
+    <div class="form-grid-2">
+      <!-- Column 1: Demographics -->
+      <div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Patient ID</label>
+            <input type="text" class="form-control mono" id="adm-id" value="P-001" readonly style="background: #F1F5F9; font-weight: 700; color: var(--primary);">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Legal Full Name *</label>
+            <input type="text" class="form-control" id="adm-name" placeholder="e.g. Tan Ah Kow" required oninput="clearValidation(this); handleNameOrDobChange();">
+            <div class="invalid-feedback" id="err-adm-name">Please enter legal full name (at least 2 letters).</div>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">National ID / Passport *</label>
+            <input type="text" class="form-control mono" id="adm-nric" placeholder="e.g. 580512-14-5543" required oninput="clearValidation(this); handleNricInput(this);">
+            <div class="invalid-feedback" id="err-adm-nric">Please enter a valid Malaysian IC or Passport number.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">
+              Date of Birth * <span class="age-badge" id="adm-age-badge">--</span>
+            </label>
+            <input type="date" class="form-control" id="adm-dob" value="" required onchange="clearValidation(this); handleNameOrDobChange();">
+            <div class="invalid-feedback" id="err-adm-dob">Date of birth cannot be a future date.</div>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Biological Sex *</label>
+            <select class="form-control" id="adm-sex" onchange="clearValidation(this); handleSexChange();" required>
+              <option value="" selected>-- Choose Gender --</option>
+              <option value="MALE">Male</option>
+              <option value="FEMALE">Female</option>
+              <option value="OTHER">Other</option>
+            </select>
+            <div class="invalid-feedback" id="err-adm-sex">Please select biological sex.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Emergency Phone *</label>
+            <input type="text" class="form-control" id="adm-phone" placeholder="e.g. +6012-3456789" required oninput="clearValidation(this);">
+            <div class="invalid-feedback" id="err-adm-phone">Please enter a valid phone number (e.g. +6012-3456789).</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Column 2: Clinical Allocation & Fall Risk -->
+      <div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Target Ward Unit</label>
+            <select class="form-control" id="adm-ward" onchange="handleWardSelectionChange()">
+              <option value="">-- None / Unassigned --</option>
+            </select>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">
+              Leave unassigned to register without bed assignment.
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Assigned Bed Cubicle</label>
+            <select class="form-control" id="adm-bed" disabled>
+              <option value="">-- None / Unassigned --</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Clinical Fall Risk Stratification *</label>
+          <div class="radio-pills">
+            <label class="radio-pill-item">
+              <input type="radio" name="fall_risk" value="LOW" checked>
+              <span class="radio-pill-label risk-low">● LOW RISK</span>
+            </label>
+            <label class="radio-pill-item">
+              <input type="radio" name="fall_risk" value="MEDIUM">
+              <span class="radio-pill-label risk-med">● MEDIUM</span>
+            </label>
+            <label class="radio-pill-item">
+              <input type="radio" name="fall_risk" value="HIGH">
+              <span class="radio-pill-label risk-high">● HIGH RISK</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Medical History, Chronic Illnesses &amp; Drug Allergies</label>
+          <textarea class="form-control" id="adm-history" rows="2" placeholder="e.g. Hypertension, Type 2 DM, Sensitive to Penicillin, History of syncope..."></textarea>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 14px;">
+          <button type="button" class="btn btn-outline" onclick="resetAdmissionForm()">Clear Form</button>
+          <button type="submit" class="btn btn-primary" id="btn-submit-admission" onclick="handlePatientAdmission(event)">➕ Register &amp; Admit Patient</button>
+        </div>
+      </div>
+    </div>
+  </form>
+</div>
+
+<!-- Lower Section: Admitted Patients Census Directory -->
+<div class="card">
+  <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+    <div class="card-title">
+      <span>📋 Inpatient Census Directory</span>
+      <span class="badge-num" id="patient-count-badge">0 Admitted</span>
+      <span class="badge badge-neutral" id="discharged-count-badge" style="font-size: 11px;">0 Discharged</span>
+    </div>
+    
+    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+      <!-- Filter Pills -->
+      <div class="filter-pill-group">
+        <button type="button" class="filter-pill active" onclick="setPatientFilter('ALL', this)">All Records</button>
+        <button type="button" class="filter-pill" onclick="setPatientFilter('ADMITTED', this)">Admitted</button>
+        <button type="button" class="filter-pill" onclick="setPatientFilter('DISCHARGED', this)">Discharged</button>
+      </div>
+
+      <!-- Wide Search Input -->
+      <div class="search-input-wrap search-wide">
+        <span class="search-icon">🔍</span>
+        <input type="text" class="form-control" id="patient-search-input" placeholder="Search name, ID, NRIC, bed, or ward..." onkeyup="filterPatientTable()">
+      </div>
+    </div>
+  </div>
+
+  <div class="data-table-container">
+    <table class="data-table" id="patients-table">
+      <thead>
+        <tr>
+          <th>Patient Identity</th>
+          <th>National ID / NRIC</th>
+          <th>Age</th>
+          <th>Sex</th>
+          <th>Assigned Ward &amp; Bed</th>
+          <th>Fall Risk Score</th>
+          <th>Admission Date</th>
+          <th>Status</th>
+          <th style="text-align: right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="patients-table-body">
+        <tr>
+          <td colspan="9" style="text-align: center; padding: 24px; color: var(--text-muted);">
+            Loading patient records from MySQL...
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

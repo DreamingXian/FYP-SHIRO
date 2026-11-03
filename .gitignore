@@ -1,0 +1,55 @@
+# =============================================================================
+# SHIRO Project - Git Ignore Configuration
+# =============================================================================
+
+# Node.js dependencies
+node_modules/
+
+# Environment files and credentials
+.env
+.env.*
+*.local
+
+# Runtime logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary scratch and backup files
+edge_server/scratch/
+*.tmp
+*.bak
+*.swp
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Code Editor configs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Arduino / PlatformIO compile artifacts
+*.hex
+*.bin
+*.elf
+*.o
+*.d
+build/
+
+# Local thesis reports, portfolios, and downloaded research papers
+Documentation/
+*.docx
+*.docx.pdf
+
+# Test / dummy patient upload images (keep default presets & svgs)
+edge_server/public/uploads/patients/*.png
+edge_server/public/uploads/patients/*.jpg
+edge_server/public/uploads/patients/*.jpeg
+!edge_server/public/uploads/patients/default_avatar.svg
+!edge_server/public/uploads/patients/preset_*.svg

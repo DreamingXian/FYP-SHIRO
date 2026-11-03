@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shiro Central Ward Admin | Clinical Modern IoT Dashboard</title>
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Modular CSS Sheets -->
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/modal.css">
+  <link rel="stylesheet" href="/css/ward_canvas.css">
+</head>
+<body>
+
+  <!-- =========================================================================
+       GLOBAL NAVIGATION HEADER (Section 4.4 Global Navigation Header)
+       ========================================================================= -->
+  <header class="global-header">
+    <div class="brand-section">
+      <div class="brand-logo">🏥</div>
+      <div class="brand-title">
+        <h1>SHIRO <span class="sub-title">| Central Ward Admin</span></h1>
+      </div>
+      <div class="server-status-pill">
+        <div class="status-dot" id="global-status-dot"></div>
+        <span id="global-server-text">Connecting to Edge Server...</span>
+      </div>
+    </div>
+
+    <!-- Center Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="nav-tab-btn active" data-tab="tab-patients">📋 PATIENTS</button>
+      <button class="nav-tab-btn" data-tab="tab-devices">📡 DEVICES</button>
+      <button class="nav-tab-btn" data-tab="tab-bindings">🔗 BINDINGS</button>
+      <button class="nav-tab-btn" data-tab="tab-ward-config">📐 WARD CONFIG</button>
+      <button class="nav-tab-btn" data-tab="tab-health">❤️ SYSTEM HEALTH</button>
+      <button class="nav-tab-btn tab-lab" data-tab="tab-live-lab">🧪 LIVE TEST LAB</button>
+    </nav>
+
+    <!-- User Session Badge (Right) -->
+    <div class="user-session-badge">
+      <div class="user-info">
+        <div class="user-name">Dr. Tan (DOC-8821)</div>
+        <div class="user-role">Acute Care Unit (WARD-A1)</div>
+      </div>
+      <div class="user-avatar">DT</div>
+    </div>
+  </header>
+
+  <!-- =========================================================================
+       MAIN TAB CONTENT CONTAINER (Hydrated dynamically by /js/app.js)
+       ========================================================================= -->
+  <main class="app-content">
+    <section class="tab-pane active" id="tab-patients">
+      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Patients Directory...</div>
+    </section>
+
+    <section class="tab-pane" id="tab-devices">
+      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Devices Registry...</div>
+    </section>
+
+    <section class="tab-pane" id="tab-bindings">
+      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Bindings Manager...</div>
+    </section>
+
+    <section class="tab-pane" id="tab-ward-config">
+      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Ward Architecture...</div>
+    </section>
+
+    <section class="tab-pane" id="tab-health">
+      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading System Diagnostics...</div>
+    </section>
+
+    <section class="tab-pane" id="tab-live-lab">
+      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Live Telemetry Lab...</div>
+    </section>
+  </main>
+
+  <!-- =========================================================================
+       CUSTOM CLINICAL MODAL DIALOG & TOAST NOTIFICATION ROOT
+       ========================================================================= -->
+  <div class="modal-backdrop" id="custom-modal-backdrop">
+    <div class="modal-box" id="custom-modal-box">
+      <button class="modal-close-btn" id="modal-btn-close" title="Close dialog">&times;</button>
+      <div class="modal-header-custom">
+        <div class="modal-icon icon-info" id="modal-icon">ℹ️</div>
+        <div>
+          <div class="modal-title-custom" id="modal-title">Notification</div>
+        </div>
+      </div>
+      <div class="modal-body-custom" id="modal-body">
+        Modal message goes here.
+      </div>
+      <div class="modal-footer-custom">
+        <button class="btn btn-outline btn-sm" id="modal-btn-cancel" style="display: none;">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="modal-btn-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container" id="custom-toast-container"></div>
+
+  <!-- =========================================================================
+       MODULAR SCRIPTS (MVC Client Controllers & SPA Router)
+       ========================================================================= -->
+  <script src="/js/modal.js?v=3.3"></script>
+  <script src="/js/ws_client.js?v=3.3"></script>
+  <script src="/js/ward_config/ward_canvas.js?v=3.3"></script>
+  <script src="/js/ward_config/ward_controller.js?v=3.3"></script>
+  <script src="/js/patients/patients_controller.js?v=3.3"></script>
+  <script src="/js/devices/devices_controller.js?v=3.3"></script>
+  <script src="/js/bindings/bindings_controller.js?v=3.3"></script>
+  <script src="/js/live_lab/live_lab_charts.js?v=3.3"></script>
+  <script src="/js/app.js?v=3.3"></script>
+</body>
+</html>

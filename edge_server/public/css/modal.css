@@ -1,0 +1,188 @@
+/* =============================================================================
+   SHIRO Clinical Modern Modal Dialog & Toast System
+   ============================================================================= */
+.modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(5px);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  overflow-y: auto;
+}
+
+.modal-backdrop.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.modal-box {
+  background: #FFFFFF;
+  border-radius: 16px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35), 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border);
+  width: 95%;
+  max-width: 760px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 28px;
+  position: relative;
+  box-sizing: border-box;
+  transform: scale(0.96) translateY(8px);
+  transition: transform 0.2s ease;
+}
+
+.modal-box.modal-wide {
+  max-width: 980px;
+}
+
+.modal-close-btn {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  background: #F1F5F9;
+  border: 1px solid var(--border);
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.modal-close-btn:hover {
+  background: #E2E8F0;
+  color: #0F172A;
+  border-color: #CBD5E1;
+}
+
+.modal-backdrop.active .modal-box {
+  transform: scale(1) translateY(0);
+}
+
+.modal-header-custom {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.modal-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.modal-icon.icon-success { background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; }
+.modal-icon.icon-danger  { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+.modal-icon.icon-warning { background: #FFFBEB; color: #D97706; border: 1px solid #FDE68A; }
+.modal-icon.icon-info    { background: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; }
+
+.modal-title-custom {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.modal-body-custom {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 16px;
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 6px;
+  white-space: normal;
+}
+
+/* Custom scrollbar for modal body */
+.modal-body-custom::-webkit-scrollbar {
+  width: 6px;
+}
+.modal-body-custom::-webkit-scrollbar-track {
+  background: #F1F5F9;
+  border-radius: 4px;
+}
+.modal-body-custom::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+.modal-body-custom::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+.modal-footer-custom {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+/* Floating Toast Notification */
+.toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast-pill {
+  pointer-events: auto;
+  background: #FFFFFF;
+  border-radius: 12px;
+  padding: 12px 18px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transform: translateX(120%);
+  opacity: 0;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  min-width: 280px;
+  max-width: 440px;
+}
+
+.toast-pill.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.toast-pill.toast-success { border-left: 5px solid #059669; }
+.toast-pill.toast-danger  { border-left: 5px solid #DC2626; }
+.toast-pill.toast-info    { border-left: 5px solid #2563EB; }
+.toast-pill.toast-warning { border-left: 5px solid #D97706; }
+

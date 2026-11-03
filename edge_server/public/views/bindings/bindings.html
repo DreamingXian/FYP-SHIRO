@@ -1,0 +1,122 @@
+<!-- Upper Section: 2-Column Pairing Wizard -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🔗 Patient-to-Wristband Pairing Wizard</span>
+            <span class="badge badge-info">Step-by-Step Assignment</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-muted);">Establishes Real-Time Telemetry & Spatial Linking</span>
+        </div>
+        <div class="card-subtitle">Select an admitted patient without a tracker, pair with a verified Standby wristband, and activate tracking across the Edge Server and Meta Quest 3.</div>
+
+        <form onsubmit="handleBindingSubmit(event)">
+          <div class="form-grid-2">
+            <!-- Step 1: Select Admitted Patient -->
+            <div style="background: var(--input-bg); border: 1px solid var(--border); padding: 20px; border-radius: 12px;">
+              <div style="font-weight: 700; font-size: 12px; color: var(--primary); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">STEP 1: SELECT ADMITTED PATIENT</div>
+              <div class="form-group">
+                <label class="form-label">Active Unbound Patients</label>
+                <select class="form-control" id="bind-patient-select" onchange="updateBindingPatientPreview()">
+                  <option value="P-102">P-102: Siti Nurhaliza (Bed 2)</option>
+                  <option value="P-104">P-104: Wong Wai Keat (Bed 4)</option>
+                </select>
+              </div>
+
+              <!-- Patient Preview Card -->
+              <div id="binding-patient-preview" style="background: #FFFFFF; border: 1px solid var(--border); padding: 14px; border-radius: 10px; margin-top: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+                <div style="display: flex; gap: 12px; align-items: center;">
+                  <div class="patient-thumb" style="width: 44px; height: 44px; font-size: 15px;">SN</div>
+                  <div>
+                    <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;" id="prev-patient-name">Siti Nurhaliza</div>
+                    <div style="font-size: 12px; color: var(--text-muted);" id="prev-patient-meta">ID: P-102 | Bed: BED-A1-02 | Age: 54 / F</div>
+                    <div style="margin-top: 6px;"><span class="badge badge-warning" id="prev-patient-risk">● MEDIUM FALL RISK</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 2: Select Available Wristband Tag -->
+            <div style="background: var(--input-bg); border: 1px solid var(--border); padding: 20px; border-radius: 12px;">
+              <div style="font-weight: 700; font-size: 12px; color: var(--primary); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">STEP 2: SELECT AVAILABLE STANDBY WRISTBAND</div>
+              <div class="form-group">
+                <label class="form-label">Hardware Tags in Standby Mode</label>
+                <select class="form-control" id="bind-tag-select">
+                  <option value="TAG-C6-03">TAG-C6-03 (MAC: A4:CF:12:01:F8:2D) - 100% Battery</option>
+                  <option value="TAG-C6-05">TAG-C6-05 (MAC: A4:CF:12:01:F8:32) - 95% Battery</option>
+                </select>
+              </div>
+
+              <!-- Tag Preview Card -->
+              <div style="background: #FFFFFF; border: 1px solid var(--border); padding: 14px; border-radius: 10px; margin-top: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <div style="font-weight: 700; color: var(--text-primary);">Seeed Studio XIAO ESP32-C6</div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Firmware: FW-1.2.4 | Status: Standby</div>
+                  </div>
+                  <div style="text-align: right;">
+                    <span class="badge badge-live">100% CHARGED</span>
+                    <div style="font-size: 11px; font-weight: 600; color: var(--status-success-text); margin-top: 4px;">Signal: -54 dBm (Ready)</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+            <button type="submit" class="btn btn-primary" style="padding: 11px 24px; font-size: 14px;">
+              🔗 Confirm & Bind Wristband to Patient
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Lower Section: Active Patient Bindings Directory -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📡 Active Patient Monitoring Sessions (Ward-A1)</span>
+            <span class="badge-num" id="active-binding-count">2 Active Streams</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-muted);">Broadcasting at 10 Hz over WebSockets</span>
+        </div>
+
+        <div class="data-table-container">
+          <table class="data-table" id="bindings-table">
+            <thead>
+              <tr>
+                <th>Bed Cubicle</th>
+                <th>Patient Name & ID</th>
+                <th>Paired Wristband MAC</th>
+                <th>Stream Rate</th>
+                <th>Bound Since</th>
+                <th>Bound By</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="bindings-table-body">
+              <tr>
+                <td><span class="badge badge-info">BED-A1-01</span></td>
+                <td><b style="color: var(--text-primary);">Tan Ah Kow</b> <span class="mono" style="color: var(--primary); font-size: 11px; font-weight: 600;">(P-101)</span></td>
+                <td><span class="mono" style="color: var(--text-secondary);">A4:CF:12:01:F8:2C</span> <span class="badge badge-neutral" style="margin-left: 6px;">TAG-C6-01</span></td>
+                <td><span class="badge badge-live">● 5 Hz Stream Active</span></td>
+                <td style="color: var(--text-secondary);">2026-10-24 09:40 (7d active)</td>
+                <td style="color: var(--text-muted); font-weight: 500;">DOC-8821</td>
+                <td>
+                  <button class="btn btn-danger-outline btn-sm" onclick="unbindTag(this, 'Tan Ah Kow')">Unbind Tag</button>
+                </td>
+              </tr>
+              <tr>
+                <td><span class="badge badge-info">BED-A1-03</span></td>
+                <td><b style="color: var(--text-primary);">Kavitha Mohan</b> <span class="mono" style="color: var(--primary); font-size: 11px; font-weight: 600;">(P-103)</span></td>
+                <td><span class="mono" style="color: var(--text-secondary);">C4:DE:E2:10:01:AA</span> <span class="badge badge-neutral" style="margin-left: 6px;">TAG-C6-02</span></td>
+                <td><span class="badge badge-live">● 5 Hz Stream Active</span></td>
+                <td style="color: var(--text-secondary);">2026-10-26 11:15 (5d active)</td>
+                <td style="color: var(--text-muted); font-weight: 500;">NURSE-4412</td>
+                <td>
+                  <button class="btn btn-danger-outline btn-sm" onclick="unbindTag(this, 'Kavitha Mohan')">Unbind Tag</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>

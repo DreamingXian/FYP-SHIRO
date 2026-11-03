@@ -1,0 +1,141 @@
+<!-- =============================================================================
+     SHIRO Hospital Edge Server - Hardware Fleet Registry & Discovery Radar
+     ============================================================================= -->
+
+<div class="view-container">
+
+  <!-- Section 1: Live Hardware Discovery Radar -->
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+      <div>
+        <div class="card-title">
+          <span>📡 Live Hardware Discovery Radar</span>
+          <span class="badge badge-live" id="radar-status-badge">● MQTT Scanner Active</span>
+        </div>
+        <div class="card-subtitle" style="margin-top: 4px;">
+          Real-time detection of unprovisioned ESP32 wearable tags, BLE wall anchors, and edge gateways transmitting on
+          the ward network.
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="btn btn-outline btn-sm" onclick="refreshDiscoveryRadar()"
+          title="Scan for newly detected broadcasting hardware">
+          🔍 Refresh Radar
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="openManualEnrollModal()">
+          ➕ Manually Add Device
+        </button>
+      </div>
+    </div>
+
+    <div class="data-table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Physical MAC Address</th>
+            <th>Detected Model</th>
+            <th>Type</th>
+            <th>Link Protocol</th>
+            <th>Battery / Power</th>
+            <th>First Detected</th>
+            <th style="text-align: right;">Enrollment</th>
+          </tr>
+        </thead>
+        <tbody id="unprovisioned-table-body">
+          <tr>
+            <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">
+              Scanning hospital RF spectrum for unprovisioned devices...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Section 2: Enrolled Hardware Inventory Fleet -->
+  <div class="card">
+    <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+      <div>
+        <div class="card-title">
+          <span>📦 Registered Hardware Inventory Fleet</span>
+          <span class="badge badge-neutral" id="fleet-count-badge">0 Devices</span>
+        </div>
+        <div class="card-subtitle" style="margin-top: 4px;">
+          Active hardware nodes mapped in MySQL database across hospital fleet.
+        </div>
+      </div>
+
+      <!-- Live Category Filter Pills -->
+      <div class="filter-pills" style="margin-left: auto;">
+        <button class="filter-pill active" onclick="setDeviceTypeFilter('ALL', this)" id="filter-pill-all">All Nodes
+          (0)</button>
+        <button class="filter-pill" onclick="setDeviceTypeFilter('WRISTBAND', this)" id="filter-pill-wristband">🛏️
+          Wristbands (0)</button>
+        <button class="filter-pill" onclick="setDeviceTypeFilter('ANCHOR', this)" id="filter-pill-anchor">📡 Anchors
+          (0)</button>
+        <button class="filter-pill" onclick="setDeviceTypeFilter('EDGE_NODE', this)" id="filter-pill-edgenode">🌐 Edge
+          Nodes (0)</button>
+        <button class="filter-pill" onclick="setDeviceTypeFilter('HEADSET', this)" id="filter-pill-headset">🥽 Headsets
+          (0)</button>
+      </div>
+    </div>
+
+    <!-- Search & Quick Metrics Toolbar -->
+    <div style="display: flex; gap: 12px; margin-bottom: 16px; align-items: center; padding: 0 4px; flex-wrap: wrap;">
+      <div style="flex: 1; min-width: 280px; max-width: 520px;">
+        <input style="width: 100%;" type="text" class="form-control" id="device-search-input"
+          placeholder="🔍 Search by Device ID, MAC, Model, Ward..."
+          oninput="filterDevicesTable()">
+      </div>
+      
+      <!-- Operating Status Filter Buttons -->
+      <div style="display: flex; gap: 6px; align-items: center; margin-left: auto;">
+        <button type="button" class="badge-filter-btn badge-filter-online" id="filter-btn-online" onclick="toggleStatusFilter('ONLINE')" title="Toggle filter: Online devices">
+          ● <span id="stat-online-count">0</span> Online
+        </button>
+        <button type="button" class="badge-filter-btn badge-filter-offline" id="filter-btn-offline" onclick="toggleStatusFilter('OFFLINE')" title="Toggle filter: Offline devices">
+          ● <span id="stat-offline-count">0</span> Offline
+        </button>
+
+        <!-- Divider -->
+        <div style="width: 1px; height: 18px; background: var(--border); margin: 0 4px;"></div>
+
+        <!-- Availability Status Filter Buttons -->
+        <button type="button" class="badge-filter-btn badge-filter-available" id="filter-btn-available" onclick="toggleAvailFilter('AVAILABLE')" title="Toggle filter: Available devices">
+          ✓ <span id="stat-avail-count">0</span> Available
+        </button>
+        <button type="button" class="badge-filter-btn badge-filter-inuse" id="filter-btn-inuse" onclick="toggleAvailFilter('IN_USE')" title="Toggle filter: In-Use devices">
+          🔄 <span id="stat-inuse-count">0</span> In Use
+        </button>
+        <button type="button" class="badge-filter-btn badge-filter-unavailable" id="filter-btn-unavailable" onclick="toggleAvailFilter('UNAVAILABLE')" title="Toggle filter: Not Available devices">
+          ⚠️ <span id="stat-unavail-count">0</span> Not Available
+        </button>
+      </div>
+    </div>
+
+    <div class="data-table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Device Identifier</th>
+            <th>Category</th>
+            <th>Physical MAC &amp; IP</th>
+            <th>Hardware &amp; Firmware</th>
+            <th>Battery / Power</th>
+            <th>Operating</th>
+            <th>Availability</th>
+            <th style="text-align: right;">Fleet Actions</th>
+          </tr>
+        </thead>
+        <tbody id="devices-table-body">
+          <tr>
+            <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 32px;">
+              Loading hardware inventory from MySQL...
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>

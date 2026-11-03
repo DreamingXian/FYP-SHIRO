@@ -1,0 +1,58 @@
+<div id="ward-directory-view">
+        <!-- Top Directory Controls Card -->
+        <div class="card" style="margin-bottom: 20px; padding: 18px 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div>
+              <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 10px;">
+                <span>🏥 Central Hospital Ward Directory</span>
+                <span class="badge badge-info" id="ward-total-count">Loading Wards...</span>
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                Architectural room layouts, obstacle cutouts, stationary BLE anchor fleets, and hospital beds fleet stored in MySQL.
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <div class="search-input-wrap" style="max-width: 280px;">
+                <span class="search-icon">🔍</span>
+                <input type="text" class="form-control" id="ward-search-input" placeholder="Search by Ward ID or Title..." oninput="filterWardDirectory()">
+              </div>
+              <button class="btn btn-outline btn-sm" onclick="loadWardDirectory()">🔄 Refresh</button>
+              <button class="btn btn-primary" style="padding: 9px 18px; font-size: 13px;" onclick="createNewWard()">➕ Create New Ward</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Directory Table Card -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">
+              <span>📋 All Configured Hospital Wards</span>
+              <span class="badge badge-live">● MySQL Persistent Storage</span>
+            </div>
+            <span style="font-size: 12px; color: var(--text-muted);">Click "Configure Layout" to enter interactive 2D floor plan editor</span>
+          </div>
+
+          <div class="data-table-container">
+            <table class="data-table" id="wards-directory-table">
+              <thead>
+                <tr>
+                  <th>Ward ID</th>
+                  <th>Room Title</th>
+                  <th>Dimensions (L × W × H)</th>
+                  <th>Door Placement</th>
+                  <th>Beds Fleet</th>
+                  <th>BLE Anchors</th>
+                  <th>Obstacles / Cutouts</th>
+                  <th>Spatial Anchor UUID</th>
+                  <th>Last Updated</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="wards-table-body">
+                <!-- Populated dynamically via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>

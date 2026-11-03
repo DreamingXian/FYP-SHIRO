@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <linearGradient id="bg-em" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="50" fill="url(#bg-em)" />
+  <!-- Hair: Grey elderly -->
+  <path d="M 28 42 C 28 22, 72 22, 72 42 C 72 45, 68 47, 68 47 C 64 30, 36 30, 32 47 Z" fill="#E2E8F0" />
+  <!-- Face -->
+  <circle cx="50" cy="46" r="18" fill="#FBD38D" />
+  <!-- Eyeglasses -->
+  <circle cx="43" cy="45" r="5.5" fill="none" stroke="#334155" stroke-width="1.8" />
+  <circle cx="57" cy="45" r="5.5" fill="none" stroke="#334155" stroke-width="1.8" />
+  <line x1="48.5" y1="45" x2="51.5" y2="45" stroke="#334155" stroke-width="1.8" />
+  <!-- Eyes -->
+  <circle cx="43" cy="45" r="1.5" fill="#1E293B" />
+  <circle cx="57" cy="45" r="1.5" fill="#1E293B" />
+  <!-- Smile -->
+  <path d="M 45 54 Q 50 58 55 54" fill="none" stroke="#9A3412" stroke-width="1.5" stroke-linecap="round" />
+  <!-- Body/Hospital Gown -->
+  <path d="M 24 88 C 24 68, 76 68, 76 88 Z" fill="#E0F2FE" />
+  <path d="M 45 68 L 50 78 L 55 68 Z" fill="#BAE6FD" />
+</svg>
+

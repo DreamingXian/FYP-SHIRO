@@ -1,0 +1,128 @@
+<!-- Top Tier: Core Services Health Cards -->
+      <div class="form-grid-3" style="margin-bottom: 24px;">
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-header">
+            <span class="card-title">MQTT Broker (Aedes)</span>
+            <span class="badge badge-live">ONLINE</span>
+          </div>
+          <div style="font-size: 26px; font-weight: 700; color: var(--text-primary);">Port 1883</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">Throughput: 12.4 msgs/sec · 0 dropped</div>
+          <div class="progress-bar-bg" style="margin-top: 12px;"><div class="progress-bar-fill" style="width: 28%; background: var(--status-success-text);"></div></div>
+        </div>
+
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-header">
+            <span class="card-title">WebSocket Bridge</span>
+            <span class="badge badge-live">HEALTHY</span>
+          </div>
+          <div style="font-size: 26px; font-weight: 700; color: var(--text-primary);">Port 3000</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">Connected Clients: 2 (Web + HMD)</div>
+          <div class="progress-bar-bg" style="margin-top: 12px;"><div class="progress-bar-fill" style="width: 15%; background: var(--primary);"></div></div>
+        </div>
+
+        <div class="card" style="margin-bottom: 0;">
+          <div class="card-header">
+            <span class="card-title">Database Storage Core</span>
+            <span class="badge badge-live">NORMAL</span>
+          </div>
+          <div style="font-size: 26px; font-weight: 700; color: var(--text-primary);">Synchronized</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">MySQL + InfluxDB Time-Series Buffers</div>
+          <div class="progress-bar-bg" style="margin-top: 12px;"><div class="progress-bar-fill" style="width: 42%; background: var(--status-success-text);"></div></div>
+        </div>
+      </div>
+
+      <!-- Middle Tier: Live BLE Anchor Reception Diagnostic Matrix -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>📡 Live BLE Anchor RF Reception Diagnostic Matrix</span>
+            <span class="badge badge-info">Multipath Filter Diagnostics</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-muted);">Real-time RSSI Convergence Status</span>
+        </div>
+
+        <div class="data-table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Anchor ID</th>
+                <th>Hardware / LAN IP</th>
+                <th>Raw Signal (dBm)</th>
+                <th>Kalman Filtered State</th>
+                <th>Calculated Distance</th>
+                <th>Filter Status</th>
+                <th>Last Update</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b style="color: var(--primary);">anchor-A</b></td>
+                <td class="mono" style="color: var(--text-secondary);">ESP32-WROOM-32E (192.168.100.56)</td>
+                <td class="mono" style="color: var(--status-warning-text); font-weight: 600;" id="health-raw-a">-58 dBm</td>
+                <td class="mono" style="color: var(--primary); font-weight: 700;" id="health-filt-a">-58.2 dBm</td>
+                <td><span style="font-weight: 700; color: var(--text-primary);" id="health-dist-a">1.02 m</span></td>
+                <td><span class="badge badge-live" id="health-badge-a">● LOCKED / TRACKING</span></td>
+                <td style="color: var(--text-muted);" id="health-time-a">Just now</td>
+              </tr>
+              <tr>
+                <td><b style="color: var(--primary);">anchor-B</b></td>
+                <td class="mono" style="color: var(--text-secondary);">ESP32-WROOM-32E (Standby)</td>
+                <td class="mono" style="color: var(--text-overline);">-- dBm</td>
+                <td class="mono" style="color: var(--text-overline);">-- dBm</td>
+                <td><span style="color: var(--text-overline);">-- m</span></td>
+                <td><span class="badge badge-neutral">STANDBY / NO BEACON</span></td>
+                <td style="color: var(--text-muted);">Awaiting second board</td>
+              </tr>
+              <tr>
+                <td><b style="color: var(--primary);">anchor-C</b></td>
+                <td class="mono" style="color: var(--text-secondary);">ESP32-WROOM-32E (Standby)</td>
+                <td class="mono" style="color: var(--text-overline);">-- dBm</td>
+                <td class="mono" style="color: var(--text-overline);">-- dBm</td>
+                <td><span style="color: var(--text-overline);">-- m</span></td>
+                <td><span class="badge badge-neutral">STANDBY / NO BEACON</span></td>
+                <td style="color: var(--text-muted);">Awaiting third board</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Lower Tier: Active Mixed Reality Headset Sessions -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🥽 Active Mixed Reality (MR) Headset Sessions</span>
+            <span class="badge badge-live">1 Connected</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-muted);">Meta Horizon OS / OpenXR Engine</span>
+        </div>
+
+        <div class="data-table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Headset Client ID</th>
+                <th>Hardware Model</th>
+                <th>Assigned LAN IP</th>
+                <th>Latency</th>
+                <th>Render Rate</th>
+                <th>Spatial Anchor State</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b style="color: var(--text-primary);">QUEST-3-CLINICAL-01</b></td>
+                <td>Meta Quest 3 (128GB)</td>
+                <td class="mono" style="color: var(--text-secondary);">192.168.100.82</td>
+                <td><span style="color: var(--status-success-text); font-weight: 600;">14 ms</span></td>
+                <td><span class="badge badge-live">72 FPS Passthrough</span></td>
+                <td><span class="badge badge-info">Door Ref Locked</span></td>
+                <td>
+                  <button class="btn btn-outline btn-sm" onclick="alert('Ping packet sent to Meta Quest 3 headset.')">📡 Ping Headset</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
