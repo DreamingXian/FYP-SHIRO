@@ -54,8 +54,9 @@
         const isAssignedOtherWard = dev.assigned_ward_id && dev.assigned_ward_id !== currentWard.ward_id;
         if (isAssignedOtherWard && dev.device_id !== selectedDeviceId) return;
 
-        // Skip if marked NOT_AVAILABLE unless selected in this slot
-        if (dev.availability_status === 'NOT_AVAILABLE' && dev.device_id !== selectedDeviceId) return;
+        // Skip if marked UNAVAILABLE / NOT_AVAILABLE unless selected in this slot
+        const isUnavailable = dev.availability_status === 'UNAVAILABLE' || dev.availability_status === 'NOT_AVAILABLE' || dev.availability_status === 'MAINTENANCE';
+        if (isUnavailable && dev.device_id !== selectedDeviceId) return;
 
         // Skip if in use by another ward
         if (dev.availability_status === 'IN_USE' && dev.assigned_ward_id !== currentWard.ward_id && dev.device_id !== selectedDeviceId) return;
@@ -1074,6 +1075,31 @@
     }
 
     function saveWardConfiguration() {
+      // 1. Explicitly sync room meta, dimensions, and door
+      syncWardMeta();
+      syncWardDimensions();
+      syncWardDoor();
+
+      // 2. Explicitly scan each anchor row in DOM table to guarantee currentWard.anchors matches dropdowns
+      const anchorSelects = document.querySelectorAll('.anchor-hardware-select');
+      anchorSelects.forEach(sel => {
+        const idx = parseInt(sel.getAttribute('data-slot-index'), 10);
+        if (!isNaN(idx) && currentWard.anchors && currentWard.anchors[idx]) {
+          const selectedId = (sel.value || '').trim() || null;
+          currentWard.anchors[idx].device_id = selectedId;
+          if (selectedId) {
+            const dev = cachedRegisteredAnchors.find(d => d.device_id === selectedId);
+            if (dev) {
+              currentWard.anchors[idx].mac_address = dev.mac_address || '';
+              currentWard.anchors[idx].status = dev.status || 'OFFLINE';
+            }
+          } else {
+            currentWard.anchors[idx].mac_address = '';
+            currentWard.anchors[idx].status = 'STANDBY';
+          }
+        }
+      });
+
       const actionText = isCreatingNew ? 'Create New Ward' : 'Save Changes';
       const bedCount = Array.isArray(currentWard.beds) ? currentWard.beds.length : 0;
       const anchorCount = Array.isArray(currentWard.anchors) ? currentWard.anchors.length : 0;
