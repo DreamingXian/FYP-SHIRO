@@ -29,13 +29,14 @@ async function initializeApp() {
       loadViewPartial('tab-devices', '/views/devices/devices.html'),
       loadViewPartial('tab-bindings', '/views/bindings/bindings.html'),
       (async () => {
-        const [dirHtml, editHtml] = await Promise.all([
+        const [dirHtml, editHtml, liveMapHtml] = await Promise.all([
           fetch(`/views/ward_config/ward_directory.html?_t=${Date.now()}`).then(r => r.text()),
-          fetch(`/views/ward_config/ward_editor.html?_t=${Date.now()}`).then(r => r.text())
+          fetch(`/views/ward_config/ward_editor.html?_t=${Date.now()}`).then(r => r.text()),
+          fetch(`/views/ward_config/ward_live_map.html?_t=${Date.now()}`).then(r => r.text())
         ]);
         const wardContainer = document.getElementById('tab-ward-config');
         if (wardContainer) {
-          wardContainer.innerHTML = dirHtml + '\n' + editHtml;
+          wardContainer.innerHTML = dirHtml + '\n' + editHtml + '\n' + liveMapHtml;
         }
       })(),
       loadViewPartial('tab-health', '/views/health/health.html'),

@@ -34,3 +34,4 @@ async function handleBindingRoutes(pathname, req, res, parsedUrl, body) {
 module.exports = {
   handleBindingRoutes
 };
+

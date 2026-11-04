@@ -9,8 +9,13 @@ function showModal({
   type = 'info',
   confirmText = 'Confirm',
   cancelText = null,
+  extraButtonText = null,
+  extraButtonClass = 'btn btn-outline btn-sm',
+  extraButtonDisabled = false,
+  extraButtonTitle = null,
   onConfirm = null,
-  onCancel = null
+  onCancel = null,
+  onExtra = null
 }) {
   const backdrop = document.getElementById('custom-modal-backdrop');
   const box = document.getElementById('custom-modal-box');
@@ -19,6 +24,7 @@ function showModal({
   const iconEl = document.getElementById('modal-icon');
   const btnConfirm = document.getElementById('modal-btn-confirm');
   const btnCancel = document.getElementById('modal-btn-cancel');
+  const btnExtra = document.getElementById('modal-btn-extra');
   const btnClose = document.getElementById('modal-btn-close');
 
   if (!backdrop) return;
@@ -61,11 +67,32 @@ function showModal({
     btnCancel.style.display = 'none';
   }
 
+  if (extraButtonText && btnExtra) {
+    btnExtra.style.display = 'inline-block';
+    btnExtra.innerText = extraButtonText;
+    btnExtra.className = extraButtonClass || 'btn btn-outline btn-sm';
+    btnExtra.disabled = !!extraButtonDisabled;
+    if (extraButtonTitle) {
+      btnExtra.title = extraButtonTitle;
+    } else {
+      btnExtra.removeAttribute('title');
+    }
+    btnExtra.onclick = () => {
+      if (extraButtonDisabled) return;
+      close();
+      if (onExtra) onExtra();
+    };
+  } else if (btnExtra) {
+    btnExtra.style.display = 'none';
+    btnExtra.onclick = null;
+  }
+
   const close = () => {
     backdrop.classList.remove('active');
     if (box) box.classList.remove('modal-wide');
     btnConfirm.onclick = null;
     btnCancel.onclick = null;
+    if (btnExtra) btnExtra.onclick = null;
     if (btnClose) btnClose.onclick = null;
   };
 

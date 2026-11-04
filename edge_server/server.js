@@ -7,6 +7,7 @@ const { testAndInitDatabase } = require('./database/db');
 const { handleRequest } = require('./routes/index');
 const { startMqttBroker } = require('./services/mqtt_service');
 const { initWebSocketServer } = require('./services/websocket_service');
+const ipsService = require('./services/ips_service');
 
 async function bootstrap() {
   console.log('\n======================================================');
@@ -16,6 +17,7 @@ async function bootstrap() {
   // 1. Connect and initialize MySQL Database schema & seed data
   console.log('[DATABASE] Connecting to MySQL Database...');
   await testAndInitDatabase();
+  await ipsService.reloadWardAnchorsCache();
 
   // 2. Start Aedes MQTT Broker on TCP 1883
   await startMqttBroker(config.MQTT_PORT);

@@ -1,0 +1,209 @@
+<!-- =========================================================================
+     WARD LIVE 2D INDOOR POSITIONING SYSTEM (IPS) VIEW
+     Split Layout: Left Control & Patient Vitals Panel + Right Live 2D Canvas
+     ========================================================================= -->
+<div id="ward-live-map-view" style="display: none;">
+  <!-- Top Navigation & Status Bar -->
+  <div class="card" style="margin-bottom: 18px; padding: 14px 22px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <span style="font-size: 17px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+          <span>🗺️ Live Ward Indoor Positioning (IPS)</span>
+        </span>
+        <span class="badge badge-info" id="live-map-ward-badge" style="font-weight: 700;">WARD-004</span>
+        <span class="badge badge-live" id="live-map-anchors-badge">● 3/3 Anchors Active</span>
+        <span class="badge badge-neutral" id="live-map-tags-badge">● 0 Tags Localized</span>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;" id="live-map-clock">Live Stream</span>
+        <button class="btn btn-outline btn-sm" onclick="closeWardLiveMap()" style="padding: 7px 14px; font-size: 12px;">
+          ← Return to Ward Directory
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Split Screen Layout -->
+  <div style="display: flex; gap: 18px; align-items: stretch; min-height: 660px;">
+    <!-- LEFT PANEL: Controls, Patient Identity & Real-Time Vitals (410px) -->
+    <div id="live-map-control-panel" style="width: 410px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; max-height: calc(100vh - 160px); padding-right: 4px;">
+      
+      <!-- Card 1: Active Tracked Subjects in this Ward -->
+      <div class="card" style="padding: 14px 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <strong style="font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+            <span>📍 Active Ward Beacons</span>
+          </strong>
+          <span class="badge badge-info" id="live-map-subject-count" style="font-size: 10px;">1 Subject</span>
+        </div>
+        <div id="live-map-subjects-container" style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto;">
+          <!-- Dynamically populated subject pills -->
+        </div>
+      </div>
+
+      <!-- Card 2: Selected Subject Identity Card -->
+      <div class="card" id="live-map-patient-card" style="padding: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <strong style="font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+            <span>👤 Bound Patient Profile</span>
+          </strong>
+          <span class="badge badge-live" id="live-map-binding-badge">● BOUND TO PATIENT</span>
+        </div>
+
+        <div style="display: flex; gap: 14px; align-items: center; margin-bottom: 12px;">
+          <div id="live-map-patient-avatar" style="width: 52px; height: 52px; border-radius: 50%; background: #E2E8F0; display: flex; align-items: center; justify-content: center; font-size: 24px; border: 2px solid var(--primary); overflow: hidden; flex-shrink: 0;">
+            👤
+          </div>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 15px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="live-map-patient-name">
+              Select a subject
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;" id="live-map-patient-subtext">
+              ID: -- · Bed: --
+            </div>
+            <div style="font-size: 11px; color: var(--primary); font-weight: 600; margin-top: 2px;" id="live-map-hardware-id">
+              Hardware Tag: --
+            </div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11px; margin-bottom: 10px;">
+          <div>
+            <span style="color: var(--text-muted);">Assigned Bed:</span><br>
+            <strong id="live-map-bed-code" style="color: var(--text-primary);">--</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Gender / Age:</span><br>
+            <strong id="live-map-patient-demographics" style="color: var(--text-primary);">--</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Physical MAC:</span><br>
+            <span class="mono" id="live-map-tag-mac" style="font-size: 10px; color: var(--text-secondary);">--</span>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Tracking Mode:</span><br>
+            <span class="badge badge-info" id="live-map-tracking-mode" style="font-size: 10px;">Continuous BLE</span>
+          </div>
+        </div>
+
+        <div style="font-size: 11px; color: var(--text-muted); background: #FFFFFF; border: 1px dashed var(--border); border-radius: 6px; padding: 8px;" id="live-map-medical-note">
+          No medical history noted.
+        </div>
+      </div>
+
+      <!-- Card 3: Real-Time Physiological Telemetry -->
+      <div class="card" style="padding: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <strong style="font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+            <span>❤️ Live Physiological Vitals</span>
+          </strong>
+          <span class="badge badge-live" id="live-map-vitals-status">● LIVE STREAM</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+          <!-- Heart Rate -->
+          <div style="background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 11px; font-weight: 600; color: #DC2626; display: flex; align-items: center; justify-content: center; gap: 4px;">
+              <span class="heartbeat-anim">❤️</span> Heart Rate
+            </div>
+            <div style="font-size: 26px; font-weight: 800; color: #991B1B; margin: 4px 0;" id="live-map-val-bpm">
+              --
+            </div>
+            <div style="font-size: 10px; color: #DC2626;" id="live-map-label-bpm">BPM (Resting)</div>
+          </div>
+
+          <!-- SpO2 -->
+          <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 12px; text-align: center;">
+            <div style="font-size: 11px; font-weight: 600; color: #16A34A; display: flex; align-items: center; justify-content: center; gap: 4px;">
+              <span>🫁</span> Blood Oxygen
+            </div>
+            <div style="font-size: 26px; font-weight: 800; color: #166534; margin: 4px 0;" id="live-map-val-spo2">
+              --
+            </div>
+            <div style="font-size: 10px; color: #16A34A;" id="live-map-label-spo2">% SpO2 (Optimal)</div>
+          </div>
+        </div>
+
+        <!-- Telemetry Details Strip -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11px; margin-bottom: 10px;">
+          <div>
+            <span style="color: var(--text-muted);">Current Location:</span><br>
+            <strong id="live-map-val-coords" class="mono" style="color: var(--primary);">Waiting signal...</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Bed Proximity:</span><br>
+            <strong id="live-map-val-proximity" style="color: var(--text-primary);">--</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Battery Level:</span><br>
+            <strong id="live-map-val-battery" style="color: var(--text-primary);">--</strong>
+          </div>
+          <div>
+            <span style="color: var(--text-muted);">Solver Confidence:</span><br>
+            <span class="badge badge-live" id="live-map-val-confidence" style="font-size: 10px;">3-Anchor 2D</span>
+          </div>
+        </div>
+
+        <!-- Anchor Reception Breakdown -->
+        <div style="border-top: 1px solid var(--border-light); padding-top: 10px;">
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; display: flex; justify-content: space-between;">
+            <span>📡 Wall Anchors Heard</span>
+            <span style="font-size: 10px; color: var(--text-muted);" id="live-map-rate-text">~6.7 Hz</span>
+          </div>
+          <div id="live-map-anchors-breakdown" style="display: flex; flex-direction: column; gap: 4px; font-size: 10px;">
+            <div style="color: var(--text-muted); text-align: center; padding: 6px;">Awaiting anchor packets...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 4: Display & Layer Controls -->
+      <div class="card" style="padding: 14px 16px;">
+        <strong style="font-size: 12px; color: var(--text-primary); display: block; margin-bottom: 10px;">
+          ⚙️ IPS Visualization Layers
+        </strong>
+        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-secondary);">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="chk-show-rings" checked onchange="toggleIpsLayer('rings')">
+            <span>Show Multilateration Distance Radii (Circles)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="chk-show-labels" checked onchange="toggleIpsLayer('labels')">
+            <span>Show Bed, Anchor &amp; Patient Name Pills</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="chk-show-grid" checked onchange="toggleIpsLayer('grid')">
+            <span>Show 0.5-Meter Spatial Metric Grid</span>
+          </label>
+        </div>
+        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-light); font-size: 10px; color: var(--text-muted); display: flex; justify-content: space-between;">
+          <span>Log-Distance Model: A = -59.0 dBm</span>
+          <span>Path Loss: n = 2.0</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- RIGHT PANEL: Live 2D Ward Canvas -->
+    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-sm); position: relative;">
+      <!-- Canvas Header Bar -->
+      <div style="padding: 10px 16px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-weight: 700; color: var(--text-primary);" id="live-map-canvas-title">2D Architectural Digital Twin</span>
+          <span class="mono" style="font-size: 11px; color: var(--text-muted);" id="live-map-dimensions-pill">4.08m × 3.21m</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 11px; color: var(--text-muted);">📍 Origin (0,0) at South-West Wall Corner</span>
+          <button class="btn btn-outline btn-sm" onclick="recenterLiveMap()" style="padding: 4px 10px; font-size: 11px;">
+            🎯 Recenter View
+          </button>
+        </div>
+      </div>
+
+      <!-- Canvas Viewport -->
+      <div id="live-map-canvas-container" style="flex: 1; position: relative; width: 100%; height: 100%; min-height: 580px; background: #FFFFFF;">
+        <canvas id="ward-live-map-canvas" style="display: block; width: 100%; height: 100%;"></canvas>
+      </div>
+    </div>
+  </div>
+</div>

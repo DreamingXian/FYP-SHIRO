@@ -6,6 +6,7 @@ const net = require('net');
 const { KalmanFilter1D, calculateDistance, getCalibration } = require('./kalman_filter');
 const { broadcastToClients } = require('./websocket_service');
 const deviceService = require('./device_service');
+const ipsService = require('./ips_service');
 
 let aedesInstance = null;
 let tcpServer = null;
@@ -109,6 +110,16 @@ async function startMqttBroker(port = 1883) {
             rssi: rawRssi,
             detected_by_anchor: anchorId,
             model: 'Seeed Studio XIAO ESP32-C6'
+          });
+
+          // Feed into IPS Real-Time Multilateration Engine
+          ipsService.recordAnchorReading({
+            anchorId,
+            anchorMac,
+            tagId: detectedTag,
+            tagMac,
+            rawRssi,
+            timestamp: Date.now()
           });
         }
 

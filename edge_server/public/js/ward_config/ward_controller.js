@@ -296,6 +296,11 @@
       wards.forEach(w => {
         const updated = w.updated_at ? new Date(w.updated_at).toLocaleString() : 'Recently';
         const uuidShort = w.spatial_anchor_uuid ? `${w.spatial_anchor_uuid.substring(0, 8)}...` : '<span style="color:var(--text-muted);">None</span>';
+        const isLiveMapReady = (w.anchor_count >= 3 && w.assigned_anchor_count >= w.anchor_count);
+        const liveMapBtn = isLiveMapReady
+          ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.openWardLiveMap('${w.ward_id}')" style="background:#0EA5E9; border-color:#0284C7;">🗺️ View Live Map</button>`
+          : `<button class="btn btn-outline btn-sm" disabled style="opacity:0.45; cursor:not-allowed;" title="Please complete anchor registration &amp; assignment for all anchor slots to enable the live map function." onclick="event.stopPropagation();">🗺️ View Live Map</button>`;
+
         const row = `<tr class="table-row-clickable" onclick="viewWardDetailsReadOnly('${w.ward_id}')" title="Click to view layout &amp; specifications for ${w.room_title || w.ward_id}">
           <td><b style="color: var(--primary);">${w.ward_id}</b></td>
           <td><b style="color: var(--text-primary);">${w.room_title || 'Ward'}</b></td>
@@ -308,6 +313,7 @@
           <td style="color: var(--text-muted); font-size: 12px;">${updated}</td>
           <td>
             <div style="display: flex; gap: 6px;">
+              ${liveMapBtn}
               <button class="btn btn-outline btn-sm" onclick="event.stopPropagation(); openWardEditor('${w.ward_id}')">✏️ Configure Layout</button>
               <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation(); deleteWardRecord('${w.ward_id}')">🗑 Delete</button>
             </div>
@@ -345,8 +351,12 @@
 
     function forceReturnToWardDirectory() {
       isDirty = false;
-      document.getElementById('ward-editor-view').style.display = 'none';
-      document.getElementById('ward-directory-view').style.display = 'block';
+      const editorView = document.getElementById('ward-editor-view');
+      const liveMapView = document.getElementById('ward-live-map-view');
+      const dirView = document.getElementById('ward-directory-view');
+      if (editorView) editorView.style.display = 'none';
+      if (liveMapView) liveMapView.style.display = 'none';
+      if (dirView) dirView.style.display = 'block';
       loadWardDirectory();
     }
 
@@ -491,6 +501,10 @@
           </div>
         `;
 
+        const totalAnchors = w.anchors ? w.anchors.length : 0;
+        const assignedCount = w.anchors ? w.anchors.filter(a => a.device_id && a.device_id.trim() !== '').length : 0;
+        const isModalMapReady = (totalAnchors >= 3 && assignedCount >= totalAnchors);
+
         if (window.showModal) {
           window.showModal({
             title: `Ward Specifications & 2D Floor Plan: ${w.ward_id}`,
@@ -499,8 +513,17 @@
             type: 'info',
             confirmText: '✏️ Configure Layout',
             cancelText: 'Close',
+            extraButtonText: '🗺️ View Live Map',
+            extraButtonClass: isModalMapReady ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm',
+            extraButtonDisabled: !isModalMapReady,
+            extraButtonTitle: isModalMapReady ? 'Open real-time 2D IPS live tracking map' : 'Please complete anchor registration & assignment for all anchor slots to enable the live map function.',
             onConfirm: () => {
               openWardEditor(w.ward_id);
+            },
+            onExtra: () => {
+              if (typeof window.openWardLiveMap === 'function') {
+                window.openWardLiveMap(w.ward_id);
+              }
             }
           });
 
@@ -531,6 +554,8 @@
           isCreatingNew = false;
           currentWard = data.ward;
           document.getElementById('ward-directory-view').style.display = 'none';
+          const liveMapView = document.getElementById('ward-live-map-view');
+          if (liveMapView) liveMapView.style.display = 'none';
           document.getElementById('ward-editor-view').style.display = 'block';
           const badge = document.getElementById('editor-ward-badge');
           if (badge) badge.innerText = `${currentWard.ward_id} (${currentWard.room_title})`;

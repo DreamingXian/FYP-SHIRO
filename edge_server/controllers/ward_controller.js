@@ -103,9 +103,27 @@ async function resetDefault(req, res) {
   }
 }
 
+async function getWardIps(req, res, parsedUrl) {
+  try {
+    const wardId = parsedUrl.searchParams.get('ward_id') || 'WARD-004';
+    const ipsData = await wardService.getWardIpsData(wardId);
+    if (!ipsData) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: 'Ward not found' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, ...ipsData }));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+  }
+}
+
 module.exports = {
   listWards,
   getWard,
+  getWardIps,
   saveWard,
   deleteWardRecord,
   getTemplates,

@@ -1,170 +1,176 @@
 <!-- Upper Section: 2-Column Pairing Wizard -->
-<div class="card" style="margin-bottom: 24px;">
-  <div class="card-header">
-    <div class="card-title">
-      <span>🔗 Patient-to-Wristband Pairing Wizard</span>
-      <span class="badge badge-info">Step-by-Step Assignment</span>
-    </div>
-    <span style="font-size: 12px; color: var(--text-muted);">Establishes Real-Time Telemetry & Spatial Linking</span>
-  </div>
-  <div class="card-subtitle">
-    Search or select an admitted patient without a tracker, pair with a verified Standby wristband, and activate tracking across the Edge Server and Meta Quest 3.
-  </div>
-
-  <form onsubmit="handleBindingSubmit(event)" style="margin-top: 16px;">
-    <div class="form-grid-2">
-      <!-- Step 1: Select Admitted Patient -->
-      <div style="background: var(--input-bg); border: 1px solid var(--border); padding: 20px; border-radius: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <div style="font-weight: 700; font-size: 12px; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px;">
-            STEP 1: SELECT ADMITTED PATIENT
+      <div class="card" style="margin-bottom: 24px;">
+        <div class="card-header">
+          <div class="card-title">
+            <span>🔗 Patient-to-Wristband Pairing Wizard</span>
+            <span class="badge badge-info">Step-by-Step Assignment</span>
           </div>
-          <span class="badge badge-neutral" id="unpaired-patient-count-badge" style="font-size: 10px;">Loading patients...</span>
+          <span style="font-size: 12px; color: var(--text-muted);">Establishes Real-Time Telemetry & Spatial
+            Linking</span>
+        </div>
+        <div class="card-subtitle">
+          Search or select an admitted patient without a tracker, pair with a verified Standby wristband, and activate
+          tracking across the Edge Server and Meta Quest 3.
         </div>
 
-        <div class="form-group" style="margin-bottom: 14px;">
-          <label class="form-label">Search Unbound Inpatient (Newest First)</label>
-          <div class="combobox-container" id="combobox-patient-container" style="position: relative;">
-            <div style="position: relative;">
-              <input type="text" class="form-control" id="bind-patient-search"
-                placeholder="🔍 Click or type to search by Name, ID, or Bed..."
-                autocomplete="off"
-                onfocus="openPatientCombobox()"
-                oninput="filterPatientCombobox(this.value)">
-              <button type="button" id="btn-clear-patient"
-                style="display: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; color: var(--text-muted); cursor: pointer; padding: 0 4px;"
-                title="Clear selection"
-                onclick="clearPatientSelection()">&times;</button>
+        <form onsubmit="handleBindingSubmit(event)" style="margin-top: 16px;">
+          <div class="form-grid-2">
+            <!-- Step 1: Select Admitted Patient -->
+            <div
+              style="background: var(--input-bg); border: 1px solid var(--border); padding: 20px; border-radius: 12px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div
+                  style="font-weight: 700; font-size: 12px; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px;">
+                  STEP 1: SELECT ADMITTED PATIENT
+                </div>
+                <span class="badge badge-neutral" id="unpaired-patient-count-badge" style="font-size: 10px;">Loading
+                  patients...</span>
+              </div>
+
+                    <div class="form-group" style="margin-bottom: 14px;">
+                      <label class="form-label">Search Unbound Inpatient (Newest First)</label>
+                      <div class="combobox-container" id="combobox-patient-container" style="position: relative;">
+                        <div style="position: relative;">
+                          <input type="text" class="form-control" id="bind-patient-search"
+                            placeholder="🔍 Click or type to search by Name, ID, or Bed..." autocomplete="off"
+                            onfocus="openPatientCombobox()" oninput="filterPatientCombobox(this.value)">
+                          <button type="button" id="btn-clear-patient"
+                            style="display: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; color: var(--text-muted); cursor: pointer; padding: 0 4px;"
+                            title="Clear selection" onclick="clearPatientSelection()">&times;</button>
+                        </div>
+                          <input type="hidden" id="selected-patient-id" value="">
+
+                          <!-- Floating Combobox Menu List -->
+                          <div class="combobox-menu" id="patient-combobox-menu"
+                            style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 8px; max-height: 250px; overflow-y: auto; z-index: 1000; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);">
+                            <!-- Rendered dynamically via JavaScript -->
+                          </div>
+                        </div>
+                      </div>
+
+                        <!-- Patient Preview Card -->
+                        <div id="binding-patient-preview"
+                          style="background: #FFFFFF; border: 1px solid var(--border); padding: 14px; border-radius: 10px; min-height: 84px; display: flex; align-items: center; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+                          <div
+                            style="color: var(--text-muted); font-size: 12px; font-style: italic; width: 100%; text-align: center;">
+                            Click above to search and select an unbound admitted patient.
+                          </div>
             </div>
-            <input type="hidden" id="selected-patient-id" value="">
-            
-            <!-- Floating Combobox Menu List -->
-            <div class="combobox-menu" id="patient-combobox-menu"
-              style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 8px; max-height: 250px; overflow-y: auto; z-index: 1000; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);">
+          </div>
+
+                <!-- Step 2: Select Available Wristband Tag -->
+                <div
+                  style="background: var(--input-bg); border: 1px solid var(--border); padding: 20px; border-radius: 12px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div
+                      style="font-weight: 700; font-size: 12px; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px;">
+                      STEP 2: SELECT AVAILABLE STANDBY WRISTBAND
+                    </div>
+                    <span class="badge badge-neutral" id="unpaired-tag-count-badge" style="font-size: 10px;">Loading
+                      tags...</span>
+                  </div>
+
+                    <div class="form-group" style="margin-bottom: 14px;">
+                      <label class="form-label">Search Standby Wristband (Newest First)</label>
+                      <div class="combobox-container" id="combobox-tag-container" style="position: relative;">
+                        <div style="position: relative;">
+                          <input type="text" class="form-control" id="bind-tag-search"
+                            placeholder="🔍 Click or type to search by Tag ID or MAC..." autocomplete="off"
+                            onfocus="openTagCombobox()" oninput="filterTagCombobox(this.value)">
+                          <button type="button" id="btn-clear-tag"
+                            style="display: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; color: var(--text-muted); cursor: pointer; padding: 0 4px;"
+                            title="Clear selection" onclick="clearTagSelection()">&times;</button>
+                        </div>
+                        <input type="hidden" id="selected-device-id" value="">
+
+                        <!-- Floating Combobox Menu List -->
+                        <div class="combobox-menu" id="tag-combobox-menu"
+                          style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 8px; max-height: 250px; overflow-y: auto; z-index: 1000; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);">
+                          <!-- Rendered dynamically via JavaScript -->
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Tag Preview Card -->
+                    <div id="binding-tag-preview"
+                      style="background: #FFFFFF; border: 1px solid var(--border); padding: 14px; border-radius: 10px; min-height: 84px; display: flex; align-items: center; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+                      <div
+                        style="color: var(--text-muted); font-size: 12px; font-style: italic; width: 100%; text-align: center;">
+                        Click above to search and select an available standby wristband.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                  <button type="submit" class="btn btn-primary" id="btn-bind-submit"
+                    style="padding: 11px 26px; font-size: 14px;">
+                    🔗 Confirm &amp; Bind Wristband to Patient
+                  </button>
+                </div>
+        </form>
+      </div>
+
+      <!-- Lower Section: Active Patient Bindings Directory -->
+      <div class="card">
+        <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div class="card-title">
+              <span>📡 Active Patient Monitoring Sessions</span>
+              <span class="badge-num" id="active-binding-count">0 Active Streams</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Broadcasting real-time vitals and indoor positioning at 5–10 Hz over WebSockets.
+            </div>
+          </div>
+
+          <!-- Search & Filter Controls -->
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <div class="search-input-wrap" style="min-width: 260px; max-width: 320px;">
+              <span class="search-icon">🔍</span>
+              <input type="text" class="form-control" id="binding-search-input"
+                placeholder="Search by Patient, ID, Bed, or MAC..." oninput="handleBindingSearch(this.value)">
+            </div>
+
+            <select class="form-control" id="binding-status-filter"
+              style="width: 140px; font-size: 12px; font-weight: 600;" onchange="handleBindingFilter(this.value)">
+              <option value="ALL">All Statuses</option>
+              <option value="ONLINE">● Online Only</option>
+              <option value="OFFLINE">○ Offline Only</option>
+            </select>
+
+            <button class="btn btn-outline btn-sm" onclick="loadBindingsData()">🔄 Refresh</button>
+          </div>
+        </div>
+
+        <div class="data-table-container">
+          <table class="data-table" id="bindings-table">
+            <thead>
+              <tr>
+                <th>Bed &amp; Ward</th>
+                <th>Patient Details</th>
+                <th>Fall Risk</th>
+                <th>Paired Wristband</th>
+                <th>Live Status</th>
+                <th>Bound Since</th>
+                <th>Bound By</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="bindings-table-body">
               <!-- Rendered dynamically via JavaScript -->
-            </div>
-          </div>
+            </tbody>
+          </table>
         </div>
 
-        <!-- Patient Preview Card -->
-        <div id="binding-patient-preview"
-          style="background: #FFFFFF; border: 1px solid var(--border); padding: 14px; border-radius: 10px; min-height: 84px; display: flex; align-items: center; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
-          <div style="color: var(--text-muted); font-size: 12px; font-style: italic; width: 100%; text-align: center;">
-            Click above to search and select an unbound admitted patient.
+        <!-- Numbered Pagination Bar (10 records per page) -->
+        <div
+          style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 12px;">
+          <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;" id="binding-pagination-info">
+            Showing 0 of 0 records
           </div>
-        </div>
-      </div>
-
-      <!-- Step 2: Select Available Wristband Tag -->
-      <div style="background: var(--input-bg); border: 1px solid var(--border); padding: 20px; border-radius: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <div style="font-weight: 700; font-size: 12px; color: var(--primary); text-transform: uppercase; letter-spacing: 0.5px;">
-            STEP 2: SELECT AVAILABLE STANDBY WRISTBAND
-          </div>
-          <span class="badge badge-neutral" id="unpaired-tag-count-badge" style="font-size: 10px;">Loading tags...</span>
-        </div>
-
-        <div class="form-group" style="margin-bottom: 14px;">
-          <label class="form-label">Search Standby Wristband (Newest First)</label>
-          <div class="combobox-container" id="combobox-tag-container" style="position: relative;">
-            <div style="position: relative;">
-              <input type="text" class="form-control" id="bind-tag-search"
-                placeholder="🔍 Click or type to search by Tag ID or MAC..."
-                autocomplete="off"
-                onfocus="openTagCombobox()"
-                oninput="filterTagCombobox(this.value)">
-              <button type="button" id="btn-clear-tag"
-                style="display: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; font-size: 16px; color: var(--text-muted); cursor: pointer; padding: 0 4px;"
-                title="Clear selection"
-                onclick="clearTagSelection()">&times;</button>
-            </div>
-            <input type="hidden" id="selected-device-id" value="">
-
-            <!-- Floating Combobox Menu List -->
-            <div class="combobox-menu" id="tag-combobox-menu"
-              style="display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 8px; max-height: 250px; overflow-y: auto; z-index: 1000; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 8px 10px -6px rgba(0,0,0,0.1);">
-              <!-- Rendered dynamically via JavaScript -->
-            </div>
-          </div>
-        </div>
-
-        <!-- Tag Preview Card -->
-        <div id="binding-tag-preview"
-          style="background: #FFFFFF; border: 1px solid var(--border); padding: 14px; border-radius: 10px; min-height: 84px; display: flex; align-items: center; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
-          <div style="color: var(--text-muted); font-size: 12px; font-style: italic; width: 100%; text-align: center;">
-            Click above to search and select an available standby wristband.
+          <div style="display: flex; gap: 6px; align-items: center;" id="binding-pagination-controls">
+            <!-- Dynamically generated numbered page buttons -->
           </div>
         </div>
       </div>
-    </div>
-
-    <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
-      <button type="submit" class="btn btn-primary" id="btn-bind-submit" style="padding: 11px 26px; font-size: 14px;">
-        🔗 Confirm &amp; Bind Wristband to Patient
-      </button>
-    </div>
-  </form>
-</div>
-
-<!-- Lower Section: Active Patient Bindings Directory -->
-<div class="card">
-  <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
-    <div>
-      <div class="card-title">
-        <span>📡 Active Patient Monitoring Sessions</span>
-        <span class="badge-num" id="active-binding-count">0 Active Streams</span>
-      </div>
-      <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-        Broadcasting real-time vitals and indoor positioning at 5–10 Hz over WebSockets.
-      </div>
-    </div>
-
-    <!-- Search & Filter Controls -->
-    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-      <div class="search-input-wrap" style="min-width: 260px; max-width: 320px;">
-        <span class="search-icon">🔍</span>
-        <input type="text" class="form-control" id="binding-search-input"
-          placeholder="Search by Patient, ID, Bed, or MAC..."
-          oninput="handleBindingSearch(this.value)">
-      </div>
-
-      <select class="form-control" id="binding-status-filter" style="width: 140px; font-size: 12px; font-weight: 600;" onchange="handleBindingFilter(this.value)">
-        <option value="ALL">All Statuses</option>
-        <option value="ONLINE">● Online Only</option>
-        <option value="OFFLINE">○ Offline Only</option>
-      </select>
-
-      <button class="btn btn-outline btn-sm" onclick="loadBindingsData()">🔄 Refresh</button>
-    </div>
-  </div>
-
-  <div class="data-table-container">
-    <table class="data-table" id="bindings-table">
-      <thead>
-        <tr>
-          <th>Bed &amp; Ward</th>
-          <th>Patient Details</th>
-          <th>Fall Risk</th>
-          <th>Paired Wristband</th>
-          <th>Live Status</th>
-          <th>Bound Since</th>
-          <th>Bound By</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody id="bindings-table-body">
-        <!-- Rendered dynamically via JavaScript -->
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Numbered Pagination Bar (10 records per page) -->
-  <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 12px;">
-    <div style="font-size: 12px; color: var(--text-muted); font-weight: 500;" id="binding-pagination-info">
-      Showing 0 of 0 records
-    </div>
-    <div style="display: flex; gap: 6px; align-items: center;" id="binding-pagination-controls">
-      <!-- Dynamically generated numbered page buttons -->
-    </div>
-  </div>
-</div>

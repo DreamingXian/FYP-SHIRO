@@ -4,6 +4,8 @@
 const { getPool } = require('../database/db');
 const fs = require('fs');
 const path = require('path');
+const ipsService = require('./ips_service');
+const { getCalibration } = require('./kalman_filter');
 
 const WARD_TEMPLATES = {
   'L_SHAPED': {
@@ -256,6 +258,10 @@ async function saveWardConfig(data) {
     }
 
     await conn.commit();
+    // Refresh IPS engine anchor coordinates cache
+    ipsService.reloadWardAnchorsCache().catch(err => {
+      console.warn('[WARD SERVICE] Error refreshing IPS cache:', err.message);
+    });
     return { success: true, ward_id: wardId };
   } catch (err) {
     await conn.rollback();
@@ -276,6 +282,7 @@ async function getAllWards() {
       r.door_wall, r.door_x, r.door_width, r.spatial_anchor_uuid, r.layout_type, r.updated_at,
       (SELECT COUNT(*) FROM ward_beds b WHERE b.ward_id = r.ward_id) AS bed_count,
       (SELECT COUNT(*) FROM ward_anchors a WHERE a.ward_id = r.ward_id) AS anchor_count,
+      (SELECT COUNT(*) FROM ward_anchors a WHERE a.ward_id = r.ward_id AND a.device_id IS NOT NULL AND a.device_id != '') AS assigned_anchor_count,
       (SELECT COUNT(*) FROM ward_obstacles o WHERE o.ward_id = r.ward_id) AS obstacle_count
     FROM ward_rooms r
     ORDER BY r.ward_id ASC;
@@ -295,6 +302,7 @@ async function getAllWards() {
     updated_at: r.updated_at,
     bed_count: parseInt(r.bed_count, 10) || 0,
     anchor_count: parseInt(r.anchor_count, 10) || 0,
+    assigned_anchor_count: parseInt(r.assigned_anchor_count, 10) || 0,
     obstacle_count: parseInt(r.obstacle_count, 10) || 0
   }));
 }
@@ -331,12 +339,62 @@ async function resetDefaultWard() {
   return getWardConfig('WARD-001');
 }
 
+/**
+ * Retrieve complete data needed to initialize the Live 2D IPS Map:
+ * - Ward geometry, obstacles, beds, and assigned wall anchors with coordinates
+ * - Active patient bindings and devices in this ward
+ * - Active calibration parameters
+ */
+async function getWardIpsData(wardId) {
+  const ward = await getWardConfig(wardId);
+  if (!ward) return null;
+
+  const pool = getPool();
+  // Fetch all active bindings with joined patient and device telemetry details
+  const [bindings] = await pool.query(`
+    SELECT 
+      pb.binding_id, pb.patient_id, pb.device_id, pb.status AS binding_status,
+      p.full_name, p.nric_passport, p.gender, p.dob, p.assigned_bed_id, p.assigned_ward_id,
+      p.medical_history, p.photo_url, p.status AS patient_status,
+      d.mac_address, d.device_type, d.status AS device_status, d.battery_level, d.firmware_version
+    FROM patient_bindings pb
+    JOIN patients p ON pb.patient_id = p.patient_id
+    JOIN devices d ON pb.device_id = d.device_id
+    WHERE pb.status = 'ACTIVE'
+  `);
+
+  return {
+    ward,
+    tracked_subjects: bindings.map(b => ({
+      binding_id: b.binding_id,
+      patient_id: b.patient_id,
+      full_name: b.full_name,
+      nric_passport: b.nric_passport,
+      gender: b.gender,
+      dob: b.dob,
+      assigned_bed_id: b.assigned_bed_id,
+      assigned_ward_id: b.assigned_ward_id,
+      is_ward_resident: (b.assigned_ward_id === wardId),
+      medical_history: b.medical_history,
+      photo_url: b.photo_url,
+      patient_status: b.patient_status,
+      device_id: b.device_id,
+      mac_address: b.mac_address,
+      device_status: b.device_status,
+      battery_level: b.battery_level,
+      firmware_version: b.firmware_version
+    })),
+    calibration: getCalibration()
+  };
+}
+
 module.exports = {
   getAllWards,
   getWardConfig,
   saveWardConfig,
   deleteWard,
   resetDefaultWard,
+  getWardIpsData,
   WARD_TEMPLATES
 };
 
