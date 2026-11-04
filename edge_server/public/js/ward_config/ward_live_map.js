@@ -55,6 +55,14 @@
 
       isLiveMapActive = true;
 
+      // Update calibration display pills
+      if (data.calibration) {
+        const calA = document.getElementById('live-map-cal-a');
+        const calN = document.getElementById('live-map-cal-n');
+        if (calA) calA.innerText = `Log-Distance Model: A = ${Number(data.calibration.A).toFixed(1)} dBm`;
+        if (calN) calN.innerText = `Path Loss: n = ${Number(data.calibration.n).toFixed(1)}`;
+      }
+
       // Update Top Status Bar
       const wardBadge = document.getElementById('live-map-ward-badge');
       if (wardBadge) wardBadge.innerText = `${activeWard.ward_id} (${activeWard.room_title || 'Ward'})`;
@@ -163,6 +171,8 @@
         statusBadge = `<span class="badge badge-alert" style="font-size:9px;">● OFFLINE</span>`;
       } else if (pos && pos.motion_state === 'WALKING') {
         statusBadge = `<span class="badge badge-live" style="font-size:9px;">🚶 WALKING</span>`;
+      } else if (pos && pos.motion_state === 'HAND_MOVEMENT') {
+        statusBadge = `<span class="badge badge-warning" style="font-size:9px; background:#FEF3C7; color:#B45309; border:1px solid #FCD34D;">👋 GESTURE</span>`;
       } else if (pos && pos.motion_state === 'SETTLING') {
         statusBadge = `<span class="badge badge-warning" style="font-size:9px;">🎯 SETTLING</span>`;
       } else {
@@ -294,19 +304,37 @@
       }
     }
 
+    const offlineActionEl = document.getElementById('live-map-offline-actions');
+    if (offlineActionEl) {
+      offlineActionEl.style.display = isOffline ? 'block' : 'none';
+    }
+
     if (confEl && pos) {
       if (isOffline) {
         confEl.innerText = 'OFFLINE (LAST KNOWN)';
         confEl.className = 'badge badge-alert';
+        confEl.style.background = '';
+        confEl.style.color = '';
       } else if (pos.motion_state === 'WALKING') {
         confEl.innerText = '🚶 WALKING (ACTIVE)';
         confEl.className = 'badge badge-live';
+        confEl.style.background = '';
+        confEl.style.color = '';
+      } else if (pos.motion_state === 'HAND_MOVEMENT') {
+        confEl.innerText = '👋 HAND MOVEMENT';
+        confEl.className = 'badge badge-warning';
+        confEl.style.background = '#FEF3C7';
+        confEl.style.color = '#B45309';
       } else if (pos.motion_state === 'SETTLING') {
         confEl.innerText = '🎯 SETTLING (2S WINDOW)';
         confEl.className = 'badge badge-warning';
+        confEl.style.background = '';
+        confEl.style.color = '';
       } else {
         confEl.innerText = '🔒 STATIONARY (LOCKED)';
         confEl.className = 'badge badge-info';
+        confEl.style.background = '';
+        confEl.style.color = '';
       }
     }
 
@@ -426,11 +454,18 @@
 
     ripplePhase = (ripplePhase + 0.04) % (Math.PI * 2);
 
-    // Smooth tag positions toward targets (linear interpolation)
+    // Smooth tag positions toward targets (adaptive easing interpolation)
     for (const [tagId, pos] of liveTagPositions.entries()) {
       if (pos.targetX !== undefined && pos.targetY !== undefined) {
-        pos.x += (pos.targetX - pos.x) * 0.25;
-        pos.y += (pos.targetY - pos.y) * 0.25;
+        if (pos.motion_state === 'STATIONARY' || pos.status === 'OFFLINE') {
+          // Snap directly to locked coordinate with crisp zero-jitter convergence
+          pos.x += (pos.targetX - pos.x) * 0.40;
+          pos.y += (pos.targetY - pos.y) * 0.40;
+        } else {
+          // Glide fluidly during active ambulatory movement
+          pos.x += (pos.targetX - pos.x) * 0.20;
+          pos.y += (pos.targetY - pos.y) * 0.20;
+        }
       }
     }
 
@@ -913,6 +948,8 @@
           nameText = `${baseName} [OFFLINE]`;
         } else if (pos.motion_state === 'WALKING') {
           nameText = `🚶 ${baseName}`;
+        } else if (pos.motion_state === 'HAND_MOVEMENT') {
+          nameText = `👋 ${baseName}`;
         } else if (pos.motion_state === 'SETTLING') {
           nameText = `🎯 ${baseName} (Settling)`;
         } else {
@@ -964,6 +1001,32 @@
     if (window.showToast) window.showToast('Live map view recentered.', 'info', 1000);
   };
 
+  window.removeSelectedOfflineTag = async function() {
+    if (!selectedTagId) return;
+    const tagToPurge = selectedTagId;
+    const confirmed = confirm(`Are you sure you want to remove the offline tag "${tagToPurge}" from this ward map?`);
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`/api/ward/ips-tag?tag_id=${encodeURIComponent(tagToPurge)}`, {
+        method: 'DELETE'
+      });
+      const data = await res.json();
+      if (data.success) {
+        liveTagPositions.delete(tagToPurge);
+        const remaining = Array.from(liveTagPositions.keys());
+        selectedTagId = remaining.length > 0 ? remaining[0] : null;
+        renderSubjectsList();
+        updateTelemetryCard();
+        if (window.showToast) window.showToast(`Tag ${tagToPurge} removed from ward map.`, 'success');
+      } else {
+        if (window.showToast) window.showToast(`Error: ${data.error || 'Failed to remove tag'}`, 'danger');
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(`Error: ${err.message}`, 'danger');
+    }
+  };
+
   // --- WebSocket Live Listener ---
   function setupWebSocketListeners() {
     if (!window.wsClient) {
@@ -971,10 +1034,24 @@
       return;
     }
 
-    // 1. Ghost Tag Purge event
+    // 1. Ghost Tag / Deleted Tag Purge event
     window.wsClient.on('IPS_TAG_PURGE', (msg) => {
-      if (msg.tag_id && liveTagPositions.has(msg.tag_id)) {
-        liveTagPositions.delete(msg.tag_id);
+      const targets = [msg.tag_id, msg.canonical_id, msg.mac].filter(Boolean);
+      let changed = false;
+      for (const t of targets) {
+        if (liveTagPositions.has(t)) {
+          liveTagPositions.delete(t);
+          changed = true;
+        }
+      }
+      if (targets.includes(selectedTagId)) {
+        const remaining = Array.from(liveTagPositions.keys());
+        selectedTagId = remaining.length > 0 ? remaining[0] : null;
+        changed = true;
+      }
+      if (changed) {
+        renderSubjectsList();
+        updateTelemetryCard();
       }
     });
 

@@ -63,8 +63,52 @@ long latestIR = 0;
 long latestRed = 0;
 int touchState = 0;
 
-// Kinematic Vector
+// Kinematic Vector & Pedometer Cadence Motion Classifier
 float currentG = 1.0;
+const char* currentMotion = "STATIONARY";
+const int MOTION_WINDOW_SIZE = 10; // ~2 seconds of 5Hz data
+float gHistory[MOTION_WINDOW_SIZE];
+int gHistorySpot = 0;
+int gHistoryCount = 0;
+
+const char* classifyWristbandMotion(float g) {
+  gHistory[gHistorySpot++] = g;
+  gHistorySpot %= MOTION_WINDOW_SIZE;
+  if (gHistoryCount < MOTION_WINDOW_SIZE) gHistoryCount++;
+
+  if (gHistoryCount < 5) return "STATIONARY";
+
+  float sumDiffSq = 0;
+  float minG = 999.0;
+  float maxG = -999.0;
+  for (int i = 0; i < gHistoryCount; i++) {
+    float diff = gHistory[i] - 1.0;
+    sumDiffSq += diff * diff;
+    if (gHistory[i] < minG) minG = gHistory[i];
+    if (gHistory[i] > maxG) maxG = gHistory[i];
+  }
+  float variance = sumDiffSq / gHistoryCount;
+  float p2p = maxG - minG;
+
+  int zeroCrossings = 0;
+  for (int i = 1; i < gHistoryCount; i++) {
+    float prevDev = gHistory[i - 1] - 1.0;
+    float curDev = gHistory[i] - 1.0;
+    if ((prevDev > 0.04 && curDev < -0.04) || (prevDev < -0.04 && curDev > 0.04)) {
+      zeroCrossings++;
+    }
+  }
+
+  // WALKING: Sustained periodic oscillation matching human gait dynamics
+  if (p2p >= 0.30 && variance >= 0.009 && zeroCrossings >= 2) {
+    return "WALKING";
+  }
+  // HAND MOVEMENT: Isolated tilt, gesture or typing tremor without sustained steps
+  if (p2p >= 0.16 || abs(g - 1.0) > 0.15 || variance >= 0.004) {
+    return "HAND_MOVEMENT";
+  }
+  return "STATIONARY";
+}
 
 // BLE transmission timing
 unsigned long lastBleTransmitTime = 0;
@@ -283,11 +327,12 @@ void loop() {
   if (now - lastBleTransmitTime >= BLE_TRANSMIT_INTERVAL) {
     lastBleTransmitTime = now;
     currentG = readMPU6050TotalG();
+    currentMotion = classifyWristbandMotion(currentG);
 
-    char payload[160];
+    char payload[190];
     snprintf(payload, sizeof(payload),
-             "{\"tag_mac\":\"%s\",\"bpm\":%d,\"spo2\":%d,\"ir\":%ld,\"red\":%ld,\"g\":%.2f,\"touch\":%d}",
-             BLEDevice::getAddress().toString().c_str(), beatAvg, spo2Avg, latestIR, latestRed, currentG, touchState);
+             "{\"tag_mac\":\"%s\",\"bpm\":%d,\"spo2\":%d,\"ir\":%ld,\"red\":%ld,\"g\":%.2f,\"motion\":\"%s\",\"touch\":%d}",
+             BLEDevice::getAddress().toString().c_str(), beatAvg, spo2Avg, latestIR, latestRed, currentG, currentMotion, touchState);
 
     if (deviceConnected) {
       pCharacteristic->setValue(payload);

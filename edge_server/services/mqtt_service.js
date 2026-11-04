@@ -197,9 +197,9 @@ async function startMqttBroker(port = 1883) {
           });
           parsed.tag_id = tagId;
 
-          // Feed IMU kinematics into IPS 3-State Motion Filter (Phase 2)
+          // Feed IMU kinematics into IPS 4-State Motion Filter
           if (parsed.g !== undefined) {
-            ipsService.recordKinematics(tagId, parseFloat(parsed.g), Date.now());
+            ipsService.recordKinematics(tagId, parseFloat(parsed.g), Date.now(), parsed.motion || null);
           }
         }
 

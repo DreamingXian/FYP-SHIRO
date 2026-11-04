@@ -37,8 +37,27 @@ let activeCalibration = {
   n: defaultCalibration.n
 };
 
-function getCalibration() {
+// In-memory per-anchor calibration overrides: anchorId -> { A, n }
+const anchorCalibrations = new Map();
+
+function getCalibration(anchorId = null) {
+  if (anchorId) {
+    const key = anchorId.toString().toLowerCase().trim();
+    if (anchorCalibrations.has(key)) {
+      return anchorCalibrations.get(key);
+    }
+  }
   return activeCalibration;
+}
+
+function setAnchorCalibration(anchorId, A, n) {
+  if (!anchorId) return;
+  const key = anchorId.toString().toLowerCase().trim();
+  const existing = anchorCalibrations.get(key) || { ...activeCalibration };
+  if (A !== undefined && !isNaN(parseFloat(A))) existing.A = parseFloat(A);
+  if (n !== undefined && !isNaN(parseFloat(n))) existing.n = parseFloat(n);
+  anchorCalibrations.set(key, existing);
+  return existing;
 }
 
 function updateCalibration(newA, newN) {
@@ -47,8 +66,17 @@ function updateCalibration(newA, newN) {
   return activeCalibration;
 }
 
-function calculateDistance(rssi, A = activeCalibration.A, n = activeCalibration.n) {
-  const exp = (A - rssi) / (10.0 * n);
+function calculateDistance(rssi, A = null, n = null, anchorId = null) {
+  let effectiveA = A;
+  let effectiveN = n;
+
+  if (effectiveA === null || effectiveN === null) {
+    const cal = getCalibration(anchorId);
+    effectiveA = (effectiveA !== null && effectiveA !== undefined) ? effectiveA : cal.A;
+    effectiveN = (effectiveN !== null && effectiveN !== undefined) ? effectiveN : cal.n;
+  }
+
+  const exp = (effectiveA - rssi) / (10.0 * effectiveN);
   const dist = Math.pow(10, exp);
   return Math.round(dist * 100) / 100; // Return rounded to 2 decimal places
 }
@@ -57,6 +85,7 @@ module.exports = {
   KalmanFilter1D,
   calculateDistance,
   getCalibration,
+  setAnchorCalibration,
   updateCalibration
 };
 

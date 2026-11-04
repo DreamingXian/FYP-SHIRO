@@ -155,6 +155,13 @@
             <div style="color: var(--text-muted); text-align: center; padding: 6px;">Awaiting anchor packets...</div>
           </div>
         </div>
+
+        <!-- Offline Tag Removal Action -->
+        <div id="live-map-offline-actions" style="display: none; border-top: 1px solid var(--border-light); padding-top: 10px; margin-top: 10px;">
+          <button id="btn-remove-offline-tag" type="button" class="btn btn-secondary" style="width: 100%; background: #FEF2F2; color: #DC2626; border: 1px solid #FCA5A5; font-size: 11px; font-weight: 700; padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="removeSelectedOfflineTag()">
+            <span>🗑️</span> Remove from Ward Map
+          </button>
+        </div>
       </div>
 
       <!-- Card 4: Display & Layer Controls -->
@@ -177,8 +184,8 @@
           </label>
         </div>
         <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-light); font-size: 10px; color: var(--text-muted); display: flex; justify-content: space-between;">
-          <span>Log-Distance Model: A = -59.0 dBm</span>
-          <span>Path Loss: n = 2.0</span>
+          <span id="live-map-cal-a">Log-Distance Model: A = -52.0 dBm</span>
+          <span id="live-map-cal-n">Path Loss: n = 3.2</span>
         </div>
       </div>
 

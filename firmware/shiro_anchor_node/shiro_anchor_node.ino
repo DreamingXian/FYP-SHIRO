@@ -38,10 +38,18 @@ WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 BLEScan* pBLEScan = nullptr;
 
-// Real-time tracking variables
-volatile int latestRSSI = 0;
-volatile bool newRssiAvailable = false;
-String latestTagMac = "";
+// Real-time tracking table for multiple concurrent wristband tags
+struct HeardTag {
+  String mac;
+  int rssi;
+  unsigned long timestamp;
+  bool pending;
+};
+
+const int MAX_TRACKED_TAGS = 8;
+HeardTag trackedTags[MAX_TRACKED_TAGS];
+int trackedTagCount = 0;
+
 unsigned long lastPublishTime = 0;
 unsigned long lastPacketHeard = 0;
 const unsigned long PUBLISH_INTERVAL = 150; // Publish ~6-7 times per second (every 150 ms)
@@ -63,9 +71,30 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     }
 
     if (isWristband) {
-      latestRSSI = advertisedDevice.getRSSI();
-      latestTagMac = advertisedDevice.getAddress().toString();
-      newRssiAvailable = true;
+      String tagMac = advertisedDevice.getAddress().toString();
+      int rssi = advertisedDevice.getRSSI();
+      unsigned long now = millis();
+
+      // Find or allocate tag entry in tracking table
+      int foundIdx = -1;
+      for (int i = 0; i < trackedTagCount; i++) {
+        if (trackedTags[i].mac.equalsIgnoreCase(tagMac)) {
+          foundIdx = i;
+          break;
+        }
+      }
+
+      if (foundIdx >= 0) {
+        trackedTags[foundIdx].rssi = rssi;
+        trackedTags[foundIdx].timestamp = now;
+        trackedTags[foundIdx].pending = true;
+      } else if (trackedTagCount < MAX_TRACKED_TAGS) {
+        trackedTags[trackedTagCount].mac = tagMac;
+        trackedTags[trackedTagCount].rssi = rssi;
+        trackedTags[trackedTagCount].timestamp = now;
+        trackedTags[trackedTagCount].pending = true;
+        trackedTagCount++;
+      }
     }
   }
 };
@@ -159,30 +188,37 @@ void loop() {
   if (now - lastPublishTime >= PUBLISH_INTERVAL) {
     lastPublishTime = now;
 
-    if (newRssiAvailable && mqttClient.connected()) {
-      newRssiAvailable = false;
-      lastPacketHeard = now;
+    bool anyPublished = false;
+    if (mqttClient.connected()) {
+      for (int i = 0; i < trackedTagCount; i++) {
+        if (trackedTags[i].pending) {
+          trackedTags[i].pending = false;
+          anyPublished = true;
+          lastPacketHeard = now;
 
-      char payload[180];
-      snprintf(payload, sizeof(payload),
-               "{\"anchor_mac\":\"%s\",\"tag_mac\":\"%s\",\"rssi\":%d,\"ts\":%lu}",
-               WiFi.macAddress().c_str(), latestTagMac.c_str(), latestRSSI, now);
+          char payload[180];
+          snprintf(payload, sizeof(payload),
+                   "{\"anchor_mac\":\"%s\",\"tag_mac\":\"%s\",\"rssi\":%d,\"ts\":%lu}",
+                   WiFi.macAddress().c_str(), trackedTags[i].mac.c_str(), trackedTags[i].rssi, now);
 
-      mqttClient.publish(mqtt_topic, payload);
-      Serial.printf("[ANCHOR %s STREAM] -> %s\n", WiFi.macAddress().c_str(), payload);
-    } 
-    // If no wristband heard in the last 2 seconds, send a Standby Heartbeat
-    // Keeps Anchor node visible on Edge Server Radar even when wristband is turned off
-    else if (now - lastPacketHeard >= 2000 && mqttClient.connected()) {
-      lastPacketHeard = now;
+          mqttClient.publish(mqtt_topic, payload);
+          Serial.printf("[ANCHOR %s STREAM] -> %s\n", WiFi.macAddress().c_str(), payload);
+        }
+      }
 
-      char payload[130];
-      snprintf(payload, sizeof(payload),
-               "{\"anchor_mac\":\"%s\",\"status\":\"STANDBY\",\"rssi\":0,\"ts\":%lu}",
-               WiFi.macAddress().c_str(), now);
+      // If no wristband heard in the last 2 seconds, send a Standby Heartbeat
+      // Keeps Anchor node visible on Edge Server Radar even when wristband is turned off
+      if (!anyPublished && (now - lastPacketHeard >= 2000)) {
+        lastPacketHeard = now;
 
-      mqttClient.publish(mqtt_topic, payload);
-      Serial.printf("[ANCHOR %s STANDBY] -> %s\n", WiFi.macAddress().c_str(), payload);
+        char payload[130];
+        snprintf(payload, sizeof(payload),
+                 "{\"anchor_mac\":\"%s\",\"status\":\"STANDBY\",\"rssi\":0,\"ts\":%lu}",
+                 WiFi.macAddress().c_str(), now);
+
+        mqttClient.publish(mqtt_topic, payload);
+        Serial.printf("[ANCHOR %s STANDBY] -> %s\n", WiFi.macAddress().c_str(), payload);
+      }
     }
   }
 

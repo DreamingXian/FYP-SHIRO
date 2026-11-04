@@ -21,12 +21,23 @@ function initWebSocketServer(httpServer) {
       try {
         const cmd = JSON.parse(data.toString());
         if (cmd.action === 'UPDATE_CALIBRATION') {
-          const updated = updateCalibration(cmd.A, cmd.n);
-          console.log(`[CALIBRATION UPDATED] A: ${updated.A} dBm | n: ${updated.n}`);
-          broadcastToClients({
-            type: 'CALIBRATION_SYNC',
-            calibration: updated
-          });
+          if (cmd.anchor_id) {
+            const { setAnchorCalibration } = require('./kalman_filter');
+            const updated = setAnchorCalibration(cmd.anchor_id, cmd.A, cmd.n);
+            console.log(`[ANCHOR CALIBRATION UPDATED] ${cmd.anchor_id} -> A: ${updated.A} dBm | n: ${updated.n}`);
+            broadcastToClients({
+              type: 'ANCHOR_CALIBRATION_SYNC',
+              anchor_id: cmd.anchor_id,
+              calibration: updated
+            });
+          } else {
+            const updated = updateCalibration(cmd.A, cmd.n);
+            console.log(`[CALIBRATION UPDATED] A: ${updated.A} dBm | n: ${updated.n}`);
+            broadcastToClients({
+              type: 'CALIBRATION_SYNC',
+              calibration: updated
+            });
+          }
         }
       } catch (err) {
         console.warn('[WEBSOCKET] Malformed command:', err.message);

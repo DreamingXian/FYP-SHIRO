@@ -285,15 +285,25 @@ async function updateDevice(deviceId, updateData) {
 }
 
 /**
- * Deletes a device from the registry.
+ * Deletes a device from the registry and immediately purges it from IPS live maps.
  */
 async function deleteDevice(deviceId) {
   const pool = getPool();
+  const [existing] = await pool.query('SELECT mac_address FROM devices WHERE device_id = ? LIMIT 1', [deviceId]);
+  const mac = existing.length > 0 ? existing[0].mac_address : null;
+
   const [result] = await pool.query('DELETE FROM devices WHERE device_id = ?', [deviceId]);
   if (result.affectedRows === 0) {
     throw new Error(`Device "${deviceId}" not found.`);
   }
   await syncEnrolledDevicesCache();
+
+  // Automatically purge deleted device from real-time IPS localization memory
+  try {
+    const ipsService = require('./ips_service');
+    ipsService.purgeTag(deviceId, mac);
+  } catch (_) {}
+
   return {
     success: true,
     message: `Device "${deviceId}" permanently removed from fleet.`

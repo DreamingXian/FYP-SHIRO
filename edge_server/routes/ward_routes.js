@@ -14,6 +14,11 @@ async function handleWardRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
+  if (pathname === '/api/ward/ips-tag' && (req.method === 'DELETE' || req.method === 'POST')) {
+    await wardController.removeWardIpsTag(req, res, parsedUrl, body);
+    return true;
+  }
+
   if ((pathname === '/api/ward/config' || pathname === '/api/ward/get') && req.method === 'GET') {
     await wardController.getWard(req, res, parsedUrl);
     return true;
