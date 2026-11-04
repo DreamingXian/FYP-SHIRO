@@ -1139,6 +1139,43 @@
      * Displays an interactive 2D simulation preview in a modal dialog.
      * Does NOT touch the active configuration until the user confirms "Accept & Apply".
      */
+    // Helper: Render individual proposed anchor cards
+    function renderAnchorCardsHtml(anchors) {
+      if (!Array.isArray(anchors)) return '';
+      return anchors.map(a => {
+        const losText = a.totalBeds > 0
+          ? (a.clearBeds === a.totalBeds
+              ? `<span style="color:#10B981; font-weight:700;">🟢 ${a.clearBeds}/${a.totalBeds} Beds Clear (100% 3D LOS)</span>`
+              : `<span style="color:#D97706; font-weight:700;">🟡 ${a.clearBeds}/${a.totalBeds} Beds Clear</span>`)
+          : '<span style="color:var(--text-muted);">No Beds Configured</span>';
+
+        const boundText = a.device_id
+          ? `<span class="mono" style="color:var(--primary); font-weight:700;">${a.device_id}</span>`
+          : `<span style="color:var(--text-muted); font-style:italic;">Standby (Unbound)</span>`;
+
+        return `
+          <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 3px;">
+              <strong style="font-size:12px; color:var(--text-primary);">📡 ${a.anchor_id}</strong>
+              <span style="font-size:11px;">Hardware: ${boundText}</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
+              Placement: <strong>${a.wall_location}</strong> · X: <strong>${Number(a.x).toFixed(2)}m</strong>, Y: <strong>${Number(a.y).toFixed(2)}m</strong>, Z: <strong>${Number(a.z).toFixed(2)}m</strong>
+            </div>
+            <div style="font-size:11px;">
+              3D Line-of-Sight: ${losText}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    /**
+     * Auto-Suggest Optimal BLE Wall Anchors
+     * Exhaustively evaluates all viable multi-directional anchor combinations across
+     * room perimeter walls AND mountable obstacle exterior walls (partitions, pillars, washrooms).
+     * Strictly considers 3D vertical shadow cones from tall obstacles and maximizes baseline coverage.
+     */
     function autoSuggestAnchors() {
       if (!currentWard) return;
       const roomX = parseFloat(currentWard.length_x) || 6.40;
@@ -1147,8 +1184,7 @@
       const obstacles = currentWard.obstacles || [];
       const door = currentWard.door || { wall: 'SOUTH', x: 2.80, width: 0.90 };
       const beds = currentWard.beds || [];
-
-      // Patient wristband nominal height (Z = 0.85m on patient wrist)
+      const existingAnchors = currentWard.anchors || [];
       const zWrist = 0.85;
 
       // Extract 3D bed targets
@@ -1165,322 +1201,293 @@
         };
       });
 
+      // Dense room sample grid (every 0.30m) for accurate 3D floor coverage
+      const roomGrid = [];
+      for (let gx = 0.30; gx <= roomX - 0.30; gx += 0.30) {
+        for (let gy = 0.30; gy <= roomY - 0.30; gy += 0.30) {
+          let inside = false;
+          for (const obs of obstacles) {
+            if (gx >= obs.x && gx <= obs.x + obs.width && gy >= obs.y && gy <= obs.y + obs.length) {
+              inside = true;
+              break;
+            }
+          }
+          if (!inside) roomGrid.push({ x: gx, y: gy, z: zWrist });
+        }
+      }
+
       // Ray-cast helper using window.check3dRayLos
-      const rayChecker = typeof window.check3dRayLos === 'function' ? window.check3dRayLos : function(A, T, obsList, rH) {
+      const rayChecker = typeof window.check3dRayLos === 'function' ? window.check3dRayLos : function(A, T, obsList, rH, ign) {
         return { clear: true };
       };
 
-      // Helper: Render individual proposed anchor cards
-      function renderAnchorCardsHtml(anchors) {
-        if (!Array.isArray(anchors)) return '';
-        return anchors.map(a => {
-          const losText = a.totalBeds > 0
-            ? (a.clearBeds === a.totalBeds
-                ? `<span style="color:#10B981; font-weight:700;">🟢 ${a.clearBeds}/${a.totalBeds} Beds Clear (100% 3D LOS)</span>`
-                : `<span style="color:#D97706; font-weight:700;">🟡 ${a.clearBeds}/${a.totalBeds} Beds Clear</span>`)
-            : '<span style="color:var(--text-muted);">No Beds Configured</span>';
+      // 1. Identify all available wall mounting segments (room perimeter + obstacle exterior walls)
+      const wallSegments = [
+        { id: 'WALL_N', name: 'North Wall', wall: 'NORTH', x1: 0.40, y1: roomY, x2: roomX - 0.40, y2: roomY, normal: { x: 0, y: -1 } },
+        { id: 'WALL_S', name: 'South Wall', wall: 'SOUTH', x1: 0.40, y1: 0, x2: roomX - 0.40, y2: 0, normal: { x: 0, y: 1 } },
+        { id: 'WALL_E', name: 'East Wall', wall: 'EAST', x1: roomX, y1: 0.40, x2: roomX, y2: roomY - 0.40, normal: { x: -1, y: 0 } },
+        { id: 'WALL_W', name: 'West Wall', wall: 'WEST', x1: 0, y1: 0.40, x2: 0, y2: roomY - 0.40, normal: { x: 1, y: 0 } }
+      ];
 
-          const boundText = a.device_id
-            ? `<span class="mono" style="color:var(--primary); font-weight:700;">${a.device_id}</span>`
-            : `<span style="color:var(--text-muted); font-style:italic;">Standby (Unbound)</span>`;
+      // Add mountable obstacle walls (Partitions, Pillars, Washrooms/Toilets, Cutouts) with height >= 1.80m
+      obstacles.forEach((obs, idx) => {
+        const oH = parseFloat(obs.height !== undefined ? obs.height : (obs.type === 'TABLE' ? 0.75 : roomH));
+        if (oH >= 1.80 && ['PARTITION', 'PILLAR', 'TOILET', 'CUTOUT'].includes((obs.type || '').toUpperCase())) {
+          const label = obs.label || `${obs.type} ${idx + 1}`;
+          // North face
+          if (obs.y + obs.length < roomY - 0.25) {
+            wallSegments.push({
+              id: `OBS_${obs.id || idx}_N`,
+              name: `${label} (North Face)`,
+              wall: 'PARTITION_N',
+              x1: obs.x + 0.10, y1: obs.y + obs.length,
+              x2: obs.x + obs.width - 0.10, y2: obs.y + obs.length,
+              normal: { x: 0, y: 1 },
+              mountedOnObsId: obs.id
+            });
+          }
+          // South face
+          if (obs.y > 0.25) {
+            wallSegments.push({
+              id: `OBS_${obs.id || idx}_S`,
+              name: `${label} (South Face)`,
+              wall: 'PARTITION_S',
+              x1: obs.x + 0.10, y1: obs.y,
+              x2: obs.x + obs.width - 0.10, y2: obs.y,
+              normal: { x: 0, y: -1 },
+              mountedOnObsId: obs.id
+            });
+          }
+          // East face
+          if (obs.x + obs.width < roomX - 0.25) {
+            wallSegments.push({
+              id: `OBS_${obs.id || idx}_E`,
+              name: `${label} (East Face)`,
+              wall: 'PARTITION_E',
+              x1: obs.x + obs.width, y1: obs.y + 0.10,
+              x2: obs.x + obs.width, y2: obs.y + obs.length - 0.10,
+              normal: { x: 1, y: 0 },
+              mountedOnObsId: obs.id
+            });
+          }
+          // West face
+          if (obs.x > 0.25) {
+            wallSegments.push({
+              id: `OBS_${obs.id || idx}_W`,
+              name: `${label} (West Face)`,
+              wall: 'PARTITION_W',
+              x1: obs.x, y1: obs.y + 0.10,
+              x2: obs.x, y2: obs.y + obs.length - 0.10,
+              normal: { x: -1, y: 0 },
+              mountedOnObsId: obs.id
+            });
+          }
+        }
+      });
 
-          return `
-            <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 3px;">
-                <strong style="font-size:12px; color:var(--text-primary);">📡 ${a.anchor_id}</strong>
-                <span style="font-size:11px;">Hardware: ${boundText}</span>
-              </div>
-              <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
-                Placement: <strong>${a.wall_location}</strong> · X: <strong>${a.x.toFixed(2)}m</strong>, Y: <strong>${a.y.toFixed(2)}m</strong>, Z: <strong>${a.z.toFixed(2)}m</strong>
-              </div>
-              <div style="font-size:11px;">
-                3D Line-of-Sight: ${losText}
-              </div>
-            </div>
-          `;
-        }).join('');
-      }
+      // 2. Sample candidate anchor points along segments
+      const candidatePoints = [];
+      wallSegments.forEach(seg => {
+        const isHoriz = Math.abs(seg.y1 - seg.y2) < 0.01;
+        const len = isHoriz ? Math.abs(seg.x2 - seg.x1) : Math.abs(seg.y2 - seg.y1);
+        if (len < 0.20) return;
 
-      // Helper to evaluate candidate wall positions
-      function findBestWallPosition({ targetWall, rangeMin, rangeMax, prefer = 'CENTER', step = 0.05 }) {
-        let best = null;
-        let bestScore = -9999;
+        const steps = Math.max(2, Math.round(len / 0.40));
+        for (let i = 0; i <= steps; i++) {
+          const frac = i / steps;
+          const ax = Math.round((seg.x1 + frac * (seg.x2 - seg.x1)) * 100) / 100;
+          const ay = Math.round((seg.y1 + frac * (seg.y2 - seg.y1)) * 100) / 100;
 
-        for (let pos = rangeMin; pos <= rangeMax + 0.001; pos += step) {
-          const rPos = Math.round(pos * 100) / 100;
-          let ax = 0, ay = 0;
-          let wallDesc = '';
-
-          if (targetWall === 'NORTH') {
-            ax = rPos;
-            ay = roomY; // Flush on North wall
-            wallDesc = 'North Wall (Flush)';
-          } else if (targetWall === 'SOUTH') {
-            ax = rPos;
-            ay = 0.00; // Flush on South wall
-            wallDesc = 'South Wall (Flush)';
-          } else if (targetWall === 'WEST') {
-            ax = 0.00; // Flush on West wall
-            ay = rPos;
-            wallDesc = 'West Wall (Flush)';
-          } else if (targetWall === 'EAST') {
-            ax = roomX; // Flush on East wall
-            ay = rPos;
-            wallDesc = 'East Wall (Flush)';
+          // Check door collision
+          if (door && door.wall === seg.wall) {
+            const dStart = (door.x || 0) - 0.20;
+            const dEnd = (door.x || 0) + (door.width || 0.90) + 0.20;
+            const coord = (seg.wall === 'NORTH' || seg.wall === 'SOUTH') ? ax : ay;
+            if (coord >= dStart && coord <= dEnd) continue;
           }
 
-          // 1. Must not penetrate an obstacle footprint on the wall
+          // Check obstacle footprint penetration
           let insideObs = false;
           for (const obs of obstacles) {
-            if (ax >= obs.x - 0.08 && ax <= obs.x + obs.width + 0.08 &&
-                ay >= obs.y - 0.08 && ay <= obs.y + obs.length + 0.08) {
+            if (seg.mountedOnObsId && obs.id === seg.mountedOnObsId) continue;
+            if (ax >= obs.x - 0.05 && ax <= obs.x + obs.width + 0.05 &&
+                ay >= obs.y - 0.05 && ay <= obs.y + obs.length + 0.05) {
               insideObs = true;
               break;
             }
           }
           if (insideObs) continue;
 
-          // 2. Must not collide with door threshold
-          if (door && door.wall === targetWall) {
-            const doorStart = (door.x || 0) - 0.20;
-            const doorEnd = (door.x || 0) + (door.width || 0.90) + 0.20;
-            const coord = (targetWall === 'NORTH' || targetWall === 'SOUTH') ? ax : ay;
-            if (coord >= doorStart && coord <= doorEnd) continue;
-          }
-
-          // 3. 3D Line-of-Sight evaluation to all beds
-          let clearCount = 0;
-          const aObj = { x: ax, y: ay, z: roomH };
-          for (const bt of bedTargets) {
-            const los = rayChecker(aObj, bt, obstacles, roomH);
-            if (los.clear) clearCount++;
-          }
-
-          // Score: prioritize direct 3D LOS, then baseline spread
-          let score = clearCount * 100;
-          const wallLen = (targetWall === 'NORTH' || targetWall === 'SOUTH') ? roomX : roomY;
-          const wallMid = wallLen / 2;
-          if (prefer === 'CENTER') {
-            score -= Math.abs(rPos - wallMid) * 15;
-          } else if (prefer === 'MIN') {
-            score -= (rPos - rangeMin) * 8;
-          } else if (prefer === 'MAX') {
-            score -= (rangeMax - rPos) * 8;
-          }
-
-          if (score > bestScore) {
-            bestScore = score;
-            best = {
-              x: ax,
-              y: ay,
-              z: roomH,
-              wall: targetWall,
-              wall_location: wallDesc,
-              clearBeds: clearCount,
-              totalBeds: bedTargets.length
-            };
-          }
-        }
-        return best;
-      }
-
-      // Preserve existing hardware attributes
-      const existingAnchors = currentWard.anchors || [];
-
-      // Multi-Topology Candidate Archetypes
-      const archetypes = [
-        {
-          id: 'TOP_1N_2S',
-          title: 'Pattern B: 1 North + 2 South (Upright Triangle)',
-          description: 'One anchor centered on North wall, two spread across South wall (Ideal when patient beds rest on South wall)',
-          anchors: [
-            { wall: 'NORTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'A', name: 'Anchor A' },
-            { wall: 'SOUTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'B', name: 'Anchor B' },
-            { wall: 'SOUTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'C', name: 'Anchor C' }
-          ]
-        },
-        {
-          id: 'TOP_2N_1S',
-          title: 'Pattern A: 2 North + 1 South (Inverted Triangle)',
-          description: 'Two anchors spread across North wall, one centered on South wall',
-          anchors: [
-            { wall: 'NORTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
-            { wall: 'NORTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
-            { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
-          ]
-        },
-        {
-          id: 'TOP_TRI_NES',
-          title: 'Pattern E: Tri-Perimeter (North, East, South)',
-          description: 'Anchors distributed across North, East, and South walls for maximum perimeter baseline coverage',
-          anchors: [
-            { wall: 'NORTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
-            { wall: 'EAST', min: roomY / 2, max: roomY - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
-            { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
-          ]
-        },
-        {
-          id: 'TOP_TRI_NWS',
-          title: 'Pattern F: Tri-Perimeter (North, West, South)',
-          description: 'Anchors distributed across North, West, and South walls',
-          anchors: [
-            { wall: 'NORTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'A', name: 'Anchor A' },
-            { wall: 'WEST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'B', name: 'Anchor B' },
-            { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
-          ]
-        },
-        {
-          id: 'TOP_1W_2E',
-          title: 'Pattern C: 1 West + 2 East (Horizontal Triangle)',
-          description: 'One anchor centered on West wall, two spread along East wall',
-          anchors: [
-            { wall: 'WEST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'A', name: 'Anchor A' },
-            { wall: 'EAST', min: 0.40, max: roomY / 2 - 0.20, prefer: 'MIN', slot: 'B', name: 'Anchor B' },
-            { wall: 'EAST', min: roomY / 2 + 0.20, max: roomY - 0.40, prefer: 'MAX', slot: 'C', name: 'Anchor C' }
-          ]
-        },
-        {
-          id: 'TOP_2W_1E',
-          title: 'Pattern D: 2 West + 1 East (Horizontal Triangle)',
-          description: 'Two anchors spread along West wall, one centered on East wall',
-          anchors: [
-            { wall: 'WEST', min: 0.40, max: roomY / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
-            { wall: 'WEST', min: roomY / 2 + 0.20, max: roomY - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
-            { wall: 'EAST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
-          ]
-        }
-      ];
-
-      // If existingAnchors has 4 or more anchors, add 4-anchor archetypes
-      if (existingAnchors.length >= 4) {
-        archetypes.unshift(
-          {
-            id: 'TOP_4_CORNERS',
-            title: 'Pattern 4-Corners: 2 North + 2 South',
-            description: 'Four perimeter anchors at the four room corners (North-West, North-East, South-East, South-West)',
-            anchors: [
-              { wall: 'NORTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
-              { wall: 'NORTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
-              { wall: 'SOUTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'C', name: 'Anchor C' },
-              { wall: 'SOUTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'D', name: 'Anchor D' }
-            ]
-          },
-          {
-            id: 'TOP_4_WALLS',
-            title: 'Pattern 4-Perimeter: 1 per Wall (Cross-Room)',
-            description: 'One anchor centered on each of the 4 perimeter walls (North, East, South, West)',
-            anchors: [
-              { wall: 'NORTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'A', name: 'Anchor A' },
-              { wall: 'EAST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'B', name: 'Anchor B' },
-              { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' },
-              { wall: 'WEST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'D', name: 'Anchor D' }
-            ]
-          }
-        );
-      }
-
-      const results = [];
-      archetypes.forEach(arch => {
-        const placed = [];
-        let valid = true;
-        for (const aSpec of arch.anchors) {
-          const p = findBestWallPosition({
-            targetWall: aSpec.wall,
-            rangeMin: aSpec.min,
-            rangeMax: aSpec.max,
-            prefer: aSpec.prefer
-          });
-          if (!p) {
-            valid = false;
-            break;
-          }
-          placed.push({
-            ...p,
-            slot: aSpec.slot,
-            anchor_id: aSpec.name,
-            wall_location: p.wall_location
-          });
-        }
-
-        // If this is a 3-anchor pattern but ward has 4 or more anchors, place the 4th anchor
-        if (valid && existingAnchors.length >= 4 && placed.length === 3) {
-          const usedWalls = placed.map(p => p.wall);
-          let candD = null;
-          ['EAST', 'WEST', 'NORTH', 'SOUTH'].forEach(w => {
-            if (!candD && !usedWalls.includes(w)) {
-              candD = findBestWallPosition({ targetWall: w, rangeMin: 0.40, rangeMax: (w === 'NORTH' || w === 'SOUTH' ? roomX : roomY) - 0.40, prefer: 'CENTER' });
+          // Standoff from tall obstacles (avoid vertical shadow blockage)
+          let minTallDist = 999;
+          for (const obs of obstacles) {
+            if (seg.mountedOnObsId && obs.id === seg.mountedOnObsId) continue;
+            const oH = parseFloat(obs.height !== undefined ? obs.height : (obs.type === 'TABLE' ? 0.75 : roomH));
+            if (oH >= 1.20) {
+              const dx = Math.max(obs.x - ax, 0, ax - (obs.x + obs.width));
+              const dy = Math.max(obs.y - ay, 0, ay - (obs.y + obs.length));
+              const d = Math.sqrt(dx * dx + dy * dy);
+              if (d < minTallDist) minTallDist = d;
             }
-          });
-          if (!candD) {
-            candD = findBestWallPosition({ targetWall: 'EAST', rangeMin: 0.40, rangeMax: roomY - 0.40, prefer: 'CENTER' }) ||
-                    findBestWallPosition({ targetWall: 'WEST', rangeMin: 0.40, rangeMax: roomY - 0.40, prefer: 'CENTER' });
           }
-          if (candD) {
-            placed.push({
-              ...candD,
-              slot: 'D',
-              anchor_id: existingAnchors[3]?.anchor_id || 'Anchor D',
-              wall_location: candD.wall_location
-            });
-          }
-        }
+          // If within 0.45m of a tall obstacle, vertical shadow blocks nearby room
+          if (minTallDist < 0.45) continue;
 
-        if (valid && placed.length >= 3) {
-          // Calculate polygon area using shoelace formula
-          const pts = placed.map(p => ({ x: p.x, y: p.y }));
-          const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
-          const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
-          pts.sort((p1, p2) => Math.atan2(p1.y - cy, p1.x - cx) - Math.atan2(p2.y - cy, p2.x - cx));
-          let sumShoe = 0;
-          for (let i = 0; i < pts.length; i++) {
-            const j = (i + 1) % pts.length;
-            sumShoe += (pts[i].x * pts[j].y) - (pts[i].y * pts[j].x);
-          }
-          const area = Math.abs(sumShoe) / 2;
-          const roomArea = roomX * roomY;
-          const areaRatio = roomArea > 0 ? (area / roomArea) : 0;
-
-          let totalClear = 0;
-          let totalRays = placed.length * bedTargets.length;
-          placed.forEach(a => {
-            let aClear = 0;
-            bedTargets.forEach(bt => {
-              if (rayChecker(a, bt, obstacles, roomH).clear) {
-                totalClear++;
-                aClear++;
-              }
-            });
-            a.clearBeds = aClear;
-            a.totalBeds = bedTargets.length;
-          });
-
-          // Preserve existing hardware attributes
-          placed.forEach((sugg, idx) => {
-            sugg.anchor_id = existingAnchors[idx]?.anchor_id || `Anchor ${String.fromCharCode(65 + idx)}`;
-            sugg.device_id = existingAnchors[idx]?.device_id || null;
-            sugg.mac_address = existingAnchors[idx]?.mac_address || '';
-            sugg.status = existingAnchors[idx]?.status || 'STANDBY';
-          });
-
-          const losPct = totalRays > 0 ? (totalClear / totalRays) * 100 : 100;
-          const compositeScore = Math.round(losPct * 0.65 + Math.min(50, areaRatio * 100) * 0.35);
-
-          results.push({
-            id: arch.id,
-            title: arch.title,
-            description: arch.description,
-            anchors: placed,
-            area: Math.round(area * 100) / 100,
-            areaRatio: Math.round(areaRatio * 100),
-            totalClear,
-            totalRays,
-            losPct: Math.round(losPct),
-            compositeScore
+          candidatePoints.push({
+            x: ax,
+            y: ay,
+            z: roomH,
+            segId: seg.id,
+            wallName: seg.name,
+            wallType: seg.wall,
+            mountedOnObsId: seg.mountedOnObsId || null,
+            normal: seg.normal
           });
         }
       });
 
-      // Fallback in extreme cases where room geometry blocks all standard patterns
+      // 3. Exhaustive combinations generator
+      const validTriplets = [];
+      const numCands = candidatePoints.length;
+
+      for (let i = 0; i < numCands - 2; i++) {
+        for (let j = i + 1; j < numCands - 1; j++) {
+          for (let k = j + 1; k < numCands; k++) {
+            const A = candidatePoints[i], B = candidatePoints[j], C = candidatePoints[k];
+            const wallTypes = new Set([A.wallType, B.wallType, C.wallType]);
+            if (wallTypes.size < 2) continue; // Spans at least 2 distinct directions
+
+            const dAB = Math.hypot(A.x - B.x, A.y - B.y);
+            const dBC = Math.hypot(B.x - C.x, B.y - C.y);
+            const dCA = Math.hypot(C.x - A.x, C.y - A.y);
+            if (dAB < 1.10 || dBC < 1.10 || dCA < 1.10) continue;
+
+            const triArea = Math.abs((A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y)) / 2);
+            const roomArea = roomX * roomY;
+            const areaRatio = roomArea > 0 ? (triArea / roomArea) : 0;
+            if (areaRatio < 0.15) continue; // Non-collinear minimum baseline
+
+            // Joint Bed 3D LOS
+            let jointBedClear = 0;
+            bedTargets.forEach(bt => {
+              const losA = rayChecker({ x: A.x + (A.normal?.x||0)*0.02, y: A.y + (A.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, A.mountedOnObsId).clear;
+              const losB = rayChecker({ x: B.x + (B.normal?.x||0)*0.02, y: B.y + (B.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, B.mountedOnObsId).clear;
+              const losC = rayChecker({ x: C.x + (C.normal?.x||0)*0.02, y: C.y + (C.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, C.mountedOnObsId).clear;
+              if (losA && losB && losC) jointBedClear++;
+            });
+            const jointBedPct = bedTargets.length > 0 ? (jointBedClear / bedTargets.length) * 100 : 100;
+
+            // Joint Room Grid 3D LOS
+            let gridSeen3 = 0;
+            roomGrid.forEach(p => {
+              const losA = rayChecker({ x: A.x + (A.normal?.x||0)*0.02, y: A.y + (A.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, A.mountedOnObsId).clear ? 1 : 0;
+              const losB = rayChecker({ x: B.x + (B.normal?.x||0)*0.02, y: B.y + (B.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, B.mountedOnObsId).clear ? 1 : 0;
+              const losC = rayChecker({ x: C.x + (C.normal?.x||0)*0.02, y: C.y + (C.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, C.mountedOnObsId).clear ? 1 : 0;
+              if (losA + losB + losC >= 3) gridSeen3++;
+            });
+            const grid3Pct = roomGrid.length > 0 ? (gridSeen3 / roomGrid.length) * 100 : 100;
+
+            const compositeScore = Math.round(
+              0.40 * jointBedPct +
+              0.35 * grid3Pct +
+              0.25 * Math.min(50, areaRatio * 100) * 2
+            );
+
+            // Compute individual clear beds for anchor card display
+            const aList = [A, B, C].map((pt, aIdx) => {
+              let aBedClear = 0;
+              bedTargets.forEach(bt => {
+                if (rayChecker({ x: pt.x + (pt.normal?.x||0)*0.02, y: pt.y + (pt.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, pt.mountedOnObsId).clear) {
+                  aBedClear++;
+                }
+              });
+              return {
+                anchor_id: existingAnchors[aIdx]?.anchor_id || `Anchor ${String.fromCharCode(65 + aIdx)}`,
+                device_id: existingAnchors[aIdx]?.device_id || null,
+                mac_address: existingAnchors[aIdx]?.mac_address || '',
+                status: existingAnchors[aIdx]?.status || 'STANDBY',
+                x: pt.x,
+                y: pt.y,
+                z: roomH,
+                wall_location: `${pt.wallName} (Flush)`,
+                mountedOnObsId: pt.mountedOnObsId || null,
+                clearBeds: aBedClear,
+                totalBeds: bedTargets.length
+              };
+            });
+
+            // If existingAnchors has 4th anchor, place complementary 4th anchor
+            if (existingAnchors.length >= 4) {
+              const usedWalls = aList.map(a => a.wall_location);
+              let candD = candidatePoints.find(p => !usedWalls.includes(`${p.wallName} (Flush)`));
+              if (!candD) candD = candidatePoints[0];
+              if (candD) {
+                let dBedClear = 0;
+                bedTargets.forEach(bt => {
+                  if (rayChecker({ x: candD.x + (candD.normal?.x||0)*0.02, y: candD.y + (candD.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, candD.mountedOnObsId).clear) {
+                    dBedClear++;
+                  }
+                });
+                aList.push({
+                  anchor_id: existingAnchors[3]?.anchor_id || 'Anchor D',
+                  device_id: existingAnchors[3]?.device_id || null,
+                  mac_address: existingAnchors[3]?.mac_address || '',
+                  status: existingAnchors[3]?.status || 'STANDBY',
+                  x: candD.x,
+                  y: candD.y,
+                  z: roomH,
+                  wall_location: `${candD.wallName} (Flush)`,
+                  mountedOnObsId: candD.mountedOnObsId || null,
+                  clearBeds: dBedClear,
+                  totalBeds: bedTargets.length
+                });
+              }
+            }
+
+            const archKey = [A.wallType, B.wallType, C.wallType].sort().join('+');
+
+            validTriplets.push({
+              archKey,
+              anchors: aList,
+              area: Math.round(triArea * 100) / 100,
+              areaRatio: Math.round(areaRatio * 100),
+              jointBedClear,
+              totalBeds: bedTargets.length,
+              jointBedPct: Math.round(jointBedPct),
+              grid3Pct: Math.round(grid3Pct),
+              compositeScore
+            });
+          }
+        }
+      }
+
+      // Sort combinations descending by composite score
+      validTriplets.sort((t1, t2) => t2.compositeScore - t1.compositeScore);
+
+      // Group by distinct topology archetype to pick best representative
+      const bestByArch = {};
+      validTriplets.forEach(trip => {
+        if (!bestByArch[trip.archKey]) {
+          bestByArch[trip.archKey] = trip;
+        }
+      });
+
+      const results = Object.values(bestByArch).sort((a, b) => b.compositeScore - a.compositeScore);
+
+      // Add human-friendly titles & descriptions
+      results.forEach((r, idx) => {
+        r.id = `PATTERN_${idx + 1}`;
+        const wallCounts = {};
+        r.anchors.slice(0, 3).forEach(a => {
+          const name = a.wall_location.replace(/ \(Flush\)/g, '');
+          wallCounts[name] = (wallCounts[name] || 0) + 1;
+        });
+        const summaryStr = Object.entries(wallCounts).map(([w, c]) => `${c}× ${w}`).join(' + ');
+        r.title = `Pattern ${idx + 1}: ${summaryStr}`;
+        r.description = `Covers ${r.area.toFixed(2)} m² baseline (${r.areaRatio}% room). Patient Beds 3D LOS: ${r.jointBedPct}%, Room Floor 3-Anchor LOS: ${r.grid3Pct}%. Free of tall obstacle shadows.`;
+      });
+
+      // Fallback in extreme cases where room geometry blocks all combinations
       if (results.length === 0) {
         const fallbackAnchors = [
           { anchor_id: existingAnchors[0]?.anchor_id || 'Anchor A', device_id: existingAnchors[0]?.device_id || null, mac_address: existingAnchors[0]?.mac_address || '', status: 'STANDBY', x: 0.40, y: roomY, z: roomH, wall_location: 'North Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length },
@@ -1488,21 +1495,19 @@
           { anchor_id: existingAnchors[2]?.anchor_id || 'Anchor C', device_id: existingAnchors[2]?.device_id || null, mac_address: existingAnchors[2]?.mac_address || '', status: 'STANDBY', x: Math.max(0.40, roomX / 2), y: 0.00, z: roomH, wall_location: 'South Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length }
         ];
         results.push({
-          id: 'TOP_FALLBACK',
-          title: 'Standard Perimeter Layout',
-          description: 'Basic perimeter wall layout',
+          id: 'PATTERN_1',
+          title: 'Pattern 1: Perimeter Wall Spread',
+          description: 'Basic fallback layout along room perimeter walls',
           anchors: fallbackAnchors,
           area: Math.round((roomX * roomY * 0.35) * 100) / 100,
           areaRatio: 35,
-          totalClear: bedTargets.length * 3,
-          totalRays: bedTargets.length * 3,
-          losPct: 100,
+          jointBedClear: bedTargets.length,
+          totalBeds: bedTargets.length,
+          jointBedPct: 100,
+          grid3Pct: 80,
           compositeScore: 60
         });
       }
-
-      // Sort candidate topologies descending by composite score
-      results.sort((a, b) => b.compositeScore - a.compositeScore);
 
       window.currentAnchorPatterns = results;
       window.activeSuggestedPattern = results[0];
@@ -1527,7 +1532,7 @@
               <canvas id="modal-suggest-preview-canvas" width="460" height="320" style="width: 100%; height: 100%; display: block;"></canvas>
             </div>
             <!-- Visual Legend -->
-            <div style="display: flex; justify-content: space-between; font-size: 10px; font-weight: 600; color: var(--text-muted); margin-top: 8px; flex-wrap: gap: 6px;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; font-weight: 600; color: var(--text-muted); margin-top: 8px; flex-wrap: wrap; gap: 6px;">
               <span style="color: #0284C7;">🔵 Wall Anchors (Flush)</span>
               <span style="color: #10B981;">🟢 Direct 3D LOS</span>
               <span style="color: #EF4444;">🔴 NLOS Obstruction</span>
@@ -1541,7 +1546,7 @@
             <div style="background: #F8FAFC; border: 1.5px solid #CBD5E1; border-radius: 8px; padding: 10px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
                 <label for="modal-pattern-select" style="font-size: 11px; font-weight: 700; color: var(--text-primary); margin:0;">
-                  📐 Select Anchor Layout Pattern:
+                  📐 Select Anchor Layout Pattern (${results.length} combinations found):
                 </label>
                 <span id="modal-pattern-badge" class="badge badge-live" style="font-size: 10px;">Rank #1 (${activePat.compositeScore}/100)</span>
               </div>
@@ -1572,7 +1577,7 @@
             <!-- Proposed Anchors List -->
             <div style="font-weight: 700; font-size: 12px; color: var(--text-primary); margin-bottom: 6px; display:flex; justify-content:space-between; align-items:center;">
               <span>Proposed Wall Positions:</span>
-              <span id="modal-metric-los" style="font-size: 11px; font-weight: 600; color: #10B981;">🟢 3D LOS: ${activePat.totalClear}/${activePat.totalRays} (${activePat.losPct}%)</span>
+              <span id="modal-metric-los" style="font-size: 11px; font-weight: 600; color: #10B981;">🟢 Beds 3-LOS: ${activePat.jointBedClear}/${activePat.totalBeds} (${activePat.jointBedPct}%) · Room: ${activePat.grid3Pct}%</span>
             </div>
             <div id="modal-anchor-cards-container" style="max-height: 175px; overflow-y: auto; margin-bottom: 12px;">
               ${anchorCardsHtml}
@@ -1581,7 +1586,8 @@
             <!-- Physical Optimization Insights -->
             <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 6px; padding: 8px 10px; font-size: 11px; color: #1E40AF; line-height: 1.4;">
               <strong>💡 Physical Optimization Insights:</strong><br>
-              • Anchors are positioned <strong>strictly on perimeter walls</strong> (no floating coordinates).<br>
+              • Evaluates <strong>all multi-directional wall combinations</strong> (perimeter walls + obstacle exterior walls like partitions/washrooms).<br>
+              • Maintains clearance from tall obstacles to eliminate <strong>2-3m vertical shadow cone blind spots</strong>.<br>
               • Ceiling mount height (${roomH.toFixed(2)}m) allows radio waves to travel <strong>downward over tables (0.75m) and bed frames</strong>.<br>
               • Switch patterns above to test different wall combinations. Click <strong>Accept & Apply</strong> to load the selected layout into the form.
             </div>
@@ -1649,9 +1655,7 @@
 
       const losEl = document.getElementById('modal-metric-los');
       if (losEl) {
-        losEl.innerHTML = pattern.totalRays > 0
-          ? `🟢 3D LOS: ${pattern.totalClear}/${pattern.totalRays} (${pattern.losPct}%)`
-          : '🟢 3D LOS: Clear';
+        losEl.innerHTML = `🟢 Beds 3-LOS: ${pattern.jointBedClear}/${pattern.totalBeds} (${pattern.jointBedPct}%) · Room: ${pattern.grid3Pct}%`;
       }
 
       const cardsContainer = document.getElementById('modal-anchor-cards-container');

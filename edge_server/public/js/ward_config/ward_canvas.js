@@ -353,7 +353,7 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
           const bedCenterY = b.y + spanY / 2;
           const targetObj = { x: bedCenterX, y: bedCenterY, z: 0.85 };
 
-          const los = check3dRayLos(anchorObj, targetObj, ward.obstacles || [], roomH);
+          const los = check3dRayLos(anchorObj, targetObj, ward.obstacles || [], roomH, a.mountedOnObsId);
 
           const bx = originX + bedCenterX * scale;
           const by = originY + (roomY - bedCenterY) * scale;
@@ -446,21 +446,23 @@ function redrawWardMap() {
  * Determines whether a line-of-sight ray between an anchor (at Az) and target (at Tz = 0.85m)
  * is clear or physically obstructed by 3D obstacles (considering their height).
  */
-function check3dRayLos(A, T, obstacles, roomH = 2.80) {
+function check3dRayLos(A, T, obstacles, roomH = 2.80, ignoreObsId = null) {
   const dx = T.x - A.x;
   const dy = T.y - A.y;
   let isBlocked = false;
   let blockingObs = null;
   let minRayH = 999;
+  const effectiveIgnoreId = ignoreObsId || A.mountedOnObsId;
 
   for (const obs of obstacles) {
+    if (effectiveIgnoreId && (obs.id === effectiveIgnoreId || obs.label === effectiveIgnoreId)) continue;
     const xMin = obs.x;
     const xMax = obs.x + obs.width;
     const yMin = obs.y;
     const yMax = obs.y + obs.length;
     const obsH = obs.height !== undefined ? parseFloat(obs.height) : (obs.type === 'TABLE' ? 0.75 : roomH);
 
-    let tMin = 0;
+    let tMin = 0.01;
     let tMax = 1;
 
     // Liang-Barsky / Slab box clipping in 2D
@@ -486,7 +488,7 @@ function check3dRayLos(A, T, obstacles, roomH = 2.80) {
       if (tMin > tMax) continue;
     }
 
-    if (tMax >= 0 && tMin <= 1) {
+    if (tMax >= 0.01 && tMin <= 0.99) {
       // 2D segment intersects obstacle footprint
       const tPenetrationEnd = Math.min(1, Math.max(0, tMax));
       const rayH = A.z + tPenetrationEnd * (T.z - A.z);
