@@ -69,6 +69,10 @@ async function initializeApp() {
       if (typeof window.initDevicesModule === 'function') {
         window.initDevicesModule();
       }
+    } else if (targetTabId === 'tab-bindings') {
+      if (typeof window.initBindingsModule === 'function') {
+        window.initBindingsModule();
+      }
     } else if (targetTabId === 'tab-ward-config') {
       if (typeof window.forceReturnToWardDirectory === 'function') {
         window.forceReturnToWardDirectory();
@@ -132,6 +136,9 @@ async function initializeApp() {
   }
   if (typeof window.initDevicesModule === 'function') {
     window.initDevicesModule();
+  }
+  if (typeof window.initBindingsModule === 'function') {
+    window.initBindingsModule();
   }
 
   // 6. Global Window Resize Handling
