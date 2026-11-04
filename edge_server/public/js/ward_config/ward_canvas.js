@@ -237,7 +237,8 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
       // Label
       mapCtx.fillStyle = '#0284C7';
       mapCtx.font = '700 10px sans-serif';
-      mapCtx.fillText(`${a.anchor_id}`, px + 8, py + 4);
+      const labelText = a.device_id ? `${a.anchor_id} (${a.device_id})` : `${a.anchor_id}`;
+      mapCtx.fillText(labelText, px + 8, py + 4);
     });
   }
 }

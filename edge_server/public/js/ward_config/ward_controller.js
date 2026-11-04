@@ -25,6 +25,19 @@
     let isCreatingNew = false;
     let isDirty = false;
     let savedWardSnapshot = '';
+    let cachedRegisteredAnchors = [];
+
+    async function fetchRegisteredAnchors() {
+      try {
+        const res = await fetch('/api/devices/list?type=ANCHOR');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.devices)) {
+          cachedRegisteredAnchors = data.devices;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch registered anchors for ward configuration:', err);
+      }
+    }
 
     function captureWardSnapshot() {
       savedWardSnapshot = JSON.stringify(currentWard);
@@ -172,19 +185,26 @@
 
         // Format Wall Anchors as structured individual cards
         const anchorsList = (w.anchors && w.anchors.length > 0)
-          ? w.anchors.map(a => `
+          ? w.anchors.map(a => {
+              const isAssigned = !!a.device_id;
+              const liveStatus = isAssigned ? (a.status || 'OFFLINE') : 'STANDBY';
+              const badgeClass = liveStatus === 'ONLINE' ? 'badge-live' : (liveStatus === 'OFFLINE' ? 'badge-alert' : 'badge-neutral');
+              const nodeDisplay = isAssigned 
+                ? `<div class="mono" style="font-size:11px; color:var(--primary); font-weight:700;">Node: ${a.device_id}</div>`
+                : `<div style="font-size:11px; color:var(--text-muted); font-style:italic;">Node: Unassigned (Standby Slot)</div>`;
+
+              return `
               <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
                   <strong style="color:var(--text-primary); font-size:12px;">📡 ${a.anchor_id}</strong>
-                  <span class="badge ${a.status === 'ONLINE' ? 'badge-live' : 'badge-neutral'}" style="font-size:10px;">${a.status || 'STANDBY'}</span>
+                  <span class="badge ${badgeClass}" style="font-size:10px;">● ${liveStatus}</span>
                 </div>
-                <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
+                <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 3px;">
                   Position: (${Number(a.x).toFixed(2)}m, ${Number(a.y).toFixed(2)}m, ${Number(a.z).toFixed(2)}m) · ${a.wall_location || 'Wall'}
                 </div>
-                <div class="mono" style="font-size:10px; color:var(--primary); font-weight:600;">
-                  ID / MAC: ${a.mac_address || a.id || '-'}
-                </div>
-              </div>`).join('')
+                ${nodeDisplay}
+              </div>`;
+            }).join('')
           : '<div style="color:var(--text-muted); font-size:12px; padding:12px; text-align:center;">No BLE anchors configured.</div>';
 
         // Format Obstacles as structured individual cards (fixing undefined bug)
@@ -317,6 +337,7 @@
 
     async function openWardEditor(wardId) {
       try {
+        await fetchRegisteredAnchors();
         const res = await fetch(`/api/ward/config?ward_id=${encodeURIComponent(wardId)}`);
         const data = await res.json();
         if (data.success && data.ward) {
@@ -342,7 +363,8 @@
       }
     }
 
-    function createNewWard() {
+    async function createNewWard() {
+      await fetchRegisteredAnchors();
       isCreatingNew = true;
       const newWardId = generateNextWardId();
       const numStr = newWardId.replace('WARD-', '');
@@ -361,9 +383,9 @@
           { bed_id: `BED-${numStr}-02`, bed_code: 'Bed 2', x: 0.80, y: 0.40, width: 0.90, length: 2.00, status: 'AVAILABLE' }
         ],
         anchors: [
-          { anchor_id: 'anchor-A', mac_address: 'C4:DE:E2:10:01:BA', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-          { anchor_id: 'anchor-B', mac_address: 'C4:DE:E2:10:01:BB', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-          { anchor_id: 'anchor-C', mac_address: 'C4:DE:E2:10:01:BC', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+          { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
+          { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
+          { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
         ]
       };
 
@@ -408,6 +430,9 @@
     }
 
     async function loadWardDataFromDB() {
+      // Fetch registered hardware anchors cache
+      await fetchRegisteredAnchors();
+
       // Load directory on boot
       await loadWardDirectory();
 
@@ -716,9 +741,49 @@
         const yVal = Number(a.y !== undefined ? a.y : 0).toFixed(2);
         const zVal = Number(a.z !== undefined ? a.z : 1.80).toFixed(2);
 
+        // Build list of eligible anchors for this dropdown
+        const chosenInOtherSlots = new Set(
+          list.filter((_, idx) => idx !== index && _.device_id).map(_ => _.device_id)
+        );
+
+        let optionsHtml = `<option value="">-- Unassigned (Standby Slot) --</option>`;
+        cachedRegisteredAnchors.forEach(dev => {
+          // If already chosen in another slot row, skip
+          if (chosenInOtherSlots.has(dev.device_id)) return;
+
+          // If assigned to another ward in DB, skip (unless assigned to current ward)
+          const isAssignedOtherWard = dev.assigned_ward_id && dev.assigned_ward_id !== currentWard.ward_id;
+          if (isAssignedOtherWard && dev.device_id !== a.device_id) return;
+
+          // If marked NOT_AVAILABLE (broken), skip unless already selected in this slot
+          if (dev.availability_status === 'NOT_AVAILABLE' && dev.device_id !== a.device_id) return;
+
+          // If in use by another ward, skip
+          if (dev.availability_status === 'IN_USE' && dev.assigned_ward_id !== currentWard.ward_id && dev.device_id !== a.device_id) return;
+
+          const isSelected = a.device_id && a.device_id === dev.device_id;
+          const statusDot = dev.status === 'ONLINE' ? '● Online' : '○ Offline';
+          optionsHtml += `<option value="${dev.device_id}" ${isSelected ? 'selected' : ''}>${dev.device_id} (${statusDot})</option>`;
+        });
+
+        // Status badge: LIVE (ONLINE) / ALERT (OFFLINE) / NEUTRAL (STANDBY)
+        const isAssigned = !!a.device_id;
+        let statusBadgeHtml = '';
+        if (isAssigned) {
+          const foundDev = cachedRegisteredAnchors.find(d => d.device_id === a.device_id);
+          const liveStatus = (foundDev ? foundDev.status : a.status) || 'OFFLINE';
+          statusBadgeHtml = `<span class="badge ${liveStatus === 'ONLINE' ? 'badge-live' : 'badge-alert'}">● ${liveStatus}</span>`;
+        } else {
+          statusBadgeHtml = `<span class="badge badge-neutral">● STANDBY</span>`;
+        }
+
         const row = `<tr>
           <td><b style="color: var(--primary); font-size: 12px;">${a.anchor_id}</b></td>
-          <td><input type="text" class="form-control mono" style="padding: 4px 8px; font-size: 11px;" value="${a.mac_address}" oninput="updateAnchor(${index}, 'mac_address', this.value)"></td>
+          <td>
+            <select class="form-control" style="padding: 4px 8px; font-size: 12px; font-weight: 600;" onchange="onAnchorDeviceSelected(${index}, this.value)">
+              ${optionsHtml}
+            </select>
+          </td>
           <td>
             <div style="display: flex; gap: 4px; align-items: center;">
               <span style="font-size: 11px; color: var(--text-muted);">X:</span>
@@ -730,7 +795,7 @@
             </div>
           </td>
           <td>
-            <span class="badge ${a.status === 'ONLINE' ? 'badge-live' : 'badge-neutral'}">${a.status}</span>
+            ${statusBadgeHtml}
           </td>
           <td>
             <button class="btn btn-danger-outline btn-sm" onclick="deleteAnchor(${index})">🗑</button>
@@ -740,12 +805,33 @@
       });
     }
 
+    function onAnchorDeviceSelected(index, selectedDeviceId) {
+      if (!currentWard.anchors || !currentWard.anchors[index]) return;
+      const devId = (selectedDeviceId || '').trim();
+      if (!devId) {
+        currentWard.anchors[index].device_id = null;
+        currentWard.anchors[index].mac_address = '';
+        currentWard.anchors[index].status = 'STANDBY';
+      } else {
+        currentWard.anchors[index].device_id = devId;
+        const foundDev = cachedRegisteredAnchors.find(d => d.device_id === devId);
+        if (foundDev) {
+          currentWard.anchors[index].mac_address = foundDev.mac_address || '';
+          currentWard.anchors[index].status = foundDev.status || 'OFFLINE';
+        }
+      }
+      renderAnchorsTable();
+      redrawWardMap();
+      markUnsavedChanges();
+    }
+
     function addAnchor() {
       if (!currentWard.anchors) currentWard.anchors = [];
       const letter = String.fromCharCode(65 + currentWard.anchors.length);
       currentWard.anchors.push({
-        anchor_id: `anchor-${letter}`,
-        mac_address: `C4:DE:E2:10:01:A${letter}`,
+        anchor_id: `Anchor ${letter}`,
+        device_id: null,
+        mac_address: '',
         x: 0.50,
         y: 0.50,
         z: 1.80,
@@ -997,6 +1083,8 @@ window.addBed = addBed;
 window.updateBed = updateBed;
 window.deleteBed = deleteBed;
 window.renderAnchorsTable = renderAnchorsTable;
+window.onAnchorDeviceSelected = onAnchorDeviceSelected;
+window.fetchRegisteredAnchors = fetchRegisteredAnchors;
 window.addAnchor = addAnchor;
 window.updateAnchor = updateAnchor;
 window.deleteAnchor = deleteAnchor;

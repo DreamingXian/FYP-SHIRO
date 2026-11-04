@@ -22,9 +22,9 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-A1-04', bed_code: 'Bed 4', x: 4.70, y: 0.40, width: 0.90, length: 2.00, status: 'UNAVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'anchor-A', mac_address: 'C4:DE:E2:10:01:AB', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'ONLINE' },
-      { anchor_id: 'anchor-B', mac_address: 'C4:DE:E2:10:01:AC', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'anchor-C', mac_address: 'C4:DE:E2:10:01:AD', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
     ]
   },
   'RECTANGLE': {
@@ -41,9 +41,9 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-A1-04', bed_code: 'Bed 4', x: 4.70, y: 0.40, width: 0.90, length: 2.00, status: 'AVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'anchor-A', mac_address: 'C4:DE:E2:10:01:AB', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'ONLINE' },
-      { anchor_id: 'anchor-B', mac_address: 'C4:DE:E2:10:01:AC', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'anchor-C', mac_address: 'C4:DE:E2:10:01:AD', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
     ]
   },
   'ISOLATION': {
@@ -60,9 +60,9 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-ISO-02', bed_code: 'Bed 2', x: 3.10, y: 1.50, width: 0.90, length: 2.00, status: 'AVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'anchor-A', mac_address: 'C4:DE:E2:10:01:AB', x: 0.40, y: 3.60, z: 1.80, wall_location: 'North-West Wall', status: 'ONLINE' },
-      { anchor_id: 'anchor-B', mac_address: 'C4:DE:E2:10:01:AC', x: 4.40, y: 3.60, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'anchor-C', mac_address: 'C4:DE:E2:10:01:AD', x: 2.40, y: 0.40, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.40, y: 3.60, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 4.40, y: 3.60, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.40, y: 0.40, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
     ]
   }
 };
@@ -92,9 +92,15 @@ async function getWardConfig(wardId = 'WARD-001') {
     [wardId]
   );
 
-  // 4. Fetch Stationary Anchors
+  // 4. Fetch Stationary Anchors with live device telemetry status
   const [anchors] = await pool.query(
-    'SELECT anchor_id, mac_address, x, y, z, wall_location, status FROM ward_anchors WHERE ward_id = ? ORDER BY anchor_id ASC',
+    `SELECT 
+       wa.anchor_id, wa.device_id, wa.mac_address, wa.x, wa.y, wa.z, wa.wall_location, wa.status,
+       d.status AS live_device_status, d.mac_address AS dev_mac
+     FROM ward_anchors wa
+     LEFT JOIN devices d ON wa.device_id = d.device_id
+     WHERE wa.ward_id = ? 
+     ORDER BY wa.anchor_id ASC`,
     [wardId]
   );
 
@@ -135,12 +141,13 @@ async function getWardConfig(wardId = 'WARD-001') {
     })),
     anchors: anchors.map(a => ({
       anchor_id: a.anchor_id,
-      mac_address: a.mac_address,
+      device_id: a.device_id || null,
+      mac_address: a.mac_address || a.dev_mac || '',
       x: parseFloat(a.x),
       y: parseFloat(a.y),
       z: parseFloat(a.z),
       wall_location: a.wall_location || '',
-      status: a.status
+      status: a.device_id ? (a.live_device_status || a.status || 'OFFLINE') : 'STANDBY'
     }))
   };
 }
@@ -215,15 +222,35 @@ async function saveWardConfig(data) {
     }
 
     // 4. Replace Anchors
+    // First, unbind any existing devices previously assigned to this ward
+    await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ?", [wardId]);
+
     await conn.query('DELETE FROM ward_anchors WHERE ward_id = ?', [wardId]);
     if (Array.isArray(data.anchors) && data.anchors.length > 0) {
       for (let i = 0; i < data.anchors.length; i++) {
         const a = data.anchors[i];
-        const aId = a.anchor_id || `anchor-${String.fromCharCode(65 + i)}`;
-        const mac = a.mac_address || '00:00:00:00:00:00';
+        const aId = a.anchor_id || `Anchor ${String.fromCharCode(65 + i)}`;
+        const devId = a.device_id && typeof a.device_id === 'string' && a.device_id.trim() !== '' ? a.device_id.trim() : null;
+        let mac = a.mac_address || '';
+        let status = 'STANDBY';
+
+        if (devId) {
+          // If assigned to a device, query its current MAC and live status
+          const [devRows] = await conn.query('SELECT mac_address, status FROM devices WHERE device_id = ?', [devId]);
+          if (devRows && devRows.length > 0) {
+            mac = devRows[0].mac_address || mac;
+            status = devRows[0].status || 'OFFLINE';
+          }
+          // Mark this device as IN_USE and bound to this ward
+          await conn.query(
+            "UPDATE devices SET assigned_ward_id = ?, availability_status = 'IN_USE' WHERE device_id = ?",
+            [wardId, devId]
+          );
+        }
+
         await conn.query(
-          'INSERT INTO ward_anchors (anchor_id, ward_id, mac_address, x, y, z, wall_location, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [aId, wardId, mac, a.x || 0, a.y || 0, a.z || 1.80, a.wall_location || '', a.status || 'STANDBY']
+          'INSERT INTO ward_anchors (anchor_id, ward_id, device_id, mac_address, x, y, z, wall_location, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [aId, wardId, devId, mac, a.x || 0, a.y || 0, a.z || 1.80, a.wall_location || '', status]
         );
       }
     }
@@ -274,11 +301,23 @@ async function getAllWards() {
 
 /**
  * Delete a ward and its associated beds, obstacles, anchors (cascades)
+ * Also releases any devices assigned to this ward back to AVAILABLE status.
  */
 async function deleteWard(wardId) {
   const pool = getPool();
-  await pool.query('DELETE FROM ward_rooms WHERE ward_id = ?', [wardId]);
-  return { success: true, ward_id: wardId };
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ?", [wardId]);
+    await conn.query('DELETE FROM ward_rooms WHERE ward_id = ?', [wardId]);
+    await conn.commit();
+    return { success: true, ward_id: wardId };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
 }
 
 /**

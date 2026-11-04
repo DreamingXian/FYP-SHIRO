@@ -197,3 +197,4 @@ Code/
 * [ ] Meta Quest 3 Mixed Reality spatial interface client (Unity OpenXR).
 * [ ] Multi-anchor 2D trilateration positioning solver.
 * [ ] Spatial heatmaps and automated geofenced clinical alarms.
+

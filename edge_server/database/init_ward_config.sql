@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS `ward_beds` (
 CREATE TABLE IF NOT EXISTS `ward_anchors` (
     `anchor_id` VARCHAR(32) NOT NULL,
     `ward_id` VARCHAR(32) NOT NULL,
-    `mac_address` VARCHAR(32) NOT NULL,
+    `device_id` VARCHAR(32) NULL,
+    `mac_address` VARCHAR(32) NULL DEFAULT '',
     `x` DECIMAL(6,2) NOT NULL,
     `y` DECIMAL(6,2) NOT NULL,
     `z` DECIMAL(4,2) NOT NULL DEFAULT 1.80,
