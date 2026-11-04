@@ -25,9 +25,9 @@
   </div>
 
   <!-- Split Screen Layout -->
-  <div style="display: flex; gap: 18px; align-items: stretch; min-height: 660px;">
+  <div style="display: flex; gap: 18px; align-items: stretch; height: calc(100vh - 190px); min-height: 520px; box-sizing: border-box;">
     <!-- LEFT PANEL: Controls, Patient Identity & Real-Time Vitals (410px) -->
-    <div id="live-map-control-panel" style="width: 410px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; max-height: calc(100vh - 160px); padding-right: 4px;">
+    <div id="live-map-control-panel" style="width: 410px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; height: 100%; max-height: 100%; overflow-y: auto; padding-right: 6px; box-sizing: border-box;">
       
       <!-- Card 1: Active Tracked Subjects in this Ward -->
       <div class="card" style="padding: 14px 16px;">
@@ -192,9 +192,9 @@
     </div>
 
     <!-- RIGHT PANEL: Live 2D Ward Canvas -->
-    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-sm); position: relative;">
+    <div style="flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-sm); position: relative; box-sizing: border-box;">
       <!-- Canvas Header Bar -->
-      <div style="padding: 10px 16px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+      <div style="padding: 10px 16px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 12px; flex-shrink: 0;">
         <div style="display: flex; align-items: center; gap: 10px;">
           <span style="font-weight: 700; color: var(--text-primary);" id="live-map-canvas-title">2D Architectural Digital Twin</span>
           <span class="mono" style="font-size: 11px; color: var(--text-muted);" id="live-map-dimensions-pill">4.08m × 3.21m</span>
@@ -208,8 +208,8 @@
       </div>
 
       <!-- Canvas Viewport -->
-      <div id="live-map-canvas-container" style="flex: 1; position: relative; width: 100%; height: 100%; min-height: 580px; background: #FFFFFF;">
-        <canvas id="ward-live-map-canvas" style="display: block; width: 100%; height: 100%;"></canvas>
+      <div id="live-map-canvas-container" style="flex: 1; min-height: 0; position: relative; width: 100%; height: 100%; overflow: hidden; background: #FFFFFF;">
+        <canvas id="ward-live-map-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
       </div>
     </div>
   </div>

@@ -18,6 +18,7 @@
   let ctx = null;
   let animationFrameId = null;
   let ripplePhase = 0;
+  let lastRenderTime = 0;
 
   // Layer Visibility
   const layers = {
@@ -415,8 +416,13 @@
     const parent = canvas.parentElement;
     if (parent) {
       const rect = parent.getBoundingClientRect();
-      canvas.width = rect.width * (window.devicePixelRatio || 1);
-      canvas.height = rect.height * (window.devicePixelRatio || 1);
+      const dpr = window.devicePixelRatio || 1;
+      const targetW = Math.max(100, Math.floor(rect.width * dpr));
+      const targetH = Math.max(100, Math.floor(rect.height * dpr));
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
     }
   }
 
@@ -430,15 +436,16 @@
 
     // Get transform
     const t = getCanvasTransform(canvas.width, canvas.height, activeWard.length_x, activeWard.width_y);
+    const hitRadius = Math.max(26, ((0.45 / 2) * t.scale + 8) * dpr);
 
-    // Hit-test active tags within 30px
+    // Hit-test active tags within scaled human circle bounds
     for (const [tagId, pos] of liveTagPositions.entries()) {
       const pt = metricToCanvas(pos.x, pos.y, t);
       const dx = clickX - pt.x;
       const dy = clickY - pt.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist <= 30 * dpr) {
+      if (dist <= hitRadius) {
         selectSubject(tagId);
         if (window.showToast) window.showToast(`Selected ${tagId}`, 'info', 1500);
         return;
@@ -448,23 +455,46 @@
 
   /**
    * Main Canvas Render Loop
+   * Uses velocity-clamped easing: dots smoothly walk at realistic speeds rather than flashing!
    */
-  function renderLoop() {
+  function renderLoop(frameTimestamp) {
     if (!isLiveMapActive) return;
+
+    const now = frameTimestamp || performance.now();
+    const dt = lastRenderTime > 0 ? Math.min(0.06, Math.max(0.005, (now - lastRenderTime) / 1000.0)) : 0.016;
+    lastRenderTime = now;
 
     ripplePhase = (ripplePhase + 0.04) % (Math.PI * 2);
 
-    // Smooth tag positions toward targets (adaptive easing interpolation)
+    // Smooth tag positions toward targets (physics-constrained visual gliding)
     for (const [tagId, pos] of liveTagPositions.entries()) {
       if (pos.targetX !== undefined && pos.targetY !== undefined) {
-        if (pos.motion_state === 'STATIONARY' || pos.status === 'OFFLINE') {
-          // Snap directly to locked coordinate with crisp zero-jitter convergence
-          pos.x += (pos.targetX - pos.x) * 0.40;
-          pos.y += (pos.targetY - pos.y) * 0.40;
-        } else {
-          // Glide fluidly during active ambulatory movement
-          pos.x += (pos.targetX - pos.x) * 0.20;
-          pos.y += (pos.targetY - pos.y) * 0.20;
+        const dx = pos.targetX - pos.x;
+        const dy = pos.targetY - pos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > 0.001) {
+          if (pos.motion_state === 'STATIONARY' || pos.status === 'OFFLINE') {
+            // Settle to locked coordinate smoothly (max 0.45 m/s)
+            const maxStep = 0.45 * dt;
+            if (dist <= maxStep) {
+              pos.x = pos.targetX;
+              pos.y = pos.targetY;
+            } else {
+              pos.x += (dx / dist) * maxStep;
+              pos.y += (dy / dist) * maxStep;
+            }
+          } else {
+            // Ambulatory walking speed limit: smooth 0.75 m/s glide (never teleport or flash!)
+            const maxStep = 0.75 * dt;
+            if (dist <= maxStep) {
+              pos.x = pos.targetX;
+              pos.y = pos.targetY;
+            } else {
+              pos.x += (dx / dist) * maxStep;
+              pos.y += (dy / dist) * maxStep;
+            }
+          }
         }
       }
     }
@@ -906,42 +936,53 @@
       const isSelected = (tagId === selectedTagId);
       const isOffline = (pos.status === 'OFFLINE' || (now - (pos.lastSeen || 0) > 6000));
 
+      // 45cm diameter human occupant footprint (radius = 0.225m in physical space)
+      const humanRadiusPx = Math.max(14, (0.45 / 2) * t.scale);
+
       // 2. Ripple Expanding Wave Animation (ONLY when ONLINE, disabled when OFFLINE)
       if (!isOffline) {
-        const rippleR = 12 + ((ripplePhase * 10) % 20);
-        const rippleOpacity = Math.max(0, 1 - (rippleR - 12) / 20);
+        const rippleR = humanRadiusPx + 4 + ((ripplePhase * 8) % 18);
+        const rippleOpacity = Math.max(0, 1 - (rippleR - humanRadiusPx - 4) / 18);
         ctx.beginPath();
         ctx.arc(p.x, p.y, rippleR, 0, Math.PI * 2);
         ctx.strokeStyle = isSelected 
           ? `rgba(2, 132, 199, ${rippleOpacity})` 
           : `rgba(13, 148, 136, ${rippleOpacity})`;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2.5;
         ctx.stroke();
       }
 
       // 3. Outer Selection Ring
       if (isSelected) {
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, humanRadiusPx + 5, 0, Math.PI * 2);
         ctx.strokeStyle = isOffline ? 'rgba(100, 116, 139, 0.80)' : '#0284C7';
         ctx.lineWidth = 3;
-        ctx.setLineDash([4, 2]);
+        ctx.setLineDash([5, 3]);
         ctx.stroke();
         ctx.setLineDash([]);
       }
 
-      // 4. Core Solid Dot (Grey when OFFLINE, Vibrant Cyan/Teal when ONLINE)
+      // 4. Core Human Scale Circle (~45cm true scale)
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, humanRadiusPx, 0, Math.PI * 2);
       ctx.fillStyle = isOffline ? '#64748B' : (isSelected ? '#0284C7' : '#0D9488');
       ctx.fill();
       ctx.strokeStyle = isOffline ? '#CBD5E1' : '#FFFFFF';
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
+      // Person Icon / Avatar inside circle
+      const subject = trackedSubjects.find(s => s.device_id === tagId);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const iconSize = Math.max(12, Math.round(humanRadiusPx * 0.85));
+      ctx.font = `${iconSize}px sans-serif`;
+      ctx.fillText(isOffline ? '💤' : '👤', p.x, p.y);
+
       // 5. Floating Name Badge above Dot
       if (layers.labels) {
-        const subject = trackedSubjects.find(s => s.device_id === tagId);
         const baseName = subject ? subject.full_name : tagId;
         let nameText = baseName;
         if (isOffline) {
@@ -959,9 +1000,9 @@
         ctx.font = 'bold 11px sans-serif';
         const textW = ctx.measureText(nameText).width;
 
-        // Pill background (Grey when OFFLINE)
+        // Pill background positioned above the top of the human circle
         const pillX = p.x - textW / 2 - 8;
-        const pillY = p.y - 28;
+        const pillY = p.y - humanRadiusPx - 26;
         ctx.fillStyle = isOffline 
           ? 'rgba(100, 116, 139, 0.90)' 
           : (isSelected ? '#0284C7' : 'rgba(30, 41, 59, 0.85)');
@@ -972,6 +1013,7 @@
         // Pill text
         ctx.fillStyle = isOffline ? '#F1F5F9' : '#FFFFFF';
         ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
         ctx.fillText(nameText, p.x, pillY + 13);
       }
 
@@ -1001,29 +1043,46 @@
     if (window.showToast) window.showToast('Live map view recentered.', 'info', 1000);
   };
 
-  window.removeSelectedOfflineTag = async function() {
+  window.removeSelectedOfflineTag = function() {
     if (!selectedTagId) return;
     const tagToPurge = selectedTagId;
-    const confirmed = confirm(`Are you sure you want to remove the offline tag "${tagToPurge}" from this ward map?`);
-    if (!confirmed) return;
+    const subject = trackedSubjects.find(s => s.device_id === tagToPurge);
+    const displayName = subject ? `${subject.full_name} (${tagToPurge})` : tagToPurge;
 
-    try {
-      const res = await fetch(`/api/ward/ips-tag?tag_id=${encodeURIComponent(tagToPurge)}`, {
-        method: 'DELETE'
-      });
-      const data = await res.json();
-      if (data.success) {
-        liveTagPositions.delete(tagToPurge);
-        const remaining = Array.from(liveTagPositions.keys());
-        selectedTagId = remaining.length > 0 ? remaining[0] : null;
-        renderSubjectsList();
-        updateTelemetryCard();
-        if (window.showToast) window.showToast(`Tag ${tagToPurge} removed from ward map.`, 'success');
-      } else {
-        if (window.showToast) window.showToast(`Error: ${data.error || 'Failed to remove tag'}`, 'danger');
+    const executeRemoval = async () => {
+      try {
+        const res = await fetch(`/api/ward/ips-tag?tag_id=${encodeURIComponent(tagToPurge)}`, {
+          method: 'DELETE'
+        });
+        const data = await res.json();
+        if (data.success) {
+          liveTagPositions.delete(tagToPurge);
+          const remaining = Array.from(liveTagPositions.keys());
+          selectedTagId = remaining.length > 0 ? remaining[0] : null;
+          renderSubjectsList();
+          updateTelemetryCard();
+          if (window.showToast) window.showToast(`Offline beacon "${displayName}" removed from ward map.`, 'success');
+        } else {
+          if (window.showToast) window.showToast(`Error: ${data.error || 'Failed to remove tag'}`, 'danger');
+        }
+      } catch (err) {
+        if (window.showToast) window.showToast(`Error: ${err.message}`, 'danger');
       }
-    } catch (err) {
-      if (window.showToast) window.showToast(`Error: ${err.message}`, 'danger');
+    };
+
+    if (typeof window.showModal === 'function') {
+      window.showModal({
+        title: 'Remove Offline Beacon',
+        message: `Are you sure you want to remove offline beacon "${displayName}" from this ward map? This clears its last known spatial coordinates.`,
+        type: 'danger',
+        confirmText: 'Remove Beacon',
+        cancelText: 'Keep on Map',
+        onConfirm: executeRemoval
+      });
+    } else {
+      if (confirm(`Remove offline tag "${displayName}" from ward map?`)) {
+        executeRemoval();
+      }
     }
   };
 
