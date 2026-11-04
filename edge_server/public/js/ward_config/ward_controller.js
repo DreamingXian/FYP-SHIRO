@@ -1346,127 +1346,262 @@
         }
       });
 
-      // 3. Exhaustive combinations generator
-      const validTriplets = [];
+      // 3. Exhaustive combinations generator (Supports N = 3, 4, or more anchors)
+      const validCombinations = [];
       const numCands = candidatePoints.length;
+      const targetAnchorCount = Math.max(3, existingAnchors.length || 3);
 
-      for (let i = 0; i < numCands - 2; i++) {
-        for (let j = i + 1; j < numCands - 1; j++) {
-          for (let k = j + 1; k < numCands; k++) {
-            const A = candidatePoints[i], B = candidatePoints[j], C = candidatePoints[k];
-            const wallTypes = new Set([A.wallType, B.wallType, C.wallType]);
-            if (wallTypes.size < 2) continue; // Spans at least 2 distinct directions
+      if (targetAnchorCount >= 4) {
+        // --- 4-ANCHOR OPTIMIZED QUADRUPLETS ---
+        const minInterAnchorDist = 1.30; // Strict minimum 1.30m separation between EVERY pair of anchors!
 
-            const dAB = Math.hypot(A.x - B.x, A.y - B.y);
-            const dBC = Math.hypot(B.x - C.x, B.y - C.y);
-            const dCA = Math.hypot(C.x - A.x, C.y - A.y);
-            if (dAB < 1.10 || dBC < 1.10 || dCA < 1.10) continue;
+        for (let i = 0; i < numCands - 3; i++) {
+          for (let j = i + 1; j < numCands - 2; j++) {
+            if (Math.hypot(candidatePoints[i].x - candidatePoints[j].x, candidatePoints[i].y - candidatePoints[j].y) < minInterAnchorDist) continue;
+            for (let k = j + 1; k < numCands - 1; k++) {
+              if (Math.hypot(candidatePoints[i].x - candidatePoints[k].x, candidatePoints[i].y - candidatePoints[k].y) < minInterAnchorDist) continue;
+              if (Math.hypot(candidatePoints[j].x - candidatePoints[k].x, candidatePoints[j].y - candidatePoints[k].y) < minInterAnchorDist) continue;
+              for (let m = k + 1; m < numCands; m++) {
+                const A = candidatePoints[i], B = candidatePoints[j], C = candidatePoints[k], D = candidatePoints[m];
+                if (Math.hypot(A.x - D.x, A.y - D.y) < minInterAnchorDist) continue;
+                if (Math.hypot(B.x - D.x, B.y - D.y) < minInterAnchorDist) continue;
+                if (Math.hypot(C.x - D.x, C.y - D.y) < minInterAnchorDist) continue;
 
-            const triArea = Math.abs((A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y)) / 2);
-            const roomArea = roomX * roomY;
-            const areaRatio = roomArea > 0 ? (triArea / roomArea) : 0;
-            if (areaRatio < 0.15) continue; // Non-collinear minimum baseline
-
-            // Joint Bed 3D LOS
-            let jointBedClear = 0;
-            bedTargets.forEach(bt => {
-              const losA = rayChecker({ x: A.x + (A.normal?.x||0)*0.02, y: A.y + (A.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, A.mountedOnObsId).clear;
-              const losB = rayChecker({ x: B.x + (B.normal?.x||0)*0.02, y: B.y + (B.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, B.mountedOnObsId).clear;
-              const losC = rayChecker({ x: C.x + (C.normal?.x||0)*0.02, y: C.y + (C.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, C.mountedOnObsId).clear;
-              if (losA && losB && losC) jointBedClear++;
-            });
-            const jointBedPct = bedTargets.length > 0 ? (jointBedClear / bedTargets.length) * 100 : 100;
-
-            // Joint Room Grid 3D LOS
-            let gridSeen3 = 0;
-            roomGrid.forEach(p => {
-              const losA = rayChecker({ x: A.x + (A.normal?.x||0)*0.02, y: A.y + (A.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, A.mountedOnObsId).clear ? 1 : 0;
-              const losB = rayChecker({ x: B.x + (B.normal?.x||0)*0.02, y: B.y + (B.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, B.mountedOnObsId).clear ? 1 : 0;
-              const losC = rayChecker({ x: C.x + (C.normal?.x||0)*0.02, y: C.y + (C.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, C.mountedOnObsId).clear ? 1 : 0;
-              if (losA + losB + losC >= 3) gridSeen3++;
-            });
-            const grid3Pct = roomGrid.length > 0 ? (gridSeen3 / roomGrid.length) * 100 : 100;
-
-            const compositeScore = Math.round(
-              0.40 * jointBedPct +
-              0.35 * grid3Pct +
-              0.25 * Math.min(50, areaRatio * 100) * 2
-            );
-
-            // Compute individual clear beds for anchor card display
-            const aList = [A, B, C].map((pt, aIdx) => {
-              let aBedClear = 0;
-              bedTargets.forEach(bt => {
-                if (rayChecker({ x: pt.x + (pt.normal?.x||0)*0.02, y: pt.y + (pt.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, pt.mountedOnObsId).clear) {
-                  aBedClear++;
+                // Wall diversity: at least 3 distinct wall types, OR 2 opposing walls with 2 on each
+                const wallTypes = [A.wallType, B.wallType, C.wallType, D.wallType];
+                const uniqueWalls = new Set(wallTypes);
+                if (uniqueWalls.size < 2) continue;
+                if (uniqueWalls.size === 2) {
+                  const counts = {};
+                  wallTypes.forEach(w => counts[w] = (counts[w] || 0) + 1);
+                  const vals = Object.values(counts);
+                  if (vals[0] !== 2 || vals[1] !== 2) continue; // Must be 2 on each opposing wall (e.g. 2 North + 2 South)
                 }
-              });
-              return {
-                anchor_id: existingAnchors[aIdx]?.anchor_id || `Anchor ${String.fromCharCode(65 + aIdx)}`,
-                device_id: existingAnchors[aIdx]?.device_id || null,
-                mac_address: existingAnchors[aIdx]?.mac_address || '',
-                status: existingAnchors[aIdx]?.status || 'STANDBY',
-                x: pt.x,
-                y: pt.y,
-                z: roomH,
-                wall_location: `${pt.wallName} (Flush)`,
-                mountedOnObsId: pt.mountedOnObsId || null,
-                clearBeds: aBedClear,
-                totalBeds: bedTargets.length
-              };
-            });
 
-            // If existingAnchors has 4th anchor, place complementary 4th anchor
-            if (existingAnchors.length >= 4) {
-              const usedWalls = aList.map(a => a.wall_location);
-              let candD = candidatePoints.find(p => !usedWalls.includes(`${p.wallName} (Flush)`));
-              if (!candD) candD = candidatePoints[0];
-              if (candD) {
-                let dBedClear = 0;
+                // Compute convex polygon area
+                const pts = [A, B, C, D].map(p => ({ x: p.x, y: p.y }));
+                const cx = (A.x + B.x + C.x + D.x) / 4;
+                const cy = (A.y + B.y + C.y + D.y) / 4;
+                pts.sort((p1, p2) => Math.atan2(p1.y - cy, p1.x - cx) - Math.atan2(p2.y - cy, p2.x - cx));
+                let sumShoe = 0;
+                for (let pIdx = 0; pIdx < pts.length; pIdx++) {
+                  const nxt = (pIdx + 1) % pts.length;
+                  sumShoe += (pts[pIdx].x * pts[nxt].y) - (pts[pIdx].y * pts[nxt].x);
+                }
+                const polyArea = Math.abs(sumShoe) / 2;
+                const roomArea = roomX * roomY;
+                const areaRatio = roomArea > 0 ? (polyArea / roomArea) : 0;
+                if (areaRatio < 0.25) continue; // Need at least 25% room area coverage for 4 anchors
+
+                // Joint Bed 3-LOS (at least 3 anchors have LOS to bed)
+                let jointBedClear = 0;
                 bedTargets.forEach(bt => {
-                  if (rayChecker({ x: candD.x + (candD.normal?.x||0)*0.02, y: candD.y + (candD.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, candD.mountedOnObsId).clear) {
-                    dBedClear++;
-                  }
+                  let clearFromAnchors = 0;
+                  [A, B, C, D].forEach(anc => {
+                    if (rayChecker({ x: anc.x + (anc.normal?.x||0)*0.02, y: anc.y + (anc.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, anc.mountedOnObsId).clear) {
+                      clearFromAnchors++;
+                    }
+                  });
+                  if (clearFromAnchors >= 3) jointBedClear++;
                 });
-                aList.push({
-                  anchor_id: existingAnchors[3]?.anchor_id || 'Anchor D',
-                  device_id: existingAnchors[3]?.device_id || null,
-                  mac_address: existingAnchors[3]?.mac_address || '',
-                  status: existingAnchors[3]?.status || 'STANDBY',
-                  x: candD.x,
-                  y: candD.y,
-                  z: roomH,
-                  wall_location: `${candD.wallName} (Flush)`,
-                  mountedOnObsId: candD.mountedOnObsId || null,
-                  clearBeds: dBedClear,
-                  totalBeds: bedTargets.length
+                const jointBedPct = bedTargets.length > 0 ? (jointBedClear / bedTargets.length) * 100 : 100;
+
+                // Room Grid 3-LOS & 4-LOS
+                let gridSeen3 = 0;
+                let gridSeen4 = 0;
+                roomGrid.forEach(p => {
+                  let seeCount = 0;
+                  [A, B, C, D].forEach(anc => {
+                    if (rayChecker({ x: anc.x + (anc.normal?.x||0)*0.02, y: anc.y + (anc.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, anc.mountedOnObsId).clear) {
+                      seeCount++;
+                    }
+                  });
+                  if (seeCount >= 3) gridSeen3++;
+                  if (seeCount >= 4) gridSeen4++;
+                });
+                const grid3Pct = roomGrid.length > 0 ? (gridSeen3 / roomGrid.length) * 100 : 100;
+                const grid4Pct = roomGrid.length > 0 ? (gridSeen4 / roomGrid.length) * 100 : 100;
+
+                const compositeScore = Math.round(
+                  0.35 * jointBedPct +
+                  0.35 * grid3Pct +
+                  0.15 * grid4Pct +
+                  0.15 * Math.min(50, areaRatio * 100) * 2
+                );
+
+                const aList = [A, B, C, D].map((pt, aIdx) => {
+                  let aBedClear = 0;
+                  bedTargets.forEach(bt => {
+                    if (rayChecker({ x: pt.x + (pt.normal?.x||0)*0.02, y: pt.y + (pt.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, pt.mountedOnObsId).clear) {
+                      aBedClear++;
+                    }
+                  });
+                  return {
+                    anchor_id: existingAnchors[aIdx]?.anchor_id || `Anchor ${String.fromCharCode(65 + aIdx)}`,
+                    device_id: existingAnchors[aIdx]?.device_id || null,
+                    mac_address: existingAnchors[aIdx]?.mac_address || '',
+                    status: existingAnchors[aIdx]?.status || 'STANDBY',
+                    x: pt.x,
+                    y: pt.y,
+                    z: roomH,
+                    wall_location: `${pt.wallName} (Flush)`,
+                    mountedOnObsId: pt.mountedOnObsId || null,
+                    clearBeds: aBedClear,
+                    totalBeds: bedTargets.length
+                  };
+                });
+
+                // If targetAnchorCount > 4 (e.g. 5 or 6 anchors), add extra anchors with max-distance placement
+                if (targetAnchorCount > 4) {
+                  for (let extraIdx = 4; extraIdx < targetAnchorCount; extraIdx++) {
+                    let bestCand = null;
+                    let maxMinDist = -1;
+                    candidatePoints.forEach(p => {
+                      const minDistToExisting = Math.min(...aList.map(a => Math.hypot(a.x - p.x, a.y - p.y)));
+                      if (minDistToExisting >= 1.20 && minDistToExisting > maxMinDist) {
+                        maxMinDist = minDistToExisting;
+                        bestCand = p;
+                      }
+                    });
+                    if (!bestCand) {
+                      bestCand = candidatePoints.reduce((best, p) => {
+                        const minDist = Math.min(...aList.map(a => Math.hypot(a.x - p.x, a.y - p.y)));
+                        return (minDist > best.dist) ? { pt: p, dist: minDist } : best;
+                      }, { pt: candidatePoints[0], dist: -1 }).pt;
+                    }
+                    if (bestCand) {
+                      let eBedClear = 0;
+                      bedTargets.forEach(bt => {
+                        if (rayChecker({ x: bestCand.x + (bestCand.normal?.x||0)*0.02, y: bestCand.y + (bestCand.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, bestCand.mountedOnObsId).clear) {
+                          eBedClear++;
+                        }
+                      });
+                      aList.push({
+                        anchor_id: existingAnchors[extraIdx]?.anchor_id || `Anchor ${String.fromCharCode(65 + extraIdx)}`,
+                        device_id: existingAnchors[extraIdx]?.device_id || null,
+                        mac_address: existingAnchors[extraIdx]?.mac_address || '',
+                        status: existingAnchors[extraIdx]?.status || 'STANDBY',
+                        x: bestCand.x,
+                        y: bestCand.y,
+                        z: roomH,
+                        wall_location: `${bestCand.wallName} (Flush)`,
+                        mountedOnObsId: bestCand.mountedOnObsId || null,
+                        clearBeds: eBedClear,
+                        totalBeds: bedTargets.length
+                      });
+                    }
+                  }
+                }
+
+                const archKey = wallTypes.sort().join('+');
+                validCombinations.push({
+                  archKey,
+                  anchors: aList,
+                  area: Math.round(polyArea * 100) / 100,
+                  areaRatio: Math.round(areaRatio * 100),
+                  jointBedClear,
+                  totalBeds: bedTargets.length,
+                  jointBedPct: Math.round(jointBedPct),
+                  grid3Pct: Math.round(grid3Pct),
+                  grid4Pct: Math.round(grid4Pct),
+                  compositeScore
                 });
               }
             }
+          }
+        }
+      } else {
+        // --- 3-ANCHOR OPTIMIZED TRIPLETS ---
+        const minInterAnchorDist = 1.20; // Strict minimum 1.20m separation between EVERY pair of anchors!
 
-            const archKey = [A.wallType, B.wallType, C.wallType].sort().join('+');
+        for (let i = 0; i < numCands - 2; i++) {
+          for (let j = i + 1; j < numCands - 1; j++) {
+            if (Math.hypot(candidatePoints[i].x - candidatePoints[j].x, candidatePoints[i].y - candidatePoints[j].y) < minInterAnchorDist) continue;
+            for (let k = j + 1; k < numCands; k++) {
+              const A = candidatePoints[i], B = candidatePoints[j], C = candidatePoints[k];
+              if (Math.hypot(A.x - C.x, A.y - C.y) < minInterAnchorDist) continue;
+              if (Math.hypot(B.x - C.x, B.y - C.y) < minInterAnchorDist) continue;
 
-            validTriplets.push({
-              archKey,
-              anchors: aList,
-              area: Math.round(triArea * 100) / 100,
-              areaRatio: Math.round(areaRatio * 100),
-              jointBedClear,
-              totalBeds: bedTargets.length,
-              jointBedPct: Math.round(jointBedPct),
-              grid3Pct: Math.round(grid3Pct),
-              compositeScore
-            });
+              const wallTypes = new Set([A.wallType, B.wallType, C.wallType]);
+              if (wallTypes.size < 2) continue; // Spans at least 2 distinct directions
+
+              const triArea = Math.abs((A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y)) / 2);
+              const roomArea = roomX * roomY;
+              const areaRatio = roomArea > 0 ? (triArea / roomArea) : 0;
+              if (areaRatio < 0.15) continue; // Non-collinear minimum baseline
+
+              // Joint Bed 3D LOS
+              let jointBedClear = 0;
+              bedTargets.forEach(bt => {
+                const losA = rayChecker({ x: A.x + (A.normal?.x||0)*0.02, y: A.y + (A.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, A.mountedOnObsId).clear;
+                const losB = rayChecker({ x: B.x + (B.normal?.x||0)*0.02, y: B.y + (B.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, B.mountedOnObsId).clear;
+                const losC = rayChecker({ x: C.x + (C.normal?.x||0)*0.02, y: C.y + (C.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, C.mountedOnObsId).clear;
+                if (losA && losB && losC) jointBedClear++;
+              });
+              const jointBedPct = bedTargets.length > 0 ? (jointBedClear / bedTargets.length) * 100 : 100;
+
+              // Joint Room Grid 3D LOS
+              let gridSeen3 = 0;
+              roomGrid.forEach(p => {
+                const losA = rayChecker({ x: A.x + (A.normal?.x||0)*0.02, y: A.y + (A.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, A.mountedOnObsId).clear ? 1 : 0;
+                const losB = rayChecker({ x: B.x + (B.normal?.x||0)*0.02, y: B.y + (B.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, B.mountedOnObsId).clear ? 1 : 0;
+                const losC = rayChecker({ x: C.x + (C.normal?.x||0)*0.02, y: C.y + (C.normal?.y||0)*0.02, z: roomH }, p, obstacles, roomH, C.mountedOnObsId).clear ? 1 : 0;
+                if (losA + losB + losC >= 3) gridSeen3++;
+              });
+              const grid3Pct = roomGrid.length > 0 ? (gridSeen3 / roomGrid.length) * 100 : 100;
+
+              const compositeScore = Math.round(
+                0.40 * jointBedPct +
+                0.35 * grid3Pct +
+                0.25 * Math.min(50, areaRatio * 100) * 2
+              );
+
+              // Compute individual clear beds for anchor card display
+              const aList = [A, B, C].map((pt, aIdx) => {
+                let aBedClear = 0;
+                bedTargets.forEach(bt => {
+                  if (rayChecker({ x: pt.x + (pt.normal?.x||0)*0.02, y: pt.y + (pt.normal?.y||0)*0.02, z: roomH }, bt, obstacles, roomH, pt.mountedOnObsId).clear) {
+                    aBedClear++;
+                  }
+                });
+                return {
+                  anchor_id: existingAnchors[aIdx]?.anchor_id || `Anchor ${String.fromCharCode(65 + aIdx)}`,
+                  device_id: existingAnchors[aIdx]?.device_id || null,
+                  mac_address: existingAnchors[aIdx]?.mac_address || '',
+                  status: existingAnchors[aIdx]?.status || 'STANDBY',
+                  x: pt.x,
+                  y: pt.y,
+                  z: roomH,
+                  wall_location: `${pt.wallName} (Flush)`,
+                  mountedOnObsId: pt.mountedOnObsId || null,
+                  clearBeds: aBedClear,
+                  totalBeds: bedTargets.length
+                };
+              });
+
+              const archKey = [A.wallType, B.wallType, C.wallType].sort().join('+');
+              validCombinations.push({
+                archKey,
+                anchors: aList,
+                area: Math.round(triArea * 100) / 100,
+                areaRatio: Math.round(areaRatio * 100),
+                jointBedClear,
+                totalBeds: bedTargets.length,
+                jointBedPct: Math.round(jointBedPct),
+                grid3Pct: Math.round(grid3Pct),
+                compositeScore
+              });
+            }
           }
         }
       }
 
       // Sort combinations descending by composite score
-      validTriplets.sort((t1, t2) => t2.compositeScore - t1.compositeScore);
+      validCombinations.sort((t1, t2) => t2.compositeScore - t1.compositeScore);
 
       // Group by distinct topology archetype to pick best representative
       const bestByArch = {};
-      validTriplets.forEach(trip => {
+      validCombinations.forEach(trip => {
         if (!bestByArch[trip.archKey]) {
           bestByArch[trip.archKey] = trip;
         }
