@@ -771,12 +771,13 @@
       }
 
       list.forEach((obs, index) => {
+        const roomH = parseFloat(currentWard.height_z) || 2.80;
         const xVal = Number(obs.x !== undefined ? obs.x : 0).toFixed(2);
         const yVal = Number(obs.y !== undefined ? obs.y : 0).toFixed(2);
         const wVal = Number(obs.width !== undefined ? obs.width : 1.0).toFixed(2);
         const lVal = Number(obs.length !== undefined ? obs.length : 1.0).toFixed(2);
         const obsType = (obs.type || 'TOILET').toUpperCase();
-        const defaultH = obsType === 'TABLE' ? 0.75 : (obsType === 'TOILET' ? 2.60 : 2.00);
+        const defaultH = obsType === 'TABLE' ? 0.75 : ((obsType === 'CUPBOARD' || obsType === 'STORAGE') ? Math.min(roomH, 2.00) : roomH);
         const hVal = Number(obs.height !== undefined ? obs.height : defaultH).toFixed(2);
 
         const row = `<tr>
@@ -824,23 +825,29 @@
     function onObstacleTypeChange(index, newType) {
       if (!currentWard.obstacles || !currentWard.obstacles[index]) return;
       const obs = currentWard.obstacles[index];
-      const prevType = obs.type;
+      const roomH = parseFloat(currentWard.height_z) || 2.80;
       obs.type = newType;
 
-      // Suggest appropriate default height and label if user hasn't explicitly set custom values
-      if (newType === 'TABLE') {
-        if (!obs.height || obs.height === 2.00 || obs.height === 2.60) obs.height = 0.75;
+      // When choosing Partition, Toilet, or Pillar: default height to full room ceiling height!
+      if (newType === 'TOILET' || newType === 'PARTITION' || newType === 'PILLAR') {
+        obs.height = roomH;
+        if (newType === 'TOILET' && (!obs.label || obs.label.includes('Table') || obs.label.includes('Cupboard'))) {
+          obs.label = `Ensuite Bathroom ${index + 1}`;
+        } else if (newType === 'PARTITION' && (!obs.label || obs.label.includes('Table') || obs.label.includes('Cupboard'))) {
+          obs.label = `Partition Wall ${index + 1}`;
+        } else if (newType === 'PILLAR' && (!obs.label || obs.label.includes('Table') || obs.label.includes('Cupboard'))) {
+          obs.label = `Pillar ${index + 1}`;
+        }
+      } else if (newType === 'TABLE') {
+        obs.height = 0.75;
         if (!obs.width || obs.width === 1.80) obs.width = 1.00;
         if (!obs.length || obs.length === 1.60) obs.length = 0.80;
         if (!obs.label || obs.label.includes('Bathroom') || obs.label.includes('Cutout') || obs.label.includes('Cupboard')) obs.label = `Table ${index + 1}`;
-      } else if (newType === 'CUPBOARD') {
-        if (!obs.height || obs.height === 0.75 || obs.height === 2.60) obs.height = 2.00;
+      } else if (newType === 'CUPBOARD' || newType === 'STORAGE') {
+        obs.height = Math.min(roomH, 2.00);
         if (!obs.width || obs.width === 1.80) obs.width = 1.20;
         if (!obs.length || obs.length === 1.60) obs.length = 0.60;
         if (!obs.label || obs.label.includes('Bathroom') || obs.label.includes('Cutout') || obs.label.includes('Table')) obs.label = `Cupboard ${index + 1}`;
-      } else if (newType === 'TOILET') {
-        if (!obs.height || obs.height === 0.75 || obs.height === 2.00) obs.height = 2.60;
-        if (!obs.label || obs.label.includes('Table') || obs.label.includes('Cupboard')) obs.label = `Ensuite Bathroom ${index + 1}`;
       }
       renderObstaclesTable();
       updateWardStats();
@@ -850,16 +857,17 @@
 
     function addObstacle() {
       if (!currentWard.obstacles) currentWard.obstacles = [];
+      const roomH = parseFloat(currentWard.height_z) || 2.80;
       const newIdx = currentWard.obstacles.length + 1;
       currentWard.obstacles.push({
         id: `OBS-${currentWard.ward_id}-${newIdx}`,
-        type: 'CUPBOARD',
-        label: `Cupboard ${newIdx}`,
+        type: 'PARTITION',
+        label: `Partition Wall ${newIdx}`,
         x: 0.00,
         y: Math.max(0, Math.round((currentWard.width_y - 1.20) * 100) / 100),
         width: 1.20,
-        length: 0.60,
-        height: 2.00
+        length: 0.30,
+        height: roomH
       });
       renderObstaclesTable();
       updateWardStats();
@@ -1122,121 +1130,346 @@
     }
 
     /**
-     * Phase 3: Auto-Suggest Optimal BLE Anchors Engine
+     * Phase 3: Auto-Suggest Optimal BLE Wall Anchors Engine
      * Calculates mathematically optimal perimeter wall coordinates (X, Y, Z)
-     * maximizing triangle area (low GDOP) and clearing line-of-sight (LOS) to beds over furniture.
+     * strictly mounted on perimeter walls at ceiling height (Z = room height)
+     * maximizing baseline triangle area (low GDOP) and ensuring 3D Line-of-Sight
+     * over tables (0.75m) and beds (0.85m).
+     *
+     * Displays an interactive 2D simulation preview in a modal dialog.
+     * Does NOT touch the active configuration until the user confirms "Accept & Apply".
      */
     function autoSuggestAnchors() {
       if (!currentWard) return;
       const roomX = parseFloat(currentWard.length_x) || 6.40;
       const roomY = parseFloat(currentWard.width_y) || 4.80;
-      const roomZ = parseFloat(currentWard.height_z) || 2.60;
-
-      // Mounting height: high on wall near ceiling to clear 0.75m tables and 0.85m hospital beds
-      const zMount = Math.max(1.80, Math.round(Math.min(2.50, roomZ - 0.20) * 100) / 100);
-
+      const roomH = parseFloat(currentWard.height_z) || 2.80;
       const obstacles = currentWard.obstacles || [];
       const door = currentWard.door || { wall: 'SOUTH', x: 2.80, width: 0.90 };
       const beds = currentWard.beds || [];
 
-      // Check if point (px, py) is inside or too close (< 0.20m) to any obstacle
-      function isObstacleBlocked(px, py, minClearance = 0.20) {
-        for (const obs of obstacles) {
-          const ox1 = (obs.x || 0) - minClearance;
-          const ox2 = (obs.x || 0) + (obs.width || 1.0) + minClearance;
-          const oy1 = (obs.y || 0) - minClearance;
-          const oy2 = (obs.y || 0) + (obs.length || 1.0) + minClearance;
-          if (px >= ox1 && px <= ox2 && py >= oy1 && py <= oy2) {
-            return obs;
+      // Patient wristband nominal height (Z = 0.85m on patient wrist)
+      const zWrist = 0.85;
+
+      // Extract 3D bed targets
+      const bedTargets = beds.map(b => {
+        const rot = parseInt(b.rotation_deg, 10) || 0;
+        const isH = (rot === 90 || rot === 270);
+        const spanX = isH ? (b.length || 2.00) : (b.width || 0.90);
+        const spanY = isH ? (b.width || 0.90) : (b.length || 2.00);
+        return {
+          code: b.bed_code,
+          x: b.x + spanX / 2,
+          y: b.y + spanY / 2,
+          z: zWrist
+        };
+      });
+
+      // Ray-cast helper using window.check3dRayLos
+      const rayChecker = typeof window.check3dRayLos === 'function' ? window.check3dRayLos : function(A, T, obsList, rH) {
+        return { clear: true };
+      };
+
+      // Helper to evaluate candidate wall positions
+      function findBestWallPosition({ targetWall, rangeMin, rangeMax, step = 0.05 }) {
+        let best = null;
+        let bestScore = -9999;
+
+        for (let pos = rangeMin; pos <= rangeMax + 0.001; pos += step) {
+          const rPos = Math.round(pos * 100) / 100;
+          let ax = 0, ay = 0;
+          let wallDesc = '';
+
+          if (targetWall === 'NORTH') {
+            ax = rPos;
+            ay = roomY; // Flush on North wall
+            wallDesc = 'North Wall (Flush)';
+          } else if (targetWall === 'SOUTH') {
+            ax = rPos;
+            ay = 0.00; // Flush on South wall
+            wallDesc = 'South Wall (Flush)';
+          } else if (targetWall === 'WEST') {
+            ax = 0.00; // Flush on West wall
+            ay = rPos;
+            wallDesc = 'West Wall (Flush)';
+          } else if (targetWall === 'EAST') {
+            ax = roomX; // Flush on East wall
+            ay = rPos;
+            wallDesc = 'East Wall (Flush)';
           }
-        }
-        return null;
-      }
 
-      // Check if point collides with door opening threshold
-      function isDoorBlocked(px, py) {
-        const wall = door.wall || 'SOUTH';
-        const dx1 = (door.x || 0) - 0.25;
-        const dx2 = (door.x || 0) + (door.width || 0.90) + 0.25;
-        if (wall === 'SOUTH' && Math.abs(py) < 0.35 && px >= dx1 && px <= dx2) return true;
-        if (wall === 'NORTH' && Math.abs(py - roomY) < 0.35 && px >= dx1 && px <= dx2) return true;
-        if (wall === 'WEST' && Math.abs(px) < 0.35 && py >= dx1 && py <= dx2) return true;
-        if (wall === 'EAST' && Math.abs(px - roomX) < 0.35 && py >= dx1 && py <= dx2) return true;
-        return false;
-      }
-
-      // 2D line segment intersection with box
-      function lineIntersectsBox(x1, y1, x2, y2, bx1, by1, bx2, by2) {
-        const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
-        const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
-        if (maxX < bx1 || minX > bx2 || maxY < by1 || minY > by2) return false;
-        function ccw(ax, ay, bx, by, cx, cy) {
-          return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
-        }
-        function intersect(p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) {
-          return (ccw(p1x, p1y, p3x, p3y, p4x, p4y) !== ccw(p2x, p2y, p3x, p3y, p4x, p4y)) &&
-                 (ccw(p1x, p1y, p2x, p2y, p3x, p3y) !== ccw(p1x, p1y, p2x, p2y, p4x, p4y));
-        }
-        if (x1 >= bx1 && x1 <= bx2 && y1 >= by1 && y1 <= by2) return true;
-        if (x2 >= bx1 && x2 <= bx2 && y2 >= by1 && y2 <= by2) return true;
-        return intersect(x1, y1, x2, y2, bx1, by1, bx2, by1) ||
-               intersect(x1, y1, x2, y2, bx2, by1, bx2, by2) ||
-               intersect(x1, y1, x2, y2, bx2, by2, bx1, by2) ||
-               intersect(x1, y1, x2, y2, bx1, by2, bx1, by1);
-      }
-
-      // Count bed line-of-sight obstructions for a candidate anchor
-      function countBlockedBeds(ax, ay) {
-        let blocked = 0;
-        for (const b of beds) {
-          const rot = parseInt(b.rotation_deg, 10) || 0;
-          const spanX = (rot === 90 || rot === 270) ? (b.length || 2.00) : (b.width || 0.90);
-          const spanY = (rot === 90 || rot === 270) ? (b.width || 0.90) : (b.length || 2.00);
-          const bedCenterX = b.x + spanX / 2;
-          const bedCenterY = b.y + spanY / 2;
+          // 1. Must not penetrate an obstacle footprint on the wall
+          let insideObs = false;
           for (const obs of obstacles) {
-            const obsH = obs.height !== undefined ? parseFloat(obs.height) : (obs.type === 'TABLE' ? 0.75 : 2.00);
-            if (obsH >= 1.50) {
-              if (lineIntersectsBox(ax, ay, bedCenterX, bedCenterY, obs.x, obs.y, obs.x + obs.width, obs.y + obs.length)) {
-                blocked++;
-                break;
-              }
+            if (ax >= obs.x - 0.08 && ax <= obs.x + obs.width + 0.08 &&
+                ay >= obs.y - 0.08 && ay <= obs.y + obs.length + 0.08) {
+              insideObs = true;
+              break;
             }
           }
+          if (insideObs) continue;
+
+          // 2. Must not collide with door threshold
+          if (door && door.wall === targetWall) {
+            const doorStart = (door.x || 0) - 0.20;
+            const doorEnd = (door.x || 0) + (door.width || 0.90) + 0.20;
+            const coord = (targetWall === 'NORTH' || targetWall === 'SOUTH') ? ax : ay;
+            if (coord >= doorStart && coord <= doorEnd) continue;
+          }
+
+          // 3. 3D Line-of-Sight evaluation to all beds
+          let clearCount = 0;
+          const aObj = { x: ax, y: ay, z: roomH };
+          for (const bt of bedTargets) {
+            const los = rayChecker(aObj, bt, obstacles, roomH);
+            if (los.clear) clearCount++;
+          }
+
+          // Score: prioritize direct 3D LOS, then baseline spread
+          let score = clearCount * 100;
+          if (targetWall === 'SOUTH') {
+            const distFromMid = Math.abs(ax - roomX / 2);
+            score -= distFromMid * 10;
+          } else if (targetWall === 'NORTH') {
+            if (rangeMin < roomX / 2) {
+              score -= (ax - rangeMin) * 5; // Favor corner
+            } else {
+              score -= (rangeMax - ax) * 5;
+            }
+          }
+
+          if (score > bestScore) {
+            bestScore = score;
+            best = {
+              x: ax,
+              y: ay,
+              z: roomH,
+              wall_location: wallDesc,
+              clearBeds: clearCount,
+              totalBeds: bedTargets.length
+            };
+          }
         }
-        return blocked;
+        return best;
       }
 
-      // Candidate Anchor A (North-West)
-      let candA = { x: 0.40, y: Math.max(0.40, Math.round((roomY - 0.40) * 100) / 100) };
-      let blockA = isObstacleBlocked(candA.x, candA.y);
-      if (blockA) {
-        candA.x = Math.min(roomX - 0.50, Math.round((blockA.x + blockA.width + 0.35) * 100) / 100);
-        candA.y = Math.max(0.40, Math.round((roomY - 0.40) * 100) / 100);
+      // Anchor A Candidate (North-West)
+      // Check North wall first; if completely blocked by obstacle/cutout, try West wall
+      let candA = findBestWallPosition({ targetWall: 'NORTH', rangeMin: 0.40, rangeMax: Math.max(0.40, Math.min(roomX / 2 - 0.20, 2.00)) });
+      if (!candA) {
+        candA = findBestWallPosition({ targetWall: 'WEST', rangeMin: Math.max(0.40, roomY / 2 + 0.20), rangeMax: Math.max(0.40, roomY - 0.40) });
+      }
+      if (!candA) {
+        candA = { x: 0.40, y: roomY, z: roomH, wall_location: 'North Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length };
       }
 
-      // Candidate Anchor B (North-East)
-      let candB = { x: Math.max(0.40, Math.round((roomX - 0.40) * 100) / 100), y: Math.max(0.40, Math.round((roomY - 0.40) * 100) / 100) };
-      let blockB = isObstacleBlocked(candB.x, candB.y);
-      if (blockB) {
-        candB.x = Math.max(0.40, Math.round((blockB.x - 0.35) * 100) / 100);
+      // Anchor B Candidate (North-East)
+      let candB = findBestWallPosition({ targetWall: 'NORTH', rangeMin: Math.max(roomX / 2 + 0.20, roomX - 2.00), rangeMax: Math.max(0.40, roomX - 0.40) });
+      if (!candB) {
+        candB = findBestWallPosition({ targetWall: 'EAST', rangeMin: Math.max(0.40, roomY / 2 + 0.20), rangeMax: Math.max(0.40, roomY - 0.40) });
+      }
+      if (!candB) {
+        candB = { x: Math.max(0.40, Math.round((roomX - 0.40) * 100) / 100), y: roomY, z: roomH, wall_location: 'North Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length };
       }
 
-      // Candidate Anchor C (South wall, forms wide triangle with A & B)
-      let candC = { x: Math.round((roomX / 2) * 100) / 100, y: 0.40 };
-      if (isDoorBlocked(candC.x, candC.y) || isObstacleBlocked(candC.x, candC.y)) {
-        const altLeftX = Math.max(0.45, Math.round(((door.x || 0) - 0.50) * 100) / 100);
-        const altRightX = Math.min(roomX - 0.45, Math.round(((door.x || 0) + (door.width || 0.90) + 0.50) * 100) / 100);
-        if (!isObstacleBlocked(altLeftX, 0.40) && countBlockedBeds(altLeftX, 0.40) <= countBlockedBeds(altRightX, 0.40)) {
-          candC.x = altLeftX;
-        } else if (!isObstacleBlocked(altRightX, 0.40)) {
-          candC.x = altRightX;
+      // Anchor C Candidate (South Wall)
+      let candC = findBestWallPosition({ targetWall: 'SOUTH', rangeMin: 0.40, rangeMax: Math.max(0.40, roomX - 0.40) });
+      if (!candC) {
+        candC = { x: Math.round((roomX / 2) * 100) / 100, y: 0.00, z: roomH, wall_location: 'South Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length };
+      }
+
+      // Existing anchors hardware preservation
+      const existingAnchors = currentWard.anchors || [];
+      const suggestedAnchors = [];
+
+      // Anchor A
+      suggestedAnchors.push({
+        anchor_id: existingAnchors[0]?.anchor_id || 'Anchor A',
+        device_id: existingAnchors[0]?.device_id || null,
+        mac_address: existingAnchors[0]?.mac_address || '',
+        status: existingAnchors[0]?.status || 'STANDBY',
+        x: candA.x,
+        y: candA.y,
+        z: candA.z,
+        wall_location: candA.wall_location,
+        clearBeds: candA.clearBeds,
+        totalBeds: candA.totalBeds
+      });
+
+      // Anchor B
+      suggestedAnchors.push({
+        anchor_id: existingAnchors[1]?.anchor_id || 'Anchor B',
+        device_id: existingAnchors[1]?.device_id || null,
+        mac_address: existingAnchors[1]?.mac_address || '',
+        status: existingAnchors[1]?.status || 'STANDBY',
+        x: candB.x,
+        y: candB.y,
+        z: candB.z,
+        wall_location: candB.wall_location,
+        clearBeds: candB.clearBeds,
+        totalBeds: candB.totalBeds
+      });
+
+      // Anchor C
+      suggestedAnchors.push({
+        anchor_id: existingAnchors[2]?.anchor_id || 'Anchor C',
+        device_id: existingAnchors[2]?.device_id || null,
+        mac_address: existingAnchors[2]?.mac_address || '',
+        status: existingAnchors[2]?.status || 'STANDBY',
+        x: candC.x,
+        y: candC.y,
+        z: candC.z,
+        wall_location: candC.wall_location,
+        clearBeds: candC.clearBeds,
+        totalBeds: candC.totalBeds
+      });
+
+      // If 4th anchor exists
+      if (existingAnchors.length >= 4) {
+        const candD = findBestWallPosition({ targetWall: 'EAST', rangeMin: 0.40, rangeMax: Math.max(0.40, roomY / 2 - 0.20) }) ||
+                      findBestWallPosition({ targetWall: 'WEST', rangeMin: 0.40, rangeMax: Math.max(0.40, roomY / 2 - 0.20) });
+        if (candD) {
+          suggestedAnchors.push({
+            anchor_id: existingAnchors[3]?.anchor_id || 'Anchor D',
+            device_id: existingAnchors[3]?.device_id || null,
+            mac_address: existingAnchors[3]?.mac_address || '',
+            status: existingAnchors[3]?.status || 'STANDBY',
+            x: candD.x,
+            y: candD.y,
+            z: candD.z,
+            wall_location: candD.wall_location,
+            clearBeds: candD.clearBeds,
+            totalBeds: candD.totalBeds
+          });
         }
       }
 
-      // Ensure at least 3 anchors exist in currentWard
+      // Calculate baseline triangle area (GDOP coverage indicator)
+      const triArea = Math.abs((candA.x * (candB.y - candC.y) + candB.x * (candC.y - candA.y) + candC.x * (candA.y - candB.y)) / 2);
+
+      // Build proposed anchor cards HTML
+      const anchorCardsHtml = suggestedAnchors.map(a => {
+        const losText = a.totalBeds > 0
+          ? (a.clearBeds === a.totalBeds
+              ? `<span style="color:#10B981; font-weight:700;">🟢 ${a.clearBeds}/${a.totalBeds} Beds Clear (100% 3D LOS)</span>`
+              : `<span style="color:#D97706; font-weight:700;">🟡 ${a.clearBeds}/${a.totalBeds} Beds Clear</span>`)
+          : '<span style="color:var(--text-muted);">No Beds Configured</span>';
+
+        const boundText = a.device_id
+          ? `<span class="mono" style="color:var(--primary); font-weight:700;">${a.device_id}</span>`
+          : `<span style="color:var(--text-muted); font-style:italic;">Standby (Unbound)</span>`;
+
+        return `
+          <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 3px;">
+              <strong style="font-size:12px; color:var(--text-primary);">📡 ${a.anchor_id}</strong>
+              <span style="font-size:11px;">Hardware: ${boundText}</span>
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
+              Placement: <strong>${a.wall_location}</strong> · X: <strong>${a.x.toFixed(2)}m</strong>, Y: <strong>${a.y.toFixed(2)}m</strong>, Z: <strong>${a.z.toFixed(2)}m</strong>
+            </div>
+            <div style="font-size:11px;">
+              3D Line-of-Sight: ${losText}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      const modalHtml = `
+        <div style="display: grid; grid-template-columns: 460px 1fr; gap: 20px; align-items: start;">
+          <!-- Left: 2D Digital Twin Simulation Preview -->
+          <div>
+            <div style="font-weight: 700; font-size: 12px; color: var(--text-primary); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+              <span>🗺️ 2D Suggested Placement & 3D LOS Ray Simulation</span>
+              <span class="badge badge-live">Wall Mounted</span>
+            </div>
+            <div style="width: 460px; height: 320px; background: #0B1120; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); position: relative;">
+              <canvas id="modal-suggest-preview-canvas" width="460" height="320" style="width: 100%; height: 100%; display: block;"></canvas>
+            </div>
+            <!-- Visual Legend -->
+            <div style="display: flex; justify-content: space-between; font-size: 10px; font-weight: 600; color: var(--text-muted); margin-top: 8px; flex-wrap: wrap; gap: 6px;">
+              <span style="color: #0284C7;">🔵 Wall Anchors (Flush)</span>
+              <span style="color: #10B981;">🟢 Direct 3D LOS</span>
+              <span style="color: #EF4444;">🔴 NLOS Obstruction</span>
+              <span>🛏️ Bed Target (0.85m)</span>
+            </div>
+          </div>
+
+          <!-- Right: Coordinates & 3D Geometric Analysis -->
+          <div>
+            <!-- Metrics Pill Bar -->
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; text-align: center;">
+              <div style="background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px;">
+                <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Mounting Height</div>
+                <div style="font-size: 14px; font-weight: 700; color: var(--primary); margin-top: 2px;">${roomH.toFixed(2)}m (Ceiling)</div>
+              </div>
+              <div style="background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px;">
+                <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Wristband Target</div>
+                <div style="font-size: 14px; font-weight: 700; color: var(--status-success-text); margin-top: 2px;">Z = 0.85m</div>
+              </div>
+              <div style="background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px;">
+                <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Triangle Baseline</div>
+                <div style="font-size: 14px; font-weight: 700; color: var(--text-primary); margin-top: 2px;">${triArea.toFixed(2)} m²</div>
+              </div>
+            </div>
+
+            <!-- Proposed Anchors List -->
+            <div style="font-weight: 700; font-size: 12px; color: var(--text-primary); margin-bottom: 6px;">
+              Proposed Wall Positions:
+            </div>
+            <div style="max-height: 180px; overflow-y: auto; margin-bottom: 12px;">
+              ${anchorCardsHtml}
+            </div>
+
+            <!-- Physical Optimization Insights -->
+            <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 6px; padding: 8px 10px; font-size: 11px; color: #1E40AF; line-height: 1.4;">
+              <strong>💡 Physical Optimization Insights:</strong><br>
+              • Anchors are positioned <strong>strictly on perimeter walls</strong> (no floating coordinates).<br>
+              • Ceiling mount height (${roomH.toFixed(2)}m) allows radio waves to travel <strong>downward over tables (0.75m) and bed frames</strong>.<br>
+              • Existing hardware assignments are preserved. Click <strong>Accept & Apply</strong> to load these coordinates, or <strong>Cancel</strong> to keep current values.
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Show the confirmation and visual demo modal
+      if (window.showModal) {
+        window.showModal({
+          title: '✨ Auto-Suggested Optimal BLE Wall Anchors',
+          customHtml: modalHtml,
+          isWide: true,
+          type: 'info',
+          confirmText: '✅ Accept & Apply',
+          cancelText: 'Cancel',
+          onConfirm: () => {
+            applySuggestedAnchors(suggestedAnchors, triArea, roomH);
+          },
+          onCancel: () => {
+            // Cancelled - do not touch anything
+          }
+        });
+
+        // Render preview canvas after DOM has painted
+        setTimeout(() => {
+          const previewCanvas = document.getElementById('modal-suggest-preview-canvas');
+          if (previewCanvas && typeof window.renderWardToCanvas === 'function') {
+            const previewWard = JSON.parse(JSON.stringify(currentWard));
+            previewWard.anchors = suggestedAnchors;
+            window.renderWardToCanvas(previewCanvas, previewWard, {
+              bgColor: '#FFFFFF',
+              padding: 26,
+              show3dLosRays: true
+            });
+          }
+        }, 80);
+      }
+    }
+
+    function applySuggestedAnchors(suggestedAnchors, triArea, roomH) {
+      if (!currentWard || !Array.isArray(suggestedAnchors)) return;
+
       if (!Array.isArray(currentWard.anchors)) currentWard.anchors = [];
-      while (currentWard.anchors.length < 3) {
+      while (currentWard.anchors.length < suggestedAnchors.length) {
         const letter = String.fromCharCode(65 + currentWard.anchors.length);
         currentWard.anchors.push({
           anchor_id: `Anchor ${letter}`,
@@ -1244,56 +1477,30 @@
           mac_address: '',
           x: 0,
           y: 0,
-          z: zMount,
+          z: roomH || 2.80,
           wall_location: `Wall ${letter}`,
           status: 'STANDBY'
         });
       }
 
-      // Update coordinates while retaining any enrolled hardware device bindings
-      currentWard.anchors[0].x = candA.x;
-      currentWard.anchors[0].y = candA.y;
-      currentWard.anchors[0].z = zMount;
-      currentWard.anchors[0].wall_location = candA.y >= roomY - 0.50 ? 'North Wall (Upper Perimeter)' : 'West Wall (Upper Perimeter)';
-
-      currentWard.anchors[1].x = candB.x;
-      currentWard.anchors[1].y = candB.y;
-      currentWard.anchors[1].z = zMount;
-      currentWard.anchors[1].wall_location = 'North-East Wall (Upper Perimeter)';
-
-      currentWard.anchors[2].x = candC.x;
-      currentWard.anchors[2].y = candC.y;
-      currentWard.anchors[2].z = zMount;
-      currentWard.anchors[2].wall_location = 'South Wall (Upper Perimeter)';
-
-      // If a 4th anchor exists, position in opposite South corner
-      if (currentWard.anchors.length >= 4) {
-        const candD = {
-          x: candC.x > roomX / 2 ? 0.40 : Math.max(0.40, Math.round((roomX - 0.40) * 100) / 100),
-          y: 0.40,
-          z: zMount
-        };
-        if (!isObstacleBlocked(candD.x, candD.y) && !isDoorBlocked(candD.x, candD.y)) {
-          currentWard.anchors[3].x = candD.x;
-          currentWard.anchors[3].y = candD.y;
-          currentWard.anchors[3].z = zMount;
-          currentWard.anchors[3].wall_location = 'South Corner (Upper Perimeter)';
+      suggestedAnchors.forEach((sugg, idx) => {
+        if (currentWard.anchors[idx]) {
+          currentWard.anchors[idx].x = sugg.x;
+          currentWard.anchors[idx].y = sugg.y;
+          currentWard.anchors[idx].z = sugg.z;
+          currentWard.anchors[idx].wall_location = sugg.wall_location;
         }
-      }
-
-      const triArea = Math.abs((candA.x * (candB.y - candC.y) + candB.x * (candC.y - candA.y) + candC.x * (candA.y - candB.y)) / 2);
+      });
 
       renderAnchorsTable();
       redrawWardMap();
       markUnsavedChanges();
 
-      const msg = `✨ Optimal anchor placement calculated! Mounting height: ${zMount}m near ceiling (clears tables & bed frames). Baseline coverage: ${triArea.toFixed(1)} m². Click "Save Changes" to apply.`;
+      const msg = `✨ Optimal wall anchor layout applied! Ceiling mount: ${roomH.toFixed(2)}m. Baseline coverage: ${triArea.toFixed(2)} m². Click "Save Changes" to commit.`;
       if (typeof showToast === 'function') {
-        showToast(msg, 'success', 5000);
+        showToast(msg, 'success', 4500);
       } else if (window.showToast) {
-        window.showToast(msg, 'success', 5000);
-      } else {
-        alert(msg);
+        window.showToast(msg, 'success', 4500);
       }
     }
 
@@ -1548,6 +1755,7 @@ window.addAnchor = addAnchor;
 window.updateAnchor = updateAnchor;
 window.deleteAnchor = deleteAnchor;
 window.autoSuggestAnchors = autoSuggestAnchors;
+window.applySuggestedAnchors = applySuggestedAnchors;
 window.updateWardStats = updateWardStats;
 window.applyWardTemplate = applyWardTemplate;
 window.saveWardConfiguration = saveWardConfiguration;

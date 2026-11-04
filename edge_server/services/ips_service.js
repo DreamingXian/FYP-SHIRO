@@ -416,15 +416,28 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
   });
 
   // Collect fresh anchor readings (< 3.5 seconds)
+  // Project 3D slant range to 2D floor plane using anchor Z and nominal patient wristband height (0.85m)
+  const NOMINAL_WRISTBAND_Z = 0.85;
   const freshAnchors = [];
   for (const [aId, reading] of anchorMap.entries()) {
     if (now - reading.timestamp <= STALE_TIMEOUT_MS) {
+      const anchorZ = reading.z !== undefined && reading.z !== null ? reading.z : (wardDim.height_z || 2.80);
+      const deltaZ = Math.max(0, anchorZ - NOMINAL_WRISTBAND_Z);
+      let d2D = reading.distance;
+      if (reading.distance > deltaZ) {
+        d2D = Math.sqrt(reading.distance * reading.distance - deltaZ * deltaZ);
+      } else {
+        d2D = 0.15; // Tag directly below anchor vertical cone
+      }
+
       freshAnchors.push({
         anchor_id: reading.anchor_id,
         device_id: aId,
         x: reading.x,
         y: reading.y,
-        d: reading.distance,
+        z: anchorZ,
+        d: d2D,
+        d_slant_3d: reading.distance,
         rssi: reading.filteredRssi,
         raw_rssi: reading.rawRssi,
         last_seen_ms: now - reading.timestamp

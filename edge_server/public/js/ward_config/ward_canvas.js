@@ -307,6 +307,69 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
     });
   }
 
+  // 5b. 3D Line-of-Sight Rays & Coverage Geometry (for Auto-Suggest Preview)
+  if (options.show3dLosRays && Array.isArray(ward.anchors) && ward.anchors.length >= 3) {
+    // Draw baseline trilateration triangle / coverage polygon
+    mapCtx.save();
+    mapCtx.fillStyle = 'rgba(14, 165, 233, 0.08)';
+    mapCtx.strokeStyle = 'rgba(14, 165, 233, 0.45)';
+    mapCtx.lineWidth = 1.5;
+    mapCtx.setLineDash([4, 4]);
+    mapCtx.beginPath();
+    ward.anchors.forEach((a, i) => {
+      const ax = originX + a.x * scale;
+      const ay = originY + (roomY - a.y) * scale;
+      if (i === 0) mapCtx.moveTo(ax, ay);
+      else mapCtx.lineTo(ax, ay);
+    });
+    mapCtx.closePath();
+    mapCtx.fill();
+    mapCtx.stroke();
+    mapCtx.setLineDash([]);
+    mapCtx.restore();
+
+    // Draw 3D Line-of-Sight rays connecting anchors to patient bed targets
+    if (Array.isArray(ward.beds)) {
+      const roomH = ward.height_z || 2.80;
+      ward.anchors.forEach(a => {
+        const ax = originX + a.x * scale;
+        const ay = originY + (roomY - a.y) * scale;
+        const anchorObj = { x: a.x, y: a.y, z: a.z || roomH };
+
+        ward.beds.forEach(b => {
+          const rot = parseInt(b.rotation_deg, 10) || 0;
+          const isH = (rot === 90 || rot === 270);
+          const spanX = isH ? (b.length || 2.00) : (b.width || 0.90);
+          const spanY = isH ? (b.width || 0.90) : (b.length || 2.00);
+          const bedCenterX = b.x + spanX / 2;
+          const bedCenterY = b.y + spanY / 2;
+          const targetObj = { x: bedCenterX, y: bedCenterY, z: 0.85 };
+
+          const los = check3dRayLos(anchorObj, targetObj, ward.obstacles || [], roomH);
+
+          const bx = originX + bedCenterX * scale;
+          const by = originY + (roomY - bedCenterY) * scale;
+
+          mapCtx.save();
+          mapCtx.beginPath();
+          mapCtx.moveTo(ax, ay);
+          mapCtx.lineTo(bx, by);
+          if (los.clear) {
+            mapCtx.strokeStyle = '#10B981'; // Green: clear 3D LOS over furniture
+            mapCtx.lineWidth = 1.5;
+            mapCtx.setLineDash([4, 3]);
+          } else {
+            mapCtx.strokeStyle = '#EF4444'; // Red: obstructed NLOS
+            mapCtx.lineWidth = 2;
+            mapCtx.setLineDash([2, 3]);
+          }
+          mapCtx.stroke();
+          mapCtx.restore();
+        });
+      });
+    }
+  }
+
   // 6. Stationary BLE Anchors
   if (Array.isArray(ward.anchors)) {
     ward.anchors.forEach(a => {
@@ -323,7 +386,7 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
       mapCtx.setLineDash([]);
 
       // Anchor node dot
-      mapCtx.fillStyle = '#0284C7';
+      mapCtx.fillStyle = options.show3dLosRays ? '#0284C7' : '#0284C7';
       mapCtx.beginPath();
       mapCtx.arc(px, py, 6, 0, Math.PI * 2);
       mapCtx.fill();
@@ -336,6 +399,12 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
       mapCtx.font = '700 10px sans-serif';
       const labelText = a.device_id ? `${a.anchor_id} (${a.device_id})` : `${a.anchor_id}`;
       mapCtx.fillText(labelText, px + 8, py + 4);
+
+      if (options.show3dLosRays) {
+        mapCtx.fillStyle = '#0369A1';
+        mapCtx.font = '600 8.5px monospace';
+        mapCtx.fillText(`(${a.x.toFixed(2)}m, ${a.y.toFixed(2)}m, ${Number(a.z || 2.8).toFixed(2)}m)`, px + 8, py + 14);
+      }
     });
   }
 }
@@ -364,5 +433,73 @@ function redrawWardMap() {
   }
 }
 
+/**
+ * 3D Line-of-Sight Ray-Casting & Obstacle Clearance Checker
+ * Determines whether a line-of-sight ray between an anchor (at Az) and target (at Tz = 0.85m)
+ * is clear or physically obstructed by 3D obstacles (considering their height).
+ */
+function check3dRayLos(A, T, obstacles, roomH = 2.80) {
+  const dx = T.x - A.x;
+  const dy = T.y - A.y;
+  let isBlocked = false;
+  let blockingObs = null;
+  let minRayH = 999;
+
+  for (const obs of obstacles) {
+    const xMin = obs.x;
+    const xMax = obs.x + obs.width;
+    const yMin = obs.y;
+    const yMax = obs.y + obs.length;
+    const obsH = obs.height !== undefined ? parseFloat(obs.height) : (obs.type === 'TABLE' ? 0.75 : roomH);
+
+    let tMin = 0;
+    let tMax = 1;
+
+    // Liang-Barsky / Slab box clipping in 2D
+    if (Math.abs(dx) < 1e-9) {
+      if (A.x < xMin || A.x > xMax) continue;
+    } else {
+      let t1 = (xMin - A.x) / dx;
+      let t2 = (xMax - A.x) / dx;
+      if (t1 > t2) [t1, t2] = [t2, t1];
+      tMin = Math.max(tMin, t1);
+      tMax = Math.min(tMax, t2);
+      if (tMin > tMax) continue;
+    }
+
+    if (Math.abs(dy) < 1e-9) {
+      if (A.y < yMin || A.y > yMax) continue;
+    } else {
+      let t1 = (yMin - A.y) / dy;
+      let t2 = (yMax - A.y) / dy;
+      if (t1 > t2) [t1, t2] = [t2, t1];
+      tMin = Math.max(tMin, t1);
+      tMax = Math.min(tMax, t2);
+      if (tMin > tMax) continue;
+    }
+
+    if (tMax >= 0 && tMin <= 1) {
+      // 2D segment intersects obstacle footprint
+      const tPenetrationEnd = Math.min(1, Math.max(0, tMax));
+      const rayH = A.z + tPenetrationEnd * (T.z - A.z);
+      if (rayH < minRayH) minRayH = rayH;
+
+      // If obstacle height exceeds ray height at penetration, ray is obstructed in 3D
+      if (obsH >= rayH) {
+        isBlocked = true;
+        blockingObs = obs;
+        break;
+      }
+    }
+  }
+
+  return {
+    clear: !isBlocked,
+    blockingObs: blockingObs ? (blockingObs.label || blockingObs.type) : null,
+    minRayH: isFinite(minRayH) ? minRayH : null
+  };
+}
+
+window.check3dRayLos = check3dRayLos;
 window.renderWardToCanvas = renderWardToCanvas;
 window.redrawWardMap = redrawWardMap;
