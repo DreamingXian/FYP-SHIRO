@@ -158,6 +158,17 @@
 
       item.onclick = () => selectSubject(s.device_id);
 
+      let statusBadge = '';
+      if (isTagOffline) {
+        statusBadge = `<span class="badge badge-alert" style="font-size:9px;">● OFFLINE</span>`;
+      } else if (pos && pos.motion_state === 'WALKING') {
+        statusBadge = `<span class="badge badge-live" style="font-size:9px;">🚶 WALKING</span>`;
+      } else if (pos && pos.motion_state === 'SETTLING') {
+        statusBadge = `<span class="badge badge-warning" style="font-size:9px;">🎯 SETTLING</span>`;
+      } else {
+        statusBadge = `<span class="badge badge-info" style="font-size:9px;">🔒 STILL</span>`;
+      }
+
       item.innerHTML = `
         <div style="display:flex; align-items:center; gap:8px;">
           <span style="font-size:16px;">${s.photo_url ? '👤' : '👤'}</span>
@@ -167,9 +178,7 @@
           </div>
         </div>
         <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px;">
-          <span class="badge ${isTagOffline ? 'badge-alert' : 'badge-live'}" style="font-size:9px;">
-            ${isTagOffline ? '● OFFLINE' : '● ONLINE'}
-          </span>
+          ${statusBadge}
           <span style="font-size:9px; color:var(--text-muted);">
             ${isResident ? 'Resident' : 'Visiting'}
           </span>
@@ -289,9 +298,15 @@
       if (isOffline) {
         confEl.innerText = 'OFFLINE (LAST KNOWN)';
         confEl.className = 'badge badge-alert';
+      } else if (pos.motion_state === 'WALKING') {
+        confEl.innerText = '🚶 WALKING (ACTIVE)';
+        confEl.className = 'badge badge-live';
+      } else if (pos.motion_state === 'SETTLING') {
+        confEl.innerText = '🎯 SETTLING (2S WINDOW)';
+        confEl.className = 'badge badge-warning';
       } else {
-        confEl.innerText = pos.confidence || '3-Anchor 2D';
-        confEl.className = `badge ${pos.confidence === 'HIGH' ? 'badge-live' : (pos.confidence === 'MEDIUM' ? 'badge-warning' : 'badge-neutral')}`;
+        confEl.innerText = '🔒 STATIONARY (LOCKED)';
+        confEl.className = 'badge badge-info';
       }
     }
 
@@ -782,7 +797,16 @@
       if (layers.labels) {
         const subject = trackedSubjects.find(s => s.device_id === tagId);
         const baseName = subject ? subject.full_name : tagId;
-        const nameText = isOffline ? `${baseName} [OFFLINE]` : baseName;
+        let nameText = baseName;
+        if (isOffline) {
+          nameText = `${baseName} [OFFLINE]`;
+        } else if (pos.motion_state === 'WALKING') {
+          nameText = `🚶 ${baseName}`;
+        } else if (pos.motion_state === 'SETTLING') {
+          nameText = `🎯 ${baseName} (Settling)`;
+        } else {
+          nameText = `${baseName} 🔒`;
+        }
 
         ctx.font = 'bold 11px sans-serif';
         const textW = ctx.measureText(nameText).width;
@@ -864,6 +888,7 @@
           targetX: msg.x,
           targetY: msg.y,
           status: msg.status || 'ONLINE',
+          motion_state: msg.motion_state || 'STATIONARY',
           confidence: msg.confidence,
           anchors: msg.anchors_used || [],
           lastSeen: msg.timestamp || Date.now()
@@ -872,6 +897,7 @@
         existing.targetX = msg.x;
         existing.targetY = msg.y;
         existing.status = msg.status || 'ONLINE';
+        existing.motion_state = msg.motion_state || (existing.motion_state || 'STATIONARY');
         existing.confidence = msg.confidence;
         existing.anchors = msg.anchors_used || [];
         existing.lastSeen = msg.timestamp || Date.now();

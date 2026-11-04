@@ -20,8 +20,12 @@ const tagMedianBuffers = new Map();
 // Dedicated Kalman Filter per (anchorDeviceId, tagId)
 const tagKalmanFilters = new Map();
 
-// Smoothed 2D Position Cache per tagId: { x, y, ward_id, tag_mac, status, confidence, last_seen, last_broadcast }
+// Smoothed 2D Position Cache per tagId: { x, y, ward_id, tag_mac, status, confidence, motion_state, last_seen, last_broadcast }
 const tagSmoothedPositions = new Map();
+
+// Kinematic Motion Tracking State per tagId:
+// { state: 'MOVING' | 'SETTLING' | 'LOCKED', lastG: 1.0, gSamples: [], lastMotionTime: 0, settlingStartTime: 0, settlingBuffer: [], lockedPosition: null }
+const tagKinematics = new Map();
 
 // Maximum time (ms) before an anchor signal is deemed stale
 const STALE_TIMEOUT_MS = 3500;
@@ -42,6 +46,77 @@ function getMedian(arr) {
   const sorted = [...arr].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Retrieve or initialize kinematic tracking state for a wristband tag
+ */
+function getKinematicState(tagId) {
+  if (!tagKinematics.has(tagId)) {
+    tagKinematics.set(tagId, {
+      state: 'LOCKED',
+      lastG: 1.0,
+      gSamples: [],
+      lastMotionTime: 0,
+      settlingStartTime: 0,
+      settlingBuffer: [],
+      lockedPosition: null
+    });
+  }
+  return tagKinematics.get(tagId);
+}
+
+/**
+ * Process incoming physical IMU telemetry (total acceleration in Gs)
+ * Implements 3-State Filter: MOVING -> SETTLING (2s Windowed Median Convergence) -> LOCKED
+ */
+function recordKinematics(tagId, gValue, timestamp = Date.now()) {
+  if (isNaN(gValue)) return;
+  const ks = getKinematicState(tagId);
+  ks.lastG = gValue;
+  ks.gSamples.push({ g: gValue, t: timestamp });
+  if (ks.gSamples.length > 15) ks.gSamples.shift(); // ~3 seconds of 5Hz data
+
+  // Calculate dynamic acceleration variance around 1.0g
+  let sumSqDiff = 0;
+  for (const s of ks.gSamples) {
+    const diff = s.g - 1.0;
+    sumSqDiff += diff * diff;
+  }
+  const variance = sumSqDiff / ks.gSamples.length;
+
+  // Kinetic threshold: Active walking causes variance >= 0.006 or instantaneous |g - 1.0| > 0.16
+  const isMovingNow = (variance >= 0.006 || Math.abs(gValue - 1.0) > 0.16);
+
+  if (isMovingNow) {
+    ks.lastMotionTime = timestamp;
+    if (ks.state !== 'MOVING') {
+      ks.state = 'MOVING';
+      ks.settlingBuffer = [];
+    }
+  } else {
+    // Accelerometer is calm
+    if (ks.state === 'MOVING') {
+      // Patient just stopped walking: enter 2-second Settling Convergence window
+      ks.state = 'SETTLING';
+      ks.settlingStartTime = timestamp;
+      ks.settlingBuffer = [];
+    } else if (ks.state === 'SETTLING') {
+      // Check if 2.0-second settling window has elapsed
+      if (timestamp - ks.settlingStartTime >= 2000) {
+        // Settling window complete: lock onto the clean median of collected coordinates
+        if (ks.settlingBuffer.length > 0) {
+          const medX = getMedian(ks.settlingBuffer.map(p => p.x));
+          const medY = getMedian(ks.settlingBuffer.map(p => p.y));
+          ks.lockedPosition = {
+            x: Math.round(medX * 100) / 100,
+            y: Math.round(medY * 100) / 100
+          };
+        }
+        ks.state = 'LOCKED';
+      }
+    }
+  }
 }
 
 /**
@@ -117,15 +192,31 @@ async function reloadWardAnchorsCache() {
 
     const newAnchorMap = new Map();
     for (const a of anchors) {
+      const room = newWardMap.get(a.ward_id) || { length_x: 6.40, width_y: 4.80 };
+      const ax = parseFloat(a.x) || 0.0;
+      const ay = parseFloat(a.y) || 0.0;
+      const corners = [
+        { x: 0, y: 0 },
+        { x: room.length_x, y: 0 },
+        { x: room.length_x, y: room.width_y },
+        { x: 0, y: room.width_y }
+      ];
+      let maxReach = 0;
+      for (const c of corners) {
+        const d = Math.sqrt(Math.pow(c.x - ax, 2) + Math.pow(c.y - ay, 2));
+        if (d > maxReach) maxReach = d;
+      }
+
       const data = {
         anchor_id: a.anchor_id,
         ward_id: a.ward_id,
         device_id: a.device_id,
         mac_address: (a.mac_address || a.dev_mac || '').toUpperCase(),
-        x: parseFloat(a.x) || 0.0,
-        y: parseFloat(a.y) || 0.0,
+        x: ax,
+        y: ay,
         z: parseFloat(a.z) || 1.80,
-        wall_location: a.wall_location || ''
+        wall_location: a.wall_location || '',
+        max_reach: Math.round((maxReach + 0.15) * 100) / 100 // Anchor-specific corner reach + small 0.15m margin
       };
 
       if (a.device_id) newAnchorMap.set(a.device_id.toLowerCase(), data);
@@ -295,8 +386,9 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
 
   // 4. Two-stage filtering: 5-sample Rolling Median -> 1D Kalman Filter
   const filteredRssi = filterRssi(devId, canonicalTagId, rawRssi);
-  // 5. Geometry-Aware Distance Calculation with Diagonal Bounding
-  const distance = calculateBoundedDistance(filteredRssi, wardDim.max_diagonal);
+  // 5. Geometry-Aware Distance Calculation with Anchor-Specific Maximum Reach Bounding (Phase 1)
+  const maxReachLimit = anchorMeta.max_reach || wardDim.max_diagonal || 5.5;
+  const distance = calculateBoundedDistance(filteredRssi, maxReachLimit);
 
   // Store reading in buffer under canonicalTagId
   if (!tagReadings.has(wardId)) tagReadings.set(wardId, new Map());
@@ -363,21 +455,67 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
 
   if (!solved || isNaN(solved.x) || isNaN(solved.y)) return;
 
-  // 7. Adaptive Exponential Moving Average (EMA) Smoothing:
-  // Small displacement: heavy smoothing (alpha = 0.18) to freeze RF jitter.
-  // Large displacement (> 0.6m): higher alpha (0.42) for prompt walking responsiveness.
+  // 7. Kinematic 3-State Filter: MOVING -> SETTLING -> LOCKED (Phase 2)
+  const ks = getKinematicState(canonicalTagId);
+  const isImuActive = (ks.gSamples.length > 0 && (now - (ks.gSamples[ks.gSamples.length - 1]?.t || 0) < 8000));
+
   let smoothX = solved.x;
   let smoothY = solved.y;
+  let motionStateText = 'STATIONARY';
 
   const prevSmoothed = tagSmoothedPositions.get(canonicalTagId);
-  if (prevSmoothed && prevSmoothed.ward_id === wardId) {
-    const dx = solved.x - prevSmoothed.x;
-    const dy = solved.y - prevSmoothed.y;
-    const disp = Math.sqrt(dx * dx + dy * dy);
-    const alpha = disp > 0.60 ? 0.42 : 0.18;
 
-    smoothX = alpha * solved.x + (1 - alpha) * prevSmoothed.x;
-    smoothY = alpha * solved.y + (1 - alpha) * prevSmoothed.y;
+  if (isImuActive) {
+    if (ks.state === 'MOVING') {
+      motionStateText = 'WALKING';
+      // Responsive dynamic tracking when patient is actively walking
+      if (prevSmoothed && prevSmoothed.ward_id === wardId) {
+        smoothX = 0.40 * solved.x + 0.60 * prevSmoothed.x;
+        smoothY = 0.40 * solved.y + 0.60 * prevSmoothed.y;
+      }
+      ks.lockedPosition = { x: smoothX, y: smoothY };
+    } else if (ks.state === 'SETTLING') {
+      motionStateText = 'SETTLING';
+      // Accumulate candidate coordinates in 2-second Settling Window
+      ks.settlingBuffer.push({ x: solved.x, y: solved.y });
+      if (ks.settlingBuffer.length > 30) ks.settlingBuffer.shift();
+
+      // Smoothly converge toward the median of the settling window
+      const curMedX = getMedian(ks.settlingBuffer.map(p => p.x));
+      const curMedY = getMedian(ks.settlingBuffer.map(p => p.y));
+      smoothX = curMedX;
+      smoothY = curMedY;
+      ks.lockedPosition = { x: smoothX, y: smoothY };
+    } else if (ks.state === 'LOCKED') {
+      motionStateText = 'STATIONARY';
+      // STATIONARY RETENTION: The patient has stopped walking and settled!
+      // Lock position, completely rejecting momentary RF multipath jumps!
+      if (ks.lockedPosition) {
+        smoothX = ks.lockedPosition.x;
+        smoothY = ks.lockedPosition.y;
+
+        // Exception guard: If all anchors consistently report a huge shift (> 1.2m)
+        // for multiple frames, soft-relax toward the new position
+        const driftDist = Math.sqrt(Math.pow(solved.x - smoothX, 2) + Math.pow(solved.y - smoothY, 2));
+        if (driftDist > 1.2) {
+          smoothX += (solved.x - smoothX) * 0.05;
+          smoothY += (solved.y - smoothY) * 0.05;
+          ks.lockedPosition = { x: smoothX, y: smoothY };
+        }
+      } else {
+        ks.lockedPosition = { x: smoothX, y: smoothY };
+      }
+    }
+  } else {
+    // Fallback adaptive smoothing if IMU telemetry is offline
+    if (prevSmoothed && prevSmoothed.ward_id === wardId) {
+      const dx = solved.x - prevSmoothed.x;
+      const dy = solved.y - prevSmoothed.y;
+      const disp = Math.sqrt(dx * dx + dy * dy);
+      const alpha = disp > 0.60 ? 0.42 : 0.15;
+      smoothX = alpha * solved.x + (1 - alpha) * prevSmoothed.x;
+      smoothY = alpha * solved.y + (1 - alpha) * prevSmoothed.y;
+    }
   }
 
   smoothX = Math.round(smoothX * 100) / 100;
@@ -392,7 +530,8 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
     ward_id: wardId,
     tag_mac: cleanMac || '',
     status: 'ONLINE',
-    confidence,
+    motion_state: motionStateText,
+    confidence: (ks.state === 'LOCKED' && isImuActive) ? 'STATIONARY_LOCKED' : confidence,
     last_seen: now,
     last_broadcast: prevSmoothed?.last_broadcast || 0
   });
@@ -412,7 +551,8 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
       raw_x: Math.round(solved.x * 100) / 100,
       raw_y: Math.round(solved.y * 100) / 100,
       status: 'ONLINE',
-      confidence,
+      motion_state: motionStateText,
+      confidence: (ks.state === 'LOCKED' && isImuActive) ? 'STATIONARY_LOCKED' : confidence,
       anchors_used: freshAnchors.map(a => ({
         anchor_id: a.anchor_id,
         device_id: a.device_id,
@@ -477,6 +617,7 @@ function getWardTagPositions(wardId) {
 module.exports = {
   reloadWardAnchorsCache,
   recordAnchorReading,
+  recordKinematics,
   solveWeightedTrilateration,
   getTagPosition,
   getWardTagPositions

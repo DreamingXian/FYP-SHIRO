@@ -196,6 +196,11 @@ async function startMqttBroker(port = 1883) {
             // NOTE: Do not pass rssi here so existing anchor RSSI is NEVER overwritten or wiped to null!
           });
           parsed.tag_id = tagId;
+
+          // Feed IMU kinematics into IPS 3-State Motion Filter (Phase 2)
+          if (parsed.g !== undefined) {
+            ipsService.recordKinematics(tagId, parseFloat(parsed.g), Date.now());
+          }
         }
 
         broadcastToClients({
