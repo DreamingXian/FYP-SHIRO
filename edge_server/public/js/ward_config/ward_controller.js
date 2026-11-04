@@ -1170,8 +1170,39 @@
         return { clear: true };
       };
 
+      // Helper: Render individual proposed anchor cards
+      function renderAnchorCardsHtml(anchors) {
+        if (!Array.isArray(anchors)) return '';
+        return anchors.map(a => {
+          const losText = a.totalBeds > 0
+            ? (a.clearBeds === a.totalBeds
+                ? `<span style="color:#10B981; font-weight:700;">🟢 ${a.clearBeds}/${a.totalBeds} Beds Clear (100% 3D LOS)</span>`
+                : `<span style="color:#D97706; font-weight:700;">🟡 ${a.clearBeds}/${a.totalBeds} Beds Clear</span>`)
+            : '<span style="color:var(--text-muted);">No Beds Configured</span>';
+
+          const boundText = a.device_id
+            ? `<span class="mono" style="color:var(--primary); font-weight:700;">${a.device_id}</span>`
+            : `<span style="color:var(--text-muted); font-style:italic;">Standby (Unbound)</span>`;
+
+          return `
+            <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 3px;">
+                <strong style="font-size:12px; color:var(--text-primary);">📡 ${a.anchor_id}</strong>
+                <span style="font-size:11px;">Hardware: ${boundText}</span>
+              </div>
+              <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
+                Placement: <strong>${a.wall_location}</strong> · X: <strong>${a.x.toFixed(2)}m</strong>, Y: <strong>${a.y.toFixed(2)}m</strong>, Z: <strong>${a.z.toFixed(2)}m</strong>
+              </div>
+              <div style="font-size:11px;">
+                3D Line-of-Sight: ${losText}
+              </div>
+            </div>
+          `;
+        }).join('');
+      }
+
       // Helper to evaluate candidate wall positions
-      function findBestWallPosition({ targetWall, rangeMin, rangeMax, step = 0.05 }) {
+      function findBestWallPosition({ targetWall, rangeMin, rangeMax, prefer = 'CENTER', step = 0.05 }) {
         let best = null;
         let bestScore = -9999;
 
@@ -1227,15 +1258,14 @@
 
           // Score: prioritize direct 3D LOS, then baseline spread
           let score = clearCount * 100;
-          if (targetWall === 'SOUTH') {
-            const distFromMid = Math.abs(ax - roomX / 2);
-            score -= distFromMid * 10;
-          } else if (targetWall === 'NORTH') {
-            if (rangeMin < roomX / 2) {
-              score -= (ax - rangeMin) * 5; // Favor corner
-            } else {
-              score -= (rangeMax - ax) * 5;
-            }
+          const wallLen = (targetWall === 'NORTH' || targetWall === 'SOUTH') ? roomX : roomY;
+          const wallMid = wallLen / 2;
+          if (prefer === 'CENTER') {
+            score -= Math.abs(rPos - wallMid) * 15;
+          } else if (prefer === 'MIN') {
+            score -= (rPos - rangeMin) * 8;
+          } else if (prefer === 'MAX') {
+            score -= (rangeMax - rPos) * 8;
           }
 
           if (score > bestScore) {
@@ -1244,6 +1274,7 @@
               x: ax,
               y: ay,
               z: roomH,
+              wall: targetWall,
               wall_location: wallDesc,
               clearBeds: clearCount,
               totalBeds: bedTargets.length
@@ -1253,127 +1284,236 @@
         return best;
       }
 
-      // Anchor A Candidate (North-West)
-      // Check North wall first; if completely blocked by obstacle/cutout, try West wall
-      let candA = findBestWallPosition({ targetWall: 'NORTH', rangeMin: 0.40, rangeMax: Math.max(0.40, Math.min(roomX / 2 - 0.20, 2.00)) });
-      if (!candA) {
-        candA = findBestWallPosition({ targetWall: 'WEST', rangeMin: Math.max(0.40, roomY / 2 + 0.20), rangeMax: Math.max(0.40, roomY - 0.40) });
-      }
-      if (!candA) {
-        candA = { x: 0.40, y: roomY, z: roomH, wall_location: 'North Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length };
-      }
-
-      // Anchor B Candidate (North-East)
-      let candB = findBestWallPosition({ targetWall: 'NORTH', rangeMin: Math.max(roomX / 2 + 0.20, roomX - 2.00), rangeMax: Math.max(0.40, roomX - 0.40) });
-      if (!candB) {
-        candB = findBestWallPosition({ targetWall: 'EAST', rangeMin: Math.max(0.40, roomY / 2 + 0.20), rangeMax: Math.max(0.40, roomY - 0.40) });
-      }
-      if (!candB) {
-        candB = { x: Math.max(0.40, Math.round((roomX - 0.40) * 100) / 100), y: roomY, z: roomH, wall_location: 'North Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length };
-      }
-
-      // Anchor C Candidate (South Wall)
-      let candC = findBestWallPosition({ targetWall: 'SOUTH', rangeMin: 0.40, rangeMax: Math.max(0.40, roomX - 0.40) });
-      if (!candC) {
-        candC = { x: Math.round((roomX / 2) * 100) / 100, y: 0.00, z: roomH, wall_location: 'South Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length };
-      }
-
-      // Existing anchors hardware preservation
+      // Preserve existing hardware attributes
       const existingAnchors = currentWard.anchors || [];
-      const suggestedAnchors = [];
 
-      // Anchor A
-      suggestedAnchors.push({
-        anchor_id: existingAnchors[0]?.anchor_id || 'Anchor A',
-        device_id: existingAnchors[0]?.device_id || null,
-        mac_address: existingAnchors[0]?.mac_address || '',
-        status: existingAnchors[0]?.status || 'STANDBY',
-        x: candA.x,
-        y: candA.y,
-        z: candA.z,
-        wall_location: candA.wall_location,
-        clearBeds: candA.clearBeds,
-        totalBeds: candA.totalBeds
-      });
+      // Multi-Topology Candidate Archetypes
+      const archetypes = [
+        {
+          id: 'TOP_1N_2S',
+          title: 'Pattern B: 1 North + 2 South (Upright Triangle)',
+          description: 'One anchor centered on North wall, two spread across South wall (Ideal when patient beds rest on South wall)',
+          anchors: [
+            { wall: 'NORTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'A', name: 'Anchor A' },
+            { wall: 'SOUTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'B', name: 'Anchor B' },
+            { wall: 'SOUTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'C', name: 'Anchor C' }
+          ]
+        },
+        {
+          id: 'TOP_2N_1S',
+          title: 'Pattern A: 2 North + 1 South (Inverted Triangle)',
+          description: 'Two anchors spread across North wall, one centered on South wall',
+          anchors: [
+            { wall: 'NORTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
+            { wall: 'NORTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
+            { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
+          ]
+        },
+        {
+          id: 'TOP_TRI_NES',
+          title: 'Pattern E: Tri-Perimeter (North, East, South)',
+          description: 'Anchors distributed across North, East, and South walls for maximum perimeter baseline coverage',
+          anchors: [
+            { wall: 'NORTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
+            { wall: 'EAST', min: roomY / 2, max: roomY - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
+            { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
+          ]
+        },
+        {
+          id: 'TOP_TRI_NWS',
+          title: 'Pattern F: Tri-Perimeter (North, West, South)',
+          description: 'Anchors distributed across North, West, and South walls',
+          anchors: [
+            { wall: 'NORTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'A', name: 'Anchor A' },
+            { wall: 'WEST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'B', name: 'Anchor B' },
+            { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
+          ]
+        },
+        {
+          id: 'TOP_1W_2E',
+          title: 'Pattern C: 1 West + 2 East (Horizontal Triangle)',
+          description: 'One anchor centered on West wall, two spread along East wall',
+          anchors: [
+            { wall: 'WEST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'A', name: 'Anchor A' },
+            { wall: 'EAST', min: 0.40, max: roomY / 2 - 0.20, prefer: 'MIN', slot: 'B', name: 'Anchor B' },
+            { wall: 'EAST', min: roomY / 2 + 0.20, max: roomY - 0.40, prefer: 'MAX', slot: 'C', name: 'Anchor C' }
+          ]
+        },
+        {
+          id: 'TOP_2W_1E',
+          title: 'Pattern D: 2 West + 1 East (Horizontal Triangle)',
+          description: 'Two anchors spread along West wall, one centered on East wall',
+          anchors: [
+            { wall: 'WEST', min: 0.40, max: roomY / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
+            { wall: 'WEST', min: roomY / 2 + 0.20, max: roomY - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
+            { wall: 'EAST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' }
+          ]
+        }
+      ];
 
-      // Anchor B
-      suggestedAnchors.push({
-        anchor_id: existingAnchors[1]?.anchor_id || 'Anchor B',
-        device_id: existingAnchors[1]?.device_id || null,
-        mac_address: existingAnchors[1]?.mac_address || '',
-        status: existingAnchors[1]?.status || 'STANDBY',
-        x: candB.x,
-        y: candB.y,
-        z: candB.z,
-        wall_location: candB.wall_location,
-        clearBeds: candB.clearBeds,
-        totalBeds: candB.totalBeds
-      });
-
-      // Anchor C
-      suggestedAnchors.push({
-        anchor_id: existingAnchors[2]?.anchor_id || 'Anchor C',
-        device_id: existingAnchors[2]?.device_id || null,
-        mac_address: existingAnchors[2]?.mac_address || '',
-        status: existingAnchors[2]?.status || 'STANDBY',
-        x: candC.x,
-        y: candC.y,
-        z: candC.z,
-        wall_location: candC.wall_location,
-        clearBeds: candC.clearBeds,
-        totalBeds: candC.totalBeds
-      });
-
-      // If 4th anchor exists
+      // If existingAnchors has 4 or more anchors, add 4-anchor archetypes
       if (existingAnchors.length >= 4) {
-        const candD = findBestWallPosition({ targetWall: 'EAST', rangeMin: 0.40, rangeMax: Math.max(0.40, roomY / 2 - 0.20) }) ||
-                      findBestWallPosition({ targetWall: 'WEST', rangeMin: 0.40, rangeMax: Math.max(0.40, roomY / 2 - 0.20) });
-        if (candD) {
-          suggestedAnchors.push({
-            anchor_id: existingAnchors[3]?.anchor_id || 'Anchor D',
-            device_id: existingAnchors[3]?.device_id || null,
-            mac_address: existingAnchors[3]?.mac_address || '',
-            status: existingAnchors[3]?.status || 'STANDBY',
-            x: candD.x,
-            y: candD.y,
-            z: candD.z,
-            wall_location: candD.wall_location,
-            clearBeds: candD.clearBeds,
-            totalBeds: candD.totalBeds
+        archetypes.unshift(
+          {
+            id: 'TOP_4_CORNERS',
+            title: 'Pattern 4-Corners: 2 North + 2 South',
+            description: 'Four perimeter anchors at the four room corners (North-West, North-East, South-East, South-West)',
+            anchors: [
+              { wall: 'NORTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'A', name: 'Anchor A' },
+              { wall: 'NORTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'B', name: 'Anchor B' },
+              { wall: 'SOUTH', min: roomX / 2 + 0.20, max: roomX - 0.40, prefer: 'MAX', slot: 'C', name: 'Anchor C' },
+              { wall: 'SOUTH', min: 0.40, max: roomX / 2 - 0.20, prefer: 'MIN', slot: 'D', name: 'Anchor D' }
+            ]
+          },
+          {
+            id: 'TOP_4_WALLS',
+            title: 'Pattern 4-Perimeter: 1 per Wall (Cross-Room)',
+            description: 'One anchor centered on each of the 4 perimeter walls (North, East, South, West)',
+            anchors: [
+              { wall: 'NORTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'A', name: 'Anchor A' },
+              { wall: 'EAST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'B', name: 'Anchor B' },
+              { wall: 'SOUTH', min: 0.40, max: roomX - 0.40, prefer: 'CENTER', slot: 'C', name: 'Anchor C' },
+              { wall: 'WEST', min: 0.40, max: roomY - 0.40, prefer: 'CENTER', slot: 'D', name: 'Anchor D' }
+            ]
+          }
+        );
+      }
+
+      const results = [];
+      archetypes.forEach(arch => {
+        const placed = [];
+        let valid = true;
+        for (const aSpec of arch.anchors) {
+          const p = findBestWallPosition({
+            targetWall: aSpec.wall,
+            rangeMin: aSpec.min,
+            rangeMax: aSpec.max,
+            prefer: aSpec.prefer
+          });
+          if (!p) {
+            valid = false;
+            break;
+          }
+          placed.push({
+            ...p,
+            slot: aSpec.slot,
+            anchor_id: aSpec.name,
+            wall_location: p.wall_location
           });
         }
+
+        // If this is a 3-anchor pattern but ward has 4 or more anchors, place the 4th anchor
+        if (valid && existingAnchors.length >= 4 && placed.length === 3) {
+          const usedWalls = placed.map(p => p.wall);
+          let candD = null;
+          ['EAST', 'WEST', 'NORTH', 'SOUTH'].forEach(w => {
+            if (!candD && !usedWalls.includes(w)) {
+              candD = findBestWallPosition({ targetWall: w, rangeMin: 0.40, rangeMax: (w === 'NORTH' || w === 'SOUTH' ? roomX : roomY) - 0.40, prefer: 'CENTER' });
+            }
+          });
+          if (!candD) {
+            candD = findBestWallPosition({ targetWall: 'EAST', rangeMin: 0.40, rangeMax: roomY - 0.40, prefer: 'CENTER' }) ||
+                    findBestWallPosition({ targetWall: 'WEST', rangeMin: 0.40, rangeMax: roomY - 0.40, prefer: 'CENTER' });
+          }
+          if (candD) {
+            placed.push({
+              ...candD,
+              slot: 'D',
+              anchor_id: existingAnchors[3]?.anchor_id || 'Anchor D',
+              wall_location: candD.wall_location
+            });
+          }
+        }
+
+        if (valid && placed.length >= 3) {
+          // Calculate polygon area using shoelace formula
+          const pts = placed.map(p => ({ x: p.x, y: p.y }));
+          const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
+          const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
+          pts.sort((p1, p2) => Math.atan2(p1.y - cy, p1.x - cx) - Math.atan2(p2.y - cy, p2.x - cx));
+          let sumShoe = 0;
+          for (let i = 0; i < pts.length; i++) {
+            const j = (i + 1) % pts.length;
+            sumShoe += (pts[i].x * pts[j].y) - (pts[i].y * pts[j].x);
+          }
+          const area = Math.abs(sumShoe) / 2;
+          const roomArea = roomX * roomY;
+          const areaRatio = roomArea > 0 ? (area / roomArea) : 0;
+
+          let totalClear = 0;
+          let totalRays = placed.length * bedTargets.length;
+          placed.forEach(a => {
+            let aClear = 0;
+            bedTargets.forEach(bt => {
+              if (rayChecker(a, bt, obstacles, roomH).clear) {
+                totalClear++;
+                aClear++;
+              }
+            });
+            a.clearBeds = aClear;
+            a.totalBeds = bedTargets.length;
+          });
+
+          // Preserve existing hardware attributes
+          placed.forEach((sugg, idx) => {
+            sugg.anchor_id = existingAnchors[idx]?.anchor_id || `Anchor ${String.fromCharCode(65 + idx)}`;
+            sugg.device_id = existingAnchors[idx]?.device_id || null;
+            sugg.mac_address = existingAnchors[idx]?.mac_address || '';
+            sugg.status = existingAnchors[idx]?.status || 'STANDBY';
+          });
+
+          const losPct = totalRays > 0 ? (totalClear / totalRays) * 100 : 100;
+          const compositeScore = Math.round(losPct * 0.65 + Math.min(50, areaRatio * 100) * 0.35);
+
+          results.push({
+            id: arch.id,
+            title: arch.title,
+            description: arch.description,
+            anchors: placed,
+            area: Math.round(area * 100) / 100,
+            areaRatio: Math.round(areaRatio * 100),
+            totalClear,
+            totalRays,
+            losPct: Math.round(losPct),
+            compositeScore
+          });
+        }
+      });
+
+      // Fallback in extreme cases where room geometry blocks all standard patterns
+      if (results.length === 0) {
+        const fallbackAnchors = [
+          { anchor_id: existingAnchors[0]?.anchor_id || 'Anchor A', device_id: existingAnchors[0]?.device_id || null, mac_address: existingAnchors[0]?.mac_address || '', status: 'STANDBY', x: 0.40, y: roomY, z: roomH, wall_location: 'North Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length },
+          { anchor_id: existingAnchors[1]?.anchor_id || 'Anchor B', device_id: existingAnchors[1]?.device_id || null, mac_address: existingAnchors[1]?.mac_address || '', status: 'STANDBY', x: Math.max(0.40, roomX - 0.40), y: roomY, z: roomH, wall_location: 'North Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length },
+          { anchor_id: existingAnchors[2]?.anchor_id || 'Anchor C', device_id: existingAnchors[2]?.device_id || null, mac_address: existingAnchors[2]?.mac_address || '', status: 'STANDBY', x: Math.max(0.40, roomX / 2), y: 0.00, z: roomH, wall_location: 'South Wall (Flush)', clearBeds: bedTargets.length, totalBeds: bedTargets.length }
+        ];
+        results.push({
+          id: 'TOP_FALLBACK',
+          title: 'Standard Perimeter Layout',
+          description: 'Basic perimeter wall layout',
+          anchors: fallbackAnchors,
+          area: Math.round((roomX * roomY * 0.35) * 100) / 100,
+          areaRatio: 35,
+          totalClear: bedTargets.length * 3,
+          totalRays: bedTargets.length * 3,
+          losPct: 100,
+          compositeScore: 60
+        });
       }
 
-      // Calculate baseline triangle area (GDOP coverage indicator)
-      const triArea = Math.abs((candA.x * (candB.y - candC.y) + candB.x * (candC.y - candA.y) + candC.x * (candA.y - candB.y)) / 2);
+      // Sort candidate topologies descending by composite score
+      results.sort((a, b) => b.compositeScore - a.compositeScore);
 
-      // Build proposed anchor cards HTML
-      const anchorCardsHtml = suggestedAnchors.map(a => {
-        const losText = a.totalBeds > 0
-          ? (a.clearBeds === a.totalBeds
-              ? `<span style="color:#10B981; font-weight:700;">🟢 ${a.clearBeds}/${a.totalBeds} Beds Clear (100% 3D LOS)</span>`
-              : `<span style="color:#D97706; font-weight:700;">🟡 ${a.clearBeds}/${a.totalBeds} Beds Clear</span>`)
-          : '<span style="color:var(--text-muted);">No Beds Configured</span>';
+      window.currentAnchorPatterns = results;
+      window.activeSuggestedPattern = results[0];
+      const activePat = results[0];
 
-        const boundText = a.device_id
-          ? `<span class="mono" style="color:var(--primary); font-weight:700;">${a.device_id}</span>`
-          : `<span style="color:var(--text-muted); font-style:italic;">Standby (Unbound)</span>`;
-
-        return `
-          <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 3px;">
-              <strong style="font-size:12px; color:var(--text-primary);">📡 ${a.anchor_id}</strong>
-              <span style="font-size:11px;">Hardware: ${boundText}</span>
-            </div>
-            <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
-              Placement: <strong>${a.wall_location}</strong> · X: <strong>${a.x.toFixed(2)}m</strong>, Y: <strong>${a.y.toFixed(2)}m</strong>, Z: <strong>${a.z.toFixed(2)}m</strong>
-            </div>
-            <div style="font-size:11px;">
-              3D Line-of-Sight: ${losText}
-            </div>
-          </div>
-        `;
+      const patternOptionsHtml = results.map((p, idx) => {
+        const isBest = idx === 0 ? ' ⭐ (Recommended)' : '';
+        return `<option value="${p.id}" ${idx === 0 ? 'selected' : ''}>[Rank #${idx + 1} - Score: ${p.compositeScore}/100] ${p.title}${isBest}</option>`;
       }).join('');
+
+      const anchorCardsHtml = renderAnchorCardsHtml(activePat.anchors);
 
       const modalHtml = `
         <div style="display: grid; grid-template-columns: 460px 1fr; gap: 20px; align-items: start;">
@@ -1387,7 +1527,7 @@
               <canvas id="modal-suggest-preview-canvas" width="460" height="320" style="width: 100%; height: 100%; display: block;"></canvas>
             </div>
             <!-- Visual Legend -->
-            <div style="display: flex; justify-content: space-between; font-size: 10px; font-weight: 600; color: var(--text-muted); margin-top: 8px; flex-wrap: wrap; gap: 6px;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; font-weight: 600; color: var(--text-muted); margin-top: 8px; flex-wrap: gap: 6px;">
               <span style="color: #0284C7;">🔵 Wall Anchors (Flush)</span>
               <span style="color: #10B981;">🟢 Direct 3D LOS</span>
               <span style="color: #EF4444;">🔴 NLOS Obstruction</span>
@@ -1395,29 +1535,46 @@
             </div>
           </div>
 
-          <!-- Right: Coordinates & 3D Geometric Analysis -->
+          <!-- Right: Pattern Selector, Metrics & Coordinates -->
           <div>
+            <!-- Pattern Selector Card -->
+            <div style="background: #F8FAFC; border: 1.5px solid #CBD5E1; border-radius: 8px; padding: 10px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                <label for="modal-pattern-select" style="font-size: 11px; font-weight: 700; color: var(--text-primary); margin:0;">
+                  📐 Select Anchor Layout Pattern:
+                </label>
+                <span id="modal-pattern-badge" class="badge badge-live" style="font-size: 10px;">Rank #1 (${activePat.compositeScore}/100)</span>
+              </div>
+              <select id="modal-pattern-select" class="form-control" style="font-weight: 700; padding: 6px 10px; font-size: 12px; width: 100%; border-radius: 6px; cursor: pointer; border: 1px solid var(--border);" onchange="window.onSelectAnchorPattern(this.value)">
+                ${patternOptionsHtml}
+              </select>
+              <div id="modal-pattern-desc" style="font-size: 11px; color: var(--text-secondary); margin-top: 6px; line-height: 1.35; padding: 5px 8px; background: #FFFFFF; border-radius: 4px; border: 1px solid var(--border);">
+                ${activePat.description}
+              </div>
+            </div>
+
             <!-- Metrics Pill Bar -->
             <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; text-align: center;">
               <div style="background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px;">
                 <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Mounting Height</div>
-                <div style="font-size: 14px; font-weight: 700; color: var(--primary); margin-top: 2px;">${roomH.toFixed(2)}m (Ceiling)</div>
+                <div style="font-size: 13px; font-weight: 700; color: var(--primary); margin-top: 2px;">${roomH.toFixed(2)}m (Ceiling)</div>
               </div>
               <div style="background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px;">
                 <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Wristband Target</div>
-                <div style="font-size: 14px; font-weight: 700; color: var(--status-success-text); margin-top: 2px;">Z = 0.85m</div>
+                <div style="font-size: 13px; font-weight: 700; color: var(--status-success-text); margin-top: 2px;">Z = 0.85m</div>
               </div>
               <div style="background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px;">
-                <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Triangle Baseline</div>
-                <div style="font-size: 14px; font-weight: 700; color: var(--text-primary); margin-top: 2px;">${triArea.toFixed(2)} m²</div>
+                <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Baseline Coverage</div>
+                <div id="modal-metric-baseline" style="font-size: 13px; font-weight: 700; color: var(--text-primary); margin-top: 2px;">${activePat.area.toFixed(2)} m² (${activePat.areaRatio}%)</div>
               </div>
             </div>
 
             <!-- Proposed Anchors List -->
-            <div style="font-weight: 700; font-size: 12px; color: var(--text-primary); margin-bottom: 6px;">
-              Proposed Wall Positions:
+            <div style="font-weight: 700; font-size: 12px; color: var(--text-primary); margin-bottom: 6px; display:flex; justify-content:space-between; align-items:center;">
+              <span>Proposed Wall Positions:</span>
+              <span id="modal-metric-los" style="font-size: 11px; font-weight: 600; color: #10B981;">🟢 3D LOS: ${activePat.totalClear}/${activePat.totalRays} (${activePat.losPct}%)</span>
             </div>
-            <div style="max-height: 180px; overflow-y: auto; margin-bottom: 12px;">
+            <div id="modal-anchor-cards-container" style="max-height: 175px; overflow-y: auto; margin-bottom: 12px;">
               ${anchorCardsHtml}
             </div>
 
@@ -1426,7 +1583,7 @@
               <strong>💡 Physical Optimization Insights:</strong><br>
               • Anchors are positioned <strong>strictly on perimeter walls</strong> (no floating coordinates).<br>
               • Ceiling mount height (${roomH.toFixed(2)}m) allows radio waves to travel <strong>downward over tables (0.75m) and bed frames</strong>.<br>
-              • Existing hardware assignments are preserved. Click <strong>Accept & Apply</strong> to load these coordinates, or <strong>Cancel</strong> to keep current values.
+              • Switch patterns above to test different wall combinations. Click <strong>Accept & Apply</strong> to load the selected layout into the form.
             </div>
           </div>
         </div>
@@ -1442,7 +1599,10 @@
           confirmText: '✅ Accept & Apply',
           cancelText: 'Cancel',
           onConfirm: () => {
-            applySuggestedAnchors(suggestedAnchors, triArea, roomH);
+            const chosen = window.activeSuggestedPattern || (window.currentAnchorPatterns && window.currentAnchorPatterns[0]);
+            if (chosen) {
+              applySuggestedAnchors(chosen.anchors, chosen.area, roomH, chosen.title);
+            }
           },
           onCancel: () => {
             // Cancelled - do not touch anything
@@ -1454,7 +1614,7 @@
           const previewCanvas = document.getElementById('modal-suggest-preview-canvas');
           if (previewCanvas && typeof window.renderWardToCanvas === 'function') {
             const previewWard = JSON.parse(JSON.stringify(currentWard));
-            previewWard.anchors = suggestedAnchors;
+            previewWard.anchors = activePat.anchors;
             window.renderWardToCanvas(previewCanvas, previewWard, {
               bgColor: '#FFFFFF',
               padding: 26,
@@ -1465,7 +1625,53 @@
       }
     }
 
-    function applySuggestedAnchors(suggestedAnchors, triArea, roomH) {
+    /**
+     * Interactive Handler: Switch active suggested anchor layout pattern
+     */
+    function onSelectAnchorPattern(patternId) {
+      if (!window.currentAnchorPatterns || !window.currentAnchorPatterns.length) return;
+      const pattern = window.currentAnchorPatterns.find(p => p.id === patternId);
+      if (!pattern) return;
+      window.activeSuggestedPattern = pattern;
+
+      const descEl = document.getElementById('modal-pattern-desc');
+      if (descEl) descEl.innerText = pattern.description;
+
+      const badgeEl = document.getElementById('modal-pattern-badge');
+      if (badgeEl) {
+        const idx = window.currentAnchorPatterns.indexOf(pattern);
+        badgeEl.innerText = `Rank #${idx + 1} (${pattern.compositeScore}/100)`;
+        badgeEl.className = idx === 0 ? 'badge badge-live' : 'badge badge-info';
+      }
+
+      const baselineEl = document.getElementById('modal-metric-baseline');
+      if (baselineEl) baselineEl.innerText = `${pattern.area.toFixed(2)} m² (${pattern.areaRatio}%)`;
+
+      const losEl = document.getElementById('modal-metric-los');
+      if (losEl) {
+        losEl.innerHTML = pattern.totalRays > 0
+          ? `🟢 3D LOS: ${pattern.totalClear}/${pattern.totalRays} (${pattern.losPct}%)`
+          : '🟢 3D LOS: Clear';
+      }
+
+      const cardsContainer = document.getElementById('modal-anchor-cards-container');
+      if (cardsContainer) {
+        cardsContainer.innerHTML = renderAnchorCardsHtml(pattern.anchors);
+      }
+
+      const previewCanvas = document.getElementById('modal-suggest-preview-canvas');
+      if (previewCanvas && typeof window.renderWardToCanvas === 'function') {
+        const previewWard = JSON.parse(JSON.stringify(currentWard));
+        previewWard.anchors = pattern.anchors;
+        window.renderWardToCanvas(previewCanvas, previewWard, {
+          bgColor: '#FFFFFF',
+          padding: 26,
+          show3dLosRays: true
+        });
+      }
+    }
+
+    function applySuggestedAnchors(suggestedAnchors, triArea, roomH, patternTitle) {
       if (!currentWard || !Array.isArray(suggestedAnchors)) return;
 
       if (!Array.isArray(currentWard.anchors)) currentWard.anchors = [];
@@ -1496,7 +1702,8 @@
       redrawWardMap();
       markUnsavedChanges();
 
-      const msg = `✨ Optimal wall anchor layout applied! Ceiling mount: ${roomH.toFixed(2)}m. Baseline coverage: ${triArea.toFixed(2)} m². Click "Save Changes" to commit.`;
+      const titleText = patternTitle ? ` (${patternTitle.split(':')[0]})` : '';
+      const msg = `✨ Optimal wall anchor layout applied${titleText}! Ceiling mount: ${roomH.toFixed(2)}m. Baseline coverage: ${triArea.toFixed(2)} m². Click "Save Changes" to commit.`;
       if (typeof showToast === 'function') {
         showToast(msg, 'success', 4500);
       } else if (window.showToast) {
@@ -1755,6 +1962,7 @@ window.addAnchor = addAnchor;
 window.updateAnchor = updateAnchor;
 window.deleteAnchor = deleteAnchor;
 window.autoSuggestAnchors = autoSuggestAnchors;
+window.onSelectAnchorPattern = onSelectAnchorPattern;
 window.applySuggestedAnchors = applySuggestedAnchors;
 window.updateWardStats = updateWardStats;
 window.applyWardTemplate = applyWardTemplate;

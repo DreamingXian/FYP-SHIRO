@@ -316,11 +316,19 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
     mapCtx.lineWidth = 1.5;
     mapCtx.setLineDash([4, 4]);
     mapCtx.beginPath();
-    ward.anchors.forEach((a, i) => {
-      const ax = originX + a.x * scale;
-      const ay = originY + (roomY - a.y) * scale;
-      if (i === 0) mapCtx.moveTo(ax, ay);
-      else mapCtx.lineTo(ax, ay);
+
+    // Sort vertices angularly around centroid to ensure clean non-self-intersecting perimeter
+    const pts = ward.anchors.map(a => ({
+      x: originX + a.x * scale,
+      y: originY + (roomY - a.y) * scale
+    }));
+    const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
+    const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
+    pts.sort((p1, p2) => Math.atan2(p1.y - cy, p1.x - cx) - Math.atan2(p2.y - cy, p2.x - cx));
+
+    pts.forEach((p, i) => {
+      if (i === 0) mapCtx.moveTo(p.x, p.y);
+      else mapCtx.lineTo(p.x, p.y);
     });
     mapCtx.closePath();
     mapCtx.fill();
