@@ -152,6 +152,44 @@ async function removeWardIpsTag(req, res, parsedUrl, body) {
   }
 }
 
+async function startCalibration(req, res, body) {
+  try {
+    const calibrationService = require('../services/calibration_service');
+    const payload = JSON.parse(body || '{}');
+    const result = await calibrationService.startSession(payload);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+  }
+}
+
+async function getCalibrationStatus(req, res) {
+  try {
+    const calibrationService = require('../services/calibration_service');
+    const result = calibrationService.getSessionResults();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+  }
+}
+
+async function applyCalibration(req, res, body) {
+  try {
+    const calibrationService = require('../services/calibration_service');
+    const payload = JSON.parse(body || '{}');
+    const result = await calibrationService.applyCalibrations(payload.ward_id, payload.calibrations);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+  }
+}
+
 module.exports = {
   listWards,
   getWard,
@@ -160,6 +198,9 @@ module.exports = {
   saveWard,
   deleteWardRecord,
   getTemplates,
-  resetDefault
+  resetDefault,
+  startCalibration,
+  getCalibrationStatus,
+  applyCalibration
 };
 

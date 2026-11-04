@@ -6,6 +6,7 @@ const { getPool } = require('../database/db');
 const { KalmanFilter1D, calculateDistance, getCalibration } = require('./kalman_filter');
 const { broadcastToClients } = require('./websocket_service');
 const deviceService = require('./device_service');
+const calibrationService = require('./calibration_service');
 
 // Zero-latency in-memory lookup caches
 let anchorToWardMap = new Map(); // Key: MAC or DeviceId -> { ward_id, anchor_id, device_id, x, y, z }
@@ -255,6 +256,7 @@ async function reloadWardAnchorsCache() {
     const [anchors] = await pool.query(`
       SELECT 
         wa.anchor_id, wa.ward_id, wa.device_id, wa.mac_address, wa.x, wa.y, wa.z, wa.wall_location,
+        wa.calibrated_a, wa.calibrated_n,
         d.mac_address AS dev_mac
       FROM ward_anchors wa
       LEFT JOIN devices d ON wa.device_id = d.device_id
@@ -276,6 +278,14 @@ async function reloadWardAnchorsCache() {
       for (const c of corners) {
         const d = Math.sqrt(Math.pow(c.x - ax, 2) + Math.pow(c.y - ay, 2));
         if (d > maxReach) maxReach = d;
+      }
+
+      // Register calibrated parameters if present in DB
+      if (a.calibrated_a !== null && a.calibrated_a !== undefined) {
+        const calA = parseFloat(a.calibrated_a);
+        const calN = a.calibrated_n !== null && a.calibrated_n !== undefined ? parseFloat(a.calibrated_n) : 3.2;
+        setAnchorCalibration(a.anchor_id, calA, calN);
+        if (a.device_id) setAnchorCalibration(a.device_id, calA, calN);
       }
 
       const data = {
@@ -454,6 +464,9 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
   const wardId = anchorMeta.ward_id;
   const devId = anchorMeta.device_id || anchorId;
   const wardDim = wardDimensionsMap.get(wardId) || { length_x: 6.40, width_y: 4.80, max_diagonal: 8.0 };
+
+  // 3b. Feed raw sample to active calibration session if one is currently collecting
+  calibrationService.recordSample(anchorMeta.anchor_id, devId, canonicalTagId, rawRssi);
 
   // 4. Two-stage filtering: 5-sample Rolling Median -> 1D Kalman Filter
   const filteredRssi = filterRssi(devId, canonicalTagId, rawRssi);

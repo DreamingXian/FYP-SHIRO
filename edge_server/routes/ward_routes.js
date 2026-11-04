@@ -45,6 +45,22 @@ async function handleWardRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
+  // Empirical Anchor Calibration Endpoints
+  if (pathname === '/api/ward/calibration/start' && req.method === 'POST') {
+    await wardController.startCalibration(req, res, body);
+    return true;
+  }
+
+  if (pathname === '/api/ward/calibration/status' && req.method === 'GET') {
+    await wardController.getCalibrationStatus(req, res);
+    return true;
+  }
+
+  if (pathname === '/api/ward/calibration/apply' && req.method === 'POST') {
+    await wardController.applyCalibration(req, res, body);
+    return true;
+  }
+
   return false;
 }
 

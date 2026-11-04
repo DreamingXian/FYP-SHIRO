@@ -78,6 +78,10 @@ async function testAndInitDatabase() {
     const { migrate } = require('./migrate_devices_availability');
     await migrate();
 
+    // 8. Ensure calibrated_a, calibrated_n columns exist in ward_anchors table
+    const { migrate: migrateAnchorCal } = require('./migrate_anchor_calibration');
+    await migrateAnchorCal();
+
     return true;
   } catch (err) {
     console.error('[DATABASE ERROR] Could not connect to MySQL server:', err.message);

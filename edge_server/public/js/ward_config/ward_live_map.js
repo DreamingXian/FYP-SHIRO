@@ -9,6 +9,14 @@
   let trackedSubjects = []; // [{ patient_id, full_name, device_id, mac_address, ... }]
   let selectedTagId = null;
 
+  // Empirical Landmark Calibration State
+  let isCalibrationOpen = false;
+  let isCustomLandmarkSelected = false;
+  let calibrationTarget = null; // { x, y, z, label }
+  let calibrationCountdownInterval = null;
+  let calibrationResults = null;
+  let calibrationLiveCounts = {};
+
   // Localized Tag Positions: tagId -> { x, y, targetX, targetY, confidence, anchors: [], lastSeen }
   const liveTagPositions = new Map();
   // Live Vitals Cache: tagId -> { bpm, spo2, battery, lastSeen }
@@ -436,6 +444,21 @@
 
     // Get transform
     const t = getCanvasTransform(canvas.width, canvas.height, activeWard.length_x, activeWard.width_y);
+
+    // If Calibration Modal is open and Custom Point is chosen, click sets calibration target
+    if (isCalibrationOpen && isCustomLandmarkSelected) {
+      const mx = Math.max(0.15, Math.min(activeWard.length_x - 0.15, (clickX - t.offsetX) / t.scale));
+      const my = Math.max(0.15, Math.min(activeWard.width_y - 0.15, (t.cHeight - clickY - t.offsetY) / t.scale));
+      calibrationTarget = {
+        x: Math.round(mx * 100) / 100,
+        y: Math.round(my * 100) / 100,
+        z: 0.85,
+        label: 'Custom Map Point'
+      };
+      updateCalibrationTargetDisplay();
+      return;
+    }
+
     const hitRadius = Math.max(26, ((0.45 / 2) * t.scale + 8) * dpr);
 
     // Hit-test active tags within scaled human circle bounds
@@ -563,6 +586,11 @@
 
     // 7. Draw Tracked Wristband Dots
     drawWristbandDots(ctx, t);
+
+    // 8. Draw Calibration Reference Reticle (when calibration modal is active)
+    if (isCalibrationOpen && calibrationTarget) {
+      drawCalibrationTarget(ctx, t, calibrationTarget);
+    }
   }
 
   function drawMetricGrid(ctx, t) {
@@ -1021,6 +1049,79 @@
     }
   }
 
+  /**
+   * Draw Pulsing Calibration Target Reticle & Coordinate Pill
+   */
+  function drawCalibrationTarget(ctx, t, target) {
+    if (!target || target.x === undefined || target.y === undefined) return;
+    const p = metricToCanvas(target.x, target.y, t);
+
+    ctx.save();
+
+    // 1. Pulsing outer animated ring
+    const pulseR = 24 + Math.sin(ripplePhase * 3) * 5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, pulseR, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(6, 182, 212, 0.60)';
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 2. Middle target ring
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(6, 182, 212, 0.18)';
+    ctx.fill();
+    ctx.strokeStyle = '#06B6D4';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // 3. Center crosshair lines
+    ctx.beginPath();
+    ctx.moveTo(p.x - 18, p.y);
+    ctx.lineTo(p.x + 18, p.y);
+    ctx.moveTo(p.x, p.y - 18);
+    ctx.lineTo(p.x, p.y + 18);
+    ctx.strokeStyle = '#0891B2';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    // Center focal point
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#0E7490';
+    ctx.fill();
+
+    // 4. Floating label badge
+    const labelText = `🎯 Calibration Reference: ${target.label || 'Target'} (${target.x.toFixed(2)}m, ${target.y.toFixed(2)}m)`;
+    ctx.font = 'bold 11px system-ui, -apple-system, sans-serif';
+    const textW = ctx.measureText(labelText).width;
+    const badgeW = textW + 18;
+    const badgeH = 22;
+    const badgeX = p.x - badgeW / 2;
+    const badgeY = p.y - 36;
+
+    ctx.fillStyle = '#0F172A';
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+    } else {
+      ctx.rect(badgeX, badgeY, badgeW, badgeH);
+    }
+    ctx.fill();
+    ctx.strokeStyle = '#06B6D4';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    ctx.fillStyle = '#67E8F9';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(labelText, p.x, badgeY + badgeH / 2);
+
+    ctx.restore();
+  }
+
   function updateClock() {
     const el = document.getElementById('live-map-clock');
     if (el) el.innerText = new Date().toLocaleTimeString();
@@ -1084,6 +1185,409 @@
         executeRemoval();
       }
     }
+  };
+
+  // =========================================================================
+  // EMPIRICAL ANCHOR CALIBRATION CONTROLLER
+  // =========================================================================
+
+  function getBedCenter(b) {
+    const rot = parseInt(b.rotation_deg, 10) || 0;
+    const isRotated = (rot === 90 || rot === 270);
+    const bw = isRotated ? (parseFloat(b.length) || 2.0) : (parseFloat(b.width) || 0.9);
+    const bl = isRotated ? (parseFloat(b.width) || 0.9) : (parseFloat(b.length) || 2.0);
+    return {
+      x: Math.round((parseFloat(b.x) + bw / 2) * 100) / 100,
+      y: Math.round((parseFloat(b.y) + bl / 2) * 100) / 100
+    };
+  }
+
+  window.openCalibrationModal = function() {
+    if (!activeWard) {
+      if (window.showToast) window.showToast('No active ward loaded.', 'warning');
+      return;
+    }
+
+    const modal = document.getElementById('ward-calibration-modal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    isCalibrationOpen = true;
+
+    // Reset view steps
+    resetCalibrationStep();
+
+    // Populate Landmarks Dropdown
+    const lSelect = document.getElementById('cal-landmark-select');
+    if (lSelect) {
+      lSelect.innerHTML = '';
+
+      // 1. Hospital Beds in this ward (Recommended)
+      if (Array.isArray(activeWard.beds) && activeWard.beds.length > 0) {
+        activeWard.beds.forEach(b => {
+          const c = getBedCenter(b);
+          const opt = document.createElement('option');
+          opt.value = `bed_${b.bed_id}`;
+          opt.dataset.x = c.x;
+          opt.dataset.y = c.y;
+          opt.dataset.z = 0.85;
+          opt.dataset.label = `${b.bed_code || 'Bed'} (Mattress Center)`;
+          opt.innerText = `🛏️ ${b.bed_code || 'Bed'} (${c.x}m, ${c.y}m) [Recommended]`;
+          lSelect.appendChild(opt);
+        });
+      }
+
+      // 2. Room Center
+      const rx = Math.round((activeWard.length_x / 2) * 100) / 100;
+      const ry = Math.round((activeWard.width_y / 2) * 100) / 100;
+      const optCenter = document.createElement('option');
+      optCenter.value = 'room_center';
+      optCenter.dataset.x = rx;
+      optCenter.dataset.y = ry;
+      optCenter.dataset.z = 0.85;
+      optCenter.dataset.label = 'Room Center';
+      optCenter.innerText = `📍 Room Center (${rx}m, ${ry}m)`;
+      lSelect.appendChild(optCenter);
+
+      // 3. Custom Click on 2D Canvas
+      const optCustom = document.createElement('option');
+      optCustom.value = 'custom';
+      optCustom.dataset.x = rx;
+      optCustom.dataset.y = ry;
+      optCustom.dataset.z = 0.85;
+      optCustom.dataset.label = 'Custom Map Point';
+      optCustom.innerText = '🎯 Custom Point (Click anywhere on 2D map)';
+      lSelect.appendChild(optCustom);
+    }
+
+    // Populate Wristband Tags Dropdown
+    const tSelect = document.getElementById('cal-tag-select');
+    if (tSelect) {
+      tSelect.innerHTML = '';
+      const availableTags = new Set();
+      for (const [tagId] of liveTagPositions.entries()) {
+        if (!tagId.includes(':')) availableTags.add(tagId);
+      }
+      trackedSubjects.forEach(s => {
+        if (s.device_id) availableTags.add(s.device_id);
+      });
+      if (availableTags.size === 0) {
+        availableTags.add('TAG-001');
+      }
+
+      availableTags.forEach(tagId => {
+        const opt = document.createElement('option');
+        opt.value = tagId;
+        const subj = trackedSubjects.find(s => s.device_id === tagId);
+        opt.innerText = subj ? `⌚ ${subj.device_id} (${subj.full_name})` : `⌚ ${tagId}`;
+        if (tagId === selectedTagId) opt.selected = true;
+        tSelect.appendChild(opt);
+      });
+    }
+
+    onCalibrationLandmarkChanged();
+  };
+
+  window.closeCalibrationModal = function() {
+    const modal = document.getElementById('ward-calibration-modal');
+    if (modal) modal.style.display = 'none';
+    isCalibrationOpen = false;
+    isCustomLandmarkSelected = false;
+    calibrationTarget = null;
+    if (calibrationCountdownInterval) {
+      clearInterval(calibrationCountdownInterval);
+      calibrationCountdownInterval = null;
+    }
+  };
+
+  window.onCalibrationLandmarkChanged = function() {
+    const lSelect = document.getElementById('cal-landmark-select');
+    if (!lSelect) return;
+    const selectedOpt = lSelect.options[lSelect.selectedIndex];
+    if (!selectedOpt) return;
+
+    if (selectedOpt.value === 'custom') {
+      isCustomLandmarkSelected = true;
+      if (!calibrationTarget || calibrationTarget.label !== 'Custom Map Point') {
+        const rx = Math.round((activeWard.length_x / 2) * 100) / 100;
+        const ry = Math.round((activeWard.width_y / 2) * 100) / 100;
+        calibrationTarget = { x: rx, y: ry, z: 0.85, label: 'Custom Map Point' };
+      }
+      const note = document.getElementById('cal-landmark-note');
+      if (note) note.innerText = 'Click anywhere on 2D map to adjust target';
+    } else {
+      isCustomLandmarkSelected = false;
+      calibrationTarget = {
+        x: parseFloat(selectedOpt.dataset.x) || 0,
+        y: parseFloat(selectedOpt.dataset.y) || 0,
+        z: parseFloat(selectedOpt.dataset.z) || 0.85,
+        label: selectedOpt.dataset.label || 'Landmark'
+      };
+      const note = document.getElementById('cal-landmark-note');
+      if (note) note.innerText = selectedOpt.value.startsWith('bed_') ? 'Bed Mattress Elevation (~0.85m)' : 'Standard Elevation';
+    }
+
+    updateCalibrationTargetDisplay();
+  };
+
+  function updateCalibrationTargetDisplay() {
+    if (!calibrationTarget || !activeWard) return;
+
+    const coordsEl = document.getElementById('cal-coords-preview');
+    if (coordsEl) {
+      coordsEl.innerText = `X: ${calibrationTarget.x.toFixed(2)}m | Y: ${calibrationTarget.y.toFixed(2)}m | Z: ${calibrationTarget.z.toFixed(2)}m`;
+    }
+
+    const anchorCountEl = document.getElementById('cal-anchor-count');
+    if (anchorCountEl) {
+      anchorCountEl.innerText = activeWard.anchors ? activeWard.anchors.length : 0;
+    }
+
+    const listEl = document.getElementById('cal-anchors-preview-list');
+    if (listEl && Array.isArray(activeWard.anchors)) {
+      listEl.innerHTML = '';
+      activeWard.anchors.forEach(a => {
+        const dx = calibrationTarget.x - a.x;
+        const dy = calibrationTarget.y - a.y;
+        const dz = calibrationTarget.z - (a.z || 1.80);
+        const dTrue = Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz) * 100) / 100;
+        const curA = (a.calibrated_a !== null && a.calibrated_a !== undefined) ? Number(a.calibrated_a).toFixed(1) : '-52.0';
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; border: 1px solid var(--border-light); border-radius: 6px; padding: 7px 12px; font-size: 11px;';
+        row.innerHTML = `
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-weight: 700; color: var(--text-primary);">${a.anchor_id}</span>
+            <span class="mono" style="color: var(--text-muted); font-size: 10px;">(${a.device_id || a.mac_address || 'Unassigned'})</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span style="color: var(--text-secondary);">True Dist: <b style="color: var(--primary);">${dTrue}m</b></span>
+            <span class="badge badge-neutral" style="font-size: 10px;">Current A: ${curA} dBm</span>
+          </div>
+        `;
+        listEl.appendChild(row);
+      });
+    }
+  }
+
+  window.startCalibrationSession = async function() {
+    if (!activeWard || !calibrationTarget) return;
+
+    const tSelect = document.getElementById('cal-tag-select');
+    const selectedTag = tSelect ? tSelect.value : 'TAG-001';
+
+    // Switch step views
+    document.getElementById('cal-step-setup').style.display = 'none';
+    document.getElementById('cal-step-progress').style.display = 'block';
+    document.getElementById('cal-step-results').style.display = 'none';
+
+    document.getElementById('cal-btn-start').style.display = 'none';
+    document.getElementById('cal-btn-cancel').disabled = true;
+
+    // Reset sample count UI
+    calibrationLiveCounts = {};
+    const countsContainer = document.getElementById('cal-live-sample-counts');
+    if (countsContainer && Array.isArray(activeWard.anchors)) {
+      countsContainer.innerHTML = '';
+      activeWard.anchors.forEach(a => {
+        calibrationLiveCounts[a.anchor_id] = 0;
+        const b = document.createElement('div');
+        b.id = `cal-count-${a.anchor_id}`;
+        b.className = 'card';
+        b.style.cssText = 'padding: 8px 14px; min-width: 110px; border: 1px solid var(--border); border-radius: 8px; text-align: center;';
+        b.innerHTML = `
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary);">${a.anchor_id}</div>
+          <div class="mono" style="font-size: 16px; font-weight: 700; color: var(--primary); margin-top: 2px;" id="cal-count-num-${a.anchor_id}">0 pkts</div>
+        `;
+        countsContainer.appendChild(b);
+      });
+    }
+
+    const durationSec = 10;
+    let remainingMs = durationSec * 1000;
+    const progressBar = document.getElementById('cal-progress-bar');
+    const countdownText = document.getElementById('cal-countdown-text');
+
+    // Call server to start calibration window
+    try {
+      const res = await fetch('/api/ward/calibration/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ward_id: activeWard.ward_id,
+          tag_id: selectedTag,
+          target_x: calibrationTarget.x,
+          target_y: calibrationTarget.y,
+          target_z: calibrationTarget.z,
+          duration_sec: durationSec
+        })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to start calibration session');
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(`Calibration error: ${err.message}`, 'danger');
+      resetCalibrationStep();
+      return;
+    }
+
+    // Run 100ms countdown timer
+    calibrationCountdownInterval = setInterval(() => {
+      remainingMs -= 100;
+      if (remainingMs <= 0) {
+        remainingMs = 0;
+        clearInterval(calibrationCountdownInterval);
+        calibrationCountdownInterval = null;
+        if (progressBar) progressBar.style.width = '100%';
+        if (countdownText) countdownText.innerText = '0.0s - Computing results...';
+        setTimeout(fetchCalibrationResults, 600);
+      } else {
+        const pct = Math.min(100, Math.round(((durationSec * 1000 - remainingMs) / (durationSec * 1000)) * 100));
+        if (progressBar) progressBar.style.width = `${pct}%`;
+        if (countdownText) countdownText.innerText = `${(remainingMs / 1000).toFixed(1)}s remaining`;
+      }
+    }, 100);
+  };
+
+  async function fetchCalibrationResults() {
+    try {
+      const res = await fetch('/api/ward/calibration/status');
+      const data = await res.json();
+      if (!data.success || !Array.isArray(data.results)) {
+        throw new Error(data.error || 'Could not retrieve calibration results');
+      }
+      showCalibrationResults(data.results);
+    } catch (err) {
+      if (window.showToast) window.showToast(`Error retrieving results: ${err.message}`, 'danger');
+      resetCalibrationStep();
+    }
+  }
+
+  function showCalibrationResults(results) {
+    calibrationResults = results;
+    document.getElementById('cal-step-setup').style.display = 'none';
+    document.getElementById('cal-step-progress').style.display = 'none';
+    document.getElementById('cal-step-results').style.display = 'block';
+
+    document.getElementById('cal-btn-cancel').disabled = false;
+    document.getElementById('cal-btn-start').style.display = 'none';
+    document.getElementById('cal-btn-restart').style.display = 'inline-flex';
+    document.getElementById('cal-btn-apply').style.display = 'inline-flex';
+
+    const tbody = document.getElementById('cal-results-table-body');
+    if (tbody) {
+      tbody.innerHTML = '';
+      results.forEach(r => {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border-light)';
+        const deltaSign = r.delta_a > 0 ? `+${r.delta_a}` : `${r.delta_a}`;
+        const deltaColor = r.delta_a === 0 ? 'var(--text-muted)' : (Math.abs(r.delta_a) <= 3.0 ? '#16A34A' : '#2563EB');
+
+        tr.innerHTML = `
+          <td style="padding: 10px 14px;">
+            <b style="color: var(--text-primary);">${r.anchor_id}</b>
+            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">${r.device_id || r.mac_address || ''}</div>
+          </td>
+          <td style="padding: 10px 12px;" class="mono">${r.d_true}m</td>
+          <td style="padding: 10px 12px;">
+            ${r.median_rssi !== null ? `<span class="mono">${r.median_rssi} dBm</span> <span style="font-size: 10px; color: var(--text-muted);">(${r.samples_count} pkts)</span>` : '<span style="color: #DC2626; font-weight: 700;">0 pkts (N/A)</span>'}
+          </td>
+          <td style="padding: 10px 12px;" class="mono">${Number(r.current_a).toFixed(1)} dBm</td>
+          <td style="padding: 10px 12px;">
+            <b class="mono" style="color: var(--primary); font-size: 13px;">${Number(r.new_a).toFixed(1)} dBm</b>
+          </td>
+          <td style="padding: 10px 14px;">
+            <span class="badge" style="background: #F1F5F9; color: ${deltaColor}; font-weight: 700; font-family: monospace;">
+              ${deltaSign} dBm
+            </span>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+  }
+
+  window.applyCalibrationResults = async function() {
+    if (!activeWard || !Array.isArray(calibrationResults)) return;
+
+    const btnApply = document.getElementById('cal-btn-apply');
+    if (btnApply) {
+      btnApply.disabled = true;
+      btnApply.innerText = 'Saving...';
+    }
+
+    try {
+      const payload = {
+        ward_id: activeWard.ward_id,
+        calibrations: calibrationResults.map(r => ({
+          anchor_id: r.anchor_id,
+          device_id: r.device_id,
+          A: r.new_a,
+          n: r.n || 3.2
+        }))
+      };
+
+      const res = await fetch('/api/ward/calibration/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to apply calibration');
+      }
+
+      // Update in-memory activeWard anchors
+      calibrationResults.forEach(r => {
+        const found = activeWard.anchors.find(a => a.anchor_id === r.anchor_id);
+        if (found) {
+          found.calibrated_a = r.new_a;
+          found.calibrated_n = r.n || 3.2;
+        }
+      });
+
+      if (window.showToast) {
+        window.showToast('✅ Anchor calibrations successfully saved to database and applied!', 'success', 3500);
+      }
+
+      closeCalibrationModal();
+    } catch (err) {
+      if (window.showToast) window.showToast(`Failed to apply calibrations: ${err.message}`, 'danger');
+      if (btnApply) {
+        btnApply.disabled = false;
+        btnApply.innerHTML = '<span>✅</span> Accept &amp; Save to Ward';
+      }
+    }
+  };
+
+  window.resetCalibrationStep = function() {
+    if (calibrationCountdownInterval) {
+      clearInterval(calibrationCountdownInterval);
+      calibrationCountdownInterval = null;
+    }
+    const stepSetup = document.getElementById('cal-step-setup');
+    const stepProg = document.getElementById('cal-step-progress');
+    const stepRes = document.getElementById('cal-step-results');
+    if (stepSetup) stepSetup.style.display = 'block';
+    if (stepProg) stepProg.style.display = 'none';
+    if (stepRes) stepRes.style.display = 'none';
+
+    const btnStart = document.getElementById('cal-btn-start');
+    const btnRestart = document.getElementById('cal-btn-restart');
+    const btnApply = document.getElementById('cal-btn-apply');
+    const btnCancel = document.getElementById('cal-btn-cancel');
+
+    if (btnStart) btnStart.style.display = 'inline-flex';
+    if (btnRestart) btnRestart.style.display = 'none';
+    if (btnApply) {
+      btnApply.style.display = 'none';
+      btnApply.disabled = false;
+      btnApply.innerHTML = '<span>✅</span> Accept &amp; Save to Ward';
+    }
+    if (btnCancel) btnCancel.disabled = false;
+
+    calibrationResults = null;
+    onCalibrationLandmarkChanged();
   };
 
   // --- WebSocket Live Listener ---
@@ -1204,6 +1708,33 @@
         anchorsBadge.className = `badge ${onlineCount >= 3 ? 'badge-live' : 'badge-warning'}`;
       }
     });
+
+    // 4. Real-Time Calibration Packet Progress Pulse
+    window.wsClient.on('CALIBRATION_PROGRESS', (msg) => {
+      if (!isCalibrationOpen) return;
+      if (msg.counts) {
+        for (const [aId, count] of Object.entries(msg.counts)) {
+          const el = document.getElementById(`cal-count-num-${aId}`);
+          if (el) el.innerText = `${count} pkts`;
+        }
+      }
+    });
+
+    // 5. Calibration synchronization across clients
+    window.wsClient.on('ANCHOR_CALIBRATION_APPLIED', (msg) => {
+      if (activeWard && msg.ward_id === activeWard.ward_id && Array.isArray(msg.calibrations)) {
+        msg.calibrations.forEach(c => {
+          const a = activeWard.anchors?.find(x => x.anchor_id === c.anchor_id);
+          if (a) {
+            a.calibrated_a = c.A;
+            a.calibrated_n = c.n;
+          }
+        });
+        if (window.showToast && !isCalibrationOpen) {
+          window.showToast(`Ward anchors calibrated (${msg.timestamp})`, 'info', 2000);
+        }
+      }
+    });
   }
 
   // Auto setup on load
@@ -1212,5 +1743,11 @@
   // Global exposure
   window.openWardLiveMap = openWardLiveMap;
   window.closeWardLiveMap = closeWardLiveMap;
+  window.openCalibrationModal = openCalibrationModal;
+  window.closeCalibrationModal = closeCalibrationModal;
+  window.onCalibrationLandmarkChanged = onCalibrationLandmarkChanged;
+  window.startCalibrationSession = startCalibrationSession;
+  window.resetCalibrationStep = resetCalibrationStep;
+  window.applyCalibrationResults = applyCalibrationResults;
 })();
 

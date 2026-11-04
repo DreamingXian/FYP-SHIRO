@@ -98,6 +98,7 @@ async function getWardConfig(wardId = 'WARD-001') {
   const [anchors] = await pool.query(
     `SELECT 
        wa.anchor_id, wa.device_id, wa.mac_address, wa.x, wa.y, wa.z, wa.wall_location, wa.status,
+       wa.calibrated_a, wa.calibrated_n, wa.last_calibrated_at,
        d.status AS live_device_status, d.mac_address AS dev_mac
      FROM ward_anchors wa
      LEFT JOIN devices d ON wa.device_id = d.device_id
@@ -150,7 +151,10 @@ async function getWardConfig(wardId = 'WARD-001') {
       y: parseFloat(a.y),
       z: parseFloat(a.z),
       wall_location: a.wall_location || '',
-      status: a.device_id ? (a.live_device_status || a.status || 'OFFLINE') : 'STANDBY'
+      status: a.device_id ? (a.live_device_status || a.status || 'OFFLINE') : 'STANDBY',
+      calibrated_a: a.calibrated_a !== null && a.calibrated_a !== undefined ? parseFloat(a.calibrated_a) : null,
+      calibrated_n: a.calibrated_n !== null && a.calibrated_n !== undefined ? parseFloat(a.calibrated_n) : null,
+      last_calibrated_at: a.last_calibrated_at || null
     }))
   };
 }
@@ -231,6 +235,17 @@ async function saveWardConfig(data) {
     // First, unbind any existing devices previously assigned to this ward
     await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ?", [wardId]);
 
+    // Fetch existing calibration so layout updates don't wipe calibration values
+    const [existingAnchors] = await conn.query('SELECT anchor_id, calibrated_a, calibrated_n, last_calibrated_at FROM ward_anchors WHERE ward_id = ?', [wardId]);
+    const calMap = new Map();
+    for (const ea of existingAnchors) {
+      calMap.set(ea.anchor_id, {
+        calibrated_a: ea.calibrated_a,
+        calibrated_n: ea.calibrated_n,
+        last_calibrated_at: ea.last_calibrated_at
+      });
+    }
+
     await conn.query('DELETE FROM ward_anchors WHERE ward_id = ?', [wardId]);
     if (Array.isArray(data.anchors) && data.anchors.length > 0) {
       for (let i = 0; i < data.anchors.length; i++) {
@@ -254,9 +269,14 @@ async function saveWardConfig(data) {
           );
         }
 
+        const existingCal = calMap.get(aId) || {};
+        const calA = a.calibrated_a !== undefined && a.calibrated_a !== null ? a.calibrated_a : (existingCal.calibrated_a || null);
+        const calN = a.calibrated_n !== undefined && a.calibrated_n !== null ? a.calibrated_n : (existingCal.calibrated_n || null);
+        const calTime = existingCal.last_calibrated_at || null;
+
         await conn.query(
-          'INSERT INTO ward_anchors (anchor_id, ward_id, device_id, mac_address, x, y, z, wall_location, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [aId, wardId, devId, mac, a.x || 0, a.y || 0, a.z || 1.80, a.wall_location || '', status]
+          'INSERT INTO ward_anchors (anchor_id, ward_id, device_id, mac_address, x, y, z, calibrated_a, calibrated_n, last_calibrated_at, wall_location, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [aId, wardId, devId, mac, a.x || 0, a.y || 0, a.z || 1.80, calA, calN, calTime, a.wall_location || '', status]
         );
       }
     }
@@ -392,6 +412,37 @@ async function getWardIpsData(wardId) {
   };
 }
 
+/**
+ * Save empirical calibration parameters (A and n) for anchors in a ward
+ */
+async function saveWardAnchorCalibrations(wardId, calibrations) {
+  const pool = getPool();
+  if (!Array.isArray(calibrations) || calibrations.length === 0) {
+    return { success: false, error: 'No calibrations provided' };
+  }
+
+  for (const cal of calibrations) {
+    const aId = cal.anchor_id;
+    if (!aId) continue;
+    const aVal = parseFloat(cal.A);
+    const nVal = parseFloat(cal.n || 3.2);
+
+    await pool.query(
+      `UPDATE ward_anchors 
+       SET calibrated_a = ?, calibrated_n = ?, last_calibrated_at = NOW() 
+       WHERE ward_id = ? AND (anchor_id = ? OR device_id = ?)`,
+      [aVal, nVal, wardId, aId, aId]
+    );
+  }
+
+  // Reload IPS engine anchor cache so runtime localization uses calibrated values immediately
+  ipsService.reloadWardAnchorsCache().catch(err => {
+    console.warn('[WARD SERVICE] Error refreshing IPS cache after calibration:', err.message);
+  });
+
+  return { success: true };
+}
+
 module.exports = {
   getAllWards,
   getWardConfig,
@@ -399,6 +450,7 @@ module.exports = {
   deleteWard,
   resetDefaultWard,
   getWardIpsData,
+  saveWardAnchorCalibrations,
   WARD_TEMPLATES
 };
 
