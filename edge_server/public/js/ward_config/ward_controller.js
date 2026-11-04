@@ -26,6 +26,180 @@
     let isDirty = false;
     let savedWardSnapshot = '';
     let cachedRegisteredAnchors = [];
+    let isWardWsRegistered = false;
+    let anchorStatusPollTimer = null;
+
+    function findAnchorInCache(idOrMac) {
+      if (!idOrMac) return null;
+      const clean = idOrMac.toUpperCase().trim();
+      return cachedRegisteredAnchors.find(d => 
+        (d.device_id && d.device_id.toUpperCase().trim() === clean) ||
+        (d.mac_address && d.mac_address.toUpperCase().trim() === clean)
+      ) || null;
+    }
+
+    function buildAnchorDropdownOptions(slotIndex, selectedDeviceId) {
+      const chosenInOtherSlots = new Set(
+        (currentWard.anchors || [])
+          .filter((_, idx) => idx !== slotIndex && _.device_id)
+          .map(_ => _.device_id)
+      );
+
+      let optionsHtml = `<option value="">-- Unassigned (Standby Slot) --</option>`;
+      cachedRegisteredAnchors.forEach(dev => {
+        // Skip if chosen in another slot row
+        if (chosenInOtherSlots.has(dev.device_id)) return;
+
+        // Skip if assigned to another ward in DB (unless assigned to current ward)
+        const isAssignedOtherWard = dev.assigned_ward_id && dev.assigned_ward_id !== currentWard.ward_id;
+        if (isAssignedOtherWard && dev.device_id !== selectedDeviceId) return;
+
+        // Skip if marked NOT_AVAILABLE unless selected in this slot
+        if (dev.availability_status === 'NOT_AVAILABLE' && dev.device_id !== selectedDeviceId) return;
+
+        // Skip if in use by another ward
+        if (dev.availability_status === 'IN_USE' && dev.assigned_ward_id !== currentWard.ward_id && dev.device_id !== selectedDeviceId) return;
+
+        const isSelected = selectedDeviceId && selectedDeviceId === dev.device_id;
+        const statusDot = dev.status === 'ONLINE' ? '● Online' : '○ Offline';
+        optionsHtml += `<option value="${dev.device_id}" ${isSelected ? 'selected' : ''}>${dev.device_id} (${statusDot})</option>`;
+      });
+      return optionsHtml;
+    }
+
+    function syncWardAnchorUIElements(deviceId, status) {
+      // 1. Update dropdown options text across all rows in Ward Editor
+      const selects = document.querySelectorAll('.anchor-hardware-select');
+      selects.forEach(sel => {
+        const opt = sel.querySelector(`option[value="${deviceId}"]`);
+        if (opt) {
+          const statusDot = status === 'ONLINE' ? '● Online' : '○ Offline';
+          opt.textContent = `${deviceId} (${statusDot})`;
+        }
+      });
+
+      // 2. Update Status column badges in Ward Editor table
+      if (currentWard && Array.isArray(currentWard.anchors)) {
+        currentWard.anchors.forEach((a, index) => {
+          if (a.device_id === deviceId) {
+            const statusCell = document.querySelector(`.anchor-status-cell[data-slot-index="${index}"]`);
+            if (statusCell) {
+              const badgeClass = status === 'ONLINE' ? 'badge-live' : 'badge-alert';
+              statusCell.innerHTML = `<span class="badge ${badgeClass}">● ${status}</span>`;
+            }
+          }
+        });
+      }
+
+      // 3. Update Modal Cards if View Ward Read-Only modal is open
+      const modalCards = document.querySelectorAll(`.modal-anchor-card[data-device-id="${deviceId}"]`);
+      modalCards.forEach(card => {
+        const badge = card.querySelector('.modal-anchor-badge');
+        if (badge) {
+          const badgeClass = status === 'ONLINE' ? 'badge-live' : 'badge-alert';
+          badge.className = `badge modal-anchor-badge ${badgeClass}`;
+          badge.innerText = `● ${status}`;
+        }
+      });
+
+      // 4. Redraw 2D floor plan map if anchor is placed on the canvas
+      if (currentWard && Array.isArray(currentWard.anchors) && currentWard.anchors.some(a => a.device_id === deviceId)) {
+        if (typeof window.redrawWardMap === 'function') {
+          window.redrawWardMap();
+        }
+      }
+    }
+
+    function updateAnchorLiveStatus(idOrMac, newStatus) {
+      if (!idOrMac) return;
+      const cleanStatus = (newStatus || 'OFFLINE').toUpperCase();
+      let dev = findAnchorInCache(idOrMac);
+      const targetId = dev ? dev.device_id : idOrMac;
+
+      if (!dev) {
+        // If not found in cache, fetch fresh list then sync
+        fetchRegisteredAnchors().then(() => {
+          dev = findAnchorInCache(idOrMac);
+          if (dev) dev.status = cleanStatus;
+          syncWardAnchorUIElements(targetId, cleanStatus);
+        });
+        return;
+      }
+
+      // Update cached device status
+      dev.status = cleanStatus;
+
+      // Update in currentWard.anchors if assigned
+      if (currentWard && Array.isArray(currentWard.anchors)) {
+        currentWard.anchors.forEach(a => {
+          if (a.device_id === targetId) {
+            a.status = cleanStatus;
+          }
+        });
+      }
+
+      // Dynamically update all DOM elements
+      syncWardAnchorUIElements(targetId, cleanStatus);
+    }
+
+    function setupWardWsListeners() {
+      if (isWardWsRegistered) return;
+      if (!window.wsClient) {
+        setTimeout(setupWardWsListeners, 300);
+        return;
+      }
+      isWardWsRegistered = true;
+
+      // Listen for DEVICE_HEARTBEAT from Edge Server
+      window.wsClient.on('DEVICE_HEARTBEAT', (msg) => {
+        if (!msg) return;
+        const id = msg.device_id || msg.id;
+        if (!id) return;
+        if (msg.device_type === 'ANCHOR' || id.startsWith('anchor-') || findAnchorInCache(id)) {
+          updateAnchorLiveStatus(id, msg.status || 'ONLINE');
+        }
+      });
+
+      // Listen for ANCHOR_RSSI packets from active anchors
+      window.wsClient.on('ANCHOR_RSSI', (msg) => {
+        if (!msg) return;
+        const anchorId = msg.anchor || msg.anchor_mac;
+        if (anchorId) {
+          updateAnchorLiveStatus(anchorId, 'ONLINE');
+        }
+      });
+
+      startAnchorStatusPolling();
+    }
+
+    function startAnchorStatusPolling() {
+      if (anchorStatusPollTimer) return;
+      anchorStatusPollTimer = setInterval(async () => {
+        try {
+          const res = await fetch('/api/devices/list?type=ANCHOR');
+          const data = await res.json();
+          if (data.success && Array.isArray(data.devices)) {
+            // Check if device count changed
+            const countChanged = data.devices.length !== cachedRegisteredAnchors.length;
+            data.devices.forEach(d => {
+              updateAnchorLiveStatus(d.device_id, d.status);
+            });
+            if (countChanged) {
+              cachedRegisteredAnchors = data.devices;
+              const selects = document.querySelectorAll('.anchor-hardware-select');
+              selects.forEach(sel => {
+                const idx = parseInt(sel.getAttribute('data-slot-index'), 10);
+                if (!isNaN(idx) && currentWard.anchors && currentWard.anchors[idx]) {
+                  const val = currentWard.anchors[idx].device_id || '';
+                  sel.innerHTML = buildAnchorDropdownOptions(idx, val);
+                  sel.value = val;
+                }
+              });
+            }
+          }
+        } catch (_) {}
+      }, 3000);
+    }
 
     async function fetchRegisteredAnchors() {
       try {
@@ -33,11 +207,22 @@
         const data = await res.json();
         if (data.success && Array.isArray(data.devices)) {
           cachedRegisteredAnchors = data.devices;
+          const selects = document.querySelectorAll('.anchor-hardware-select');
+          selects.forEach(sel => {
+            const idx = parseInt(sel.getAttribute('data-slot-index'), 10);
+            if (!isNaN(idx) && currentWard.anchors && currentWard.anchors[idx]) {
+              const val = currentWard.anchors[idx].device_id || '';
+              sel.innerHTML = buildAnchorDropdownOptions(idx, val);
+              sel.value = val;
+            }
+          });
         }
       } catch (err) {
         console.warn('Failed to fetch registered anchors for ward configuration:', err);
       }
     }
+
+    setTimeout(setupWardWsListeners, 200);
 
     function captureWardSnapshot() {
       savedWardSnapshot = JSON.stringify(currentWard);
@@ -194,10 +379,10 @@
                 : `<div style="font-size:11px; color:var(--text-muted); font-style:italic;">Node: Unassigned (Standby Slot)</div>`;
 
               return `
-              <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+              <div class="modal-anchor-card" data-device-id="${a.device_id || ''}" style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
                   <strong style="color:var(--text-primary); font-size:12px;">📡 ${a.anchor_id}</strong>
-                  <span class="badge ${badgeClass}" style="font-size:10px;">● ${liveStatus}</span>
+                  <span class="badge modal-anchor-badge ${badgeClass}" style="font-size:10px;">● ${liveStatus}</span>
                 </div>
                 <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 3px;">
                   Position: (${Number(a.x).toFixed(2)}m, ${Number(a.y).toFixed(2)}m, ${Number(a.z).toFixed(2)}m) · ${a.wall_location || 'Wall'}
@@ -337,6 +522,7 @@
 
     async function openWardEditor(wardId) {
       try {
+        setupWardWsListeners();
         await fetchRegisteredAnchors();
         const res = await fetch(`/api/ward/config?ward_id=${encodeURIComponent(wardId)}`);
         const data = await res.json();
@@ -364,6 +550,7 @@
     }
 
     async function createNewWard() {
+      setupWardWsListeners();
       await fetchRegisteredAnchors();
       isCreatingNew = true;
       const newWardId = generateNextWardId();
@@ -430,6 +617,9 @@
     }
 
     async function loadWardDataFromDB() {
+      // Setup live WebSocket listeners for anchors
+      setupWardWsListeners();
+
       // Fetch registered hardware anchors cache
       await fetchRegisteredAnchors();
 
@@ -741,30 +931,7 @@
         const yVal = Number(a.y !== undefined ? a.y : 0).toFixed(2);
         const zVal = Number(a.z !== undefined ? a.z : 1.80).toFixed(2);
 
-        // Build list of eligible anchors for this dropdown
-        const chosenInOtherSlots = new Set(
-          list.filter((_, idx) => idx !== index && _.device_id).map(_ => _.device_id)
-        );
-
-        let optionsHtml = `<option value="">-- Unassigned (Standby Slot) --</option>`;
-        cachedRegisteredAnchors.forEach(dev => {
-          // If already chosen in another slot row, skip
-          if (chosenInOtherSlots.has(dev.device_id)) return;
-
-          // If assigned to another ward in DB, skip (unless assigned to current ward)
-          const isAssignedOtherWard = dev.assigned_ward_id && dev.assigned_ward_id !== currentWard.ward_id;
-          if (isAssignedOtherWard && dev.device_id !== a.device_id) return;
-
-          // If marked NOT_AVAILABLE (broken), skip unless already selected in this slot
-          if (dev.availability_status === 'NOT_AVAILABLE' && dev.device_id !== a.device_id) return;
-
-          // If in use by another ward, skip
-          if (dev.availability_status === 'IN_USE' && dev.assigned_ward_id !== currentWard.ward_id && dev.device_id !== a.device_id) return;
-
-          const isSelected = a.device_id && a.device_id === dev.device_id;
-          const statusDot = dev.status === 'ONLINE' ? '● Online' : '○ Offline';
-          optionsHtml += `<option value="${dev.device_id}" ${isSelected ? 'selected' : ''}>${dev.device_id} (${statusDot})</option>`;
-        });
+        const optionsHtml = buildAnchorDropdownOptions(index, a.device_id);
 
         // Status badge: LIVE (ONLINE) / ALERT (OFFLINE) / NEUTRAL (STANDBY)
         const isAssigned = !!a.device_id;
@@ -780,7 +947,7 @@
         const row = `<tr>
           <td><b style="color: var(--primary); font-size: 12px;">${a.anchor_id}</b></td>
           <td>
-            <select class="form-control" style="padding: 4px 8px; font-size: 12px; font-weight: 600;" onchange="onAnchorDeviceSelected(${index}, this.value)">
+            <select class="form-control anchor-hardware-select" data-slot-index="${index}" style="padding: 4px 8px; font-size: 12px; font-weight: 600;" onchange="onAnchorDeviceSelected(${index}, this.value)">
               ${optionsHtml}
             </select>
           </td>
@@ -794,7 +961,7 @@
               <input type="number" step="0.01" min="0" class="form-control" style="width: 54px; padding: 4px;" value="${zVal}" oninput="updateAnchor(${index}, 'z', this.value)">
             </div>
           </td>
-          <td>
+          <td class="anchor-status-cell" data-slot-index="${index}">
             ${statusBadgeHtml}
           </td>
           <td>
@@ -1085,6 +1252,8 @@ window.deleteBed = deleteBed;
 window.renderAnchorsTable = renderAnchorsTable;
 window.onAnchorDeviceSelected = onAnchorDeviceSelected;
 window.fetchRegisteredAnchors = fetchRegisteredAnchors;
+window.setupWardWsListeners = setupWardWsListeners;
+window.updateAnchorLiveStatus = updateAnchorLiveStatus;
 window.addAnchor = addAnchor;
 window.updateAnchor = updateAnchor;
 window.deleteAnchor = deleteAnchor;
