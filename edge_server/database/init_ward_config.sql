@@ -36,16 +36,17 @@ CREATE TABLE IF NOT EXISTS `ward_boundary_points` (
     FOREIGN KEY (`ward_id`) REFERENCES `ward_rooms`(`ward_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- 3. Ward Obstacles & Cutout Zones Table (Toilets, structural pillars, bathrooms)
+-- 3. Ward Obstacles & Cutout Zones Table (Toilets, structural pillars, cupboards, tables)
 CREATE TABLE IF NOT EXISTS `ward_obstacles` (
     `obstacle_id` VARCHAR(32) NOT NULL,
     `ward_id` VARCHAR(32) NOT NULL,
-    `obstacle_type` ENUM('TOILET', 'PILLAR', 'STORAGE', 'PARTITION') NOT NULL DEFAULT 'TOILET',
+    `obstacle_type` ENUM('TOILET', 'PILLAR', 'STORAGE', 'PARTITION', 'CUPBOARD', 'TABLE') NOT NULL DEFAULT 'TOILET',
     `label` VARCHAR(64) NOT NULL,
     `x` DECIMAL(6,2) NOT NULL,
     `y` DECIMAL(6,2) NOT NULL,
     `width` DECIMAL(6,2) NOT NULL,
     `length` DECIMAL(6,2) NOT NULL,
+    `height` DECIMAL(4,2) NOT NULL DEFAULT 2.00,
     PRIMARY KEY (`ward_id`, `obstacle_id`),
     FOREIGN KEY (`ward_id`) REFERENCES `ward_rooms`(`ward_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB;

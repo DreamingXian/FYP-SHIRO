@@ -129,12 +129,12 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <span>🚽 Panel 2: Enclosed Obstacles & Cutout Zones (Toilets & Pillars)</span>
+                  <span>🚽 Panel 2: Enclosed Obstacles, Partitions & Furniture</span>
                   <span class="badge-num" id="obstacle-count-badge">1 Cutout</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addObstacle()">➕ Add Cutout Zone</button>
+                <button class="btn btn-outline btn-sm" onclick="addObstacle()">➕ Add Obstacle</button>
               </div>
-              <div class="card-subtitle">Define non-rectangular architectural indentations like ensuite bathrooms or pillars. Hatching prevents invalid bed/patient mapping.</div>
+              <div class="card-subtitle">Define architectural indentations, ensuite bathrooms, cupboards, tables, or partitions. Obstacles and heights are factored into anchor line-of-sight & digital twin bounds.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -143,7 +143,8 @@
                       <th>Type</th>
                       <th>Label</th>
                       <th>Bottom-Left (X, Y)</th>
-                      <th>Size (W × L)</th>
+                      <th>Footprint (W × L)</th>
+                      <th>Height (Z)</th>
                       <th>Action</th>
                     </tr>
                   </thead>
@@ -161,9 +162,12 @@
                   <span>📡 Panel 3: Stationary BLE Wall Anchors (Trilateration Fleet)</span>
                   <span class="badge-num" id="anchor-count-badge">3 Mounted</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addAnchor()">➕ Add BLE Anchor</button>
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                  <button class="btn btn-outline btn-sm" style="color: var(--primary); border-color: var(--primary); background: #EFF6FF; font-weight: 700;" onclick="autoSuggestAnchors()" title="Auto-calculate mathematically optimal anchor perimeter positions maximizing triangle area and line-of-sight to beds">✨ Auto-Suggest Optimal Anchors</button>
+                  <button class="btn btn-outline btn-sm" onclick="addAnchor()">➕ Add BLE Anchor</button>
+                </div>
               </div>
-              <div class="card-subtitle">Specify physical (X, Y, Z) coordinates for stationary ESP32-WROOM-32E nodes. Height (Z) defaults to 1.80m above floor.</div>
+              <div class="card-subtitle">Specify physical (X, Y, Z) coordinates for stationary ESP32-WROOM-32E nodes. Recommended mounting height: 2.20m - 2.50m near ceiling to clear furniture NLOS.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -192,7 +196,7 @@
                 </div>
                 <button class="btn btn-outline btn-sm" onclick="addBed()">➕ Add Bed</button>
               </div>
-              <div class="card-subtitle">Bottom-left coordinates in meters. If Y=0 bed rests on South wall; if X=0 bed rests on West wall. Status is Available or Unavailable.</div>
+              <div class="card-subtitle">Bottom-left coordinates in meters. Rotate beds (0°, 90°, 180°, 270°) to match clinical ward orientation. Status is Available or Unavailable.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -200,6 +204,7 @@
                     <tr>
                       <th>Bed Code</th>
                       <th>Bottom-Left (X, Y)</th>
+                      <th>Orientation</th>
                       <th>Dimensions</th>
                       <th>Current Status</th>
                       <th>Action</th>

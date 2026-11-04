@@ -316,8 +316,11 @@
       if (subject && subject.assigned_bed_id) {
         const bed = activeWard.beds.find(b => b.bed_id === subject.assigned_bed_id || b.bed_code === subject.assigned_bed_id);
         if (bed) {
-          const dx = pos.x - (bed.x + bed.width / 2);
-          const dy = pos.y - (bed.y + bed.length / 2);
+          const rot = parseInt(bed.rotation_deg, 10) || 0;
+          const spanX = (rot === 90 || rot === 270) ? (bed.length || 2.00) : (bed.width || 0.90);
+          const spanY = (rot === 90 || rot === 270) ? (bed.width || 0.90) : (bed.length || 2.00);
+          const dx = pos.x - (bed.x + spanX / 2);
+          const dy = pos.y - (bed.y + spanY / 2);
           const dist = Math.sqrt(dx * dx + dy * dy);
           if (dist < 0.85) {
             proximityEl.innerHTML = `<span style="color:#16A34A; font-weight:700;">🛏️ In Bed (${dist.toFixed(2)}m)</span>`;
@@ -559,28 +562,95 @@
     const p = metricToCanvas(obs.x, obs.y + obs.length, t);
     const w = obs.width * t.scale;
     const l = obs.length * t.scale;
+    const obsType = (obs.type || 'TOILET').toUpperCase();
+    const obsHeight = obs.height !== undefined ? parseFloat(obs.height) : (obsType === 'TABLE' ? 0.75 : 2.00);
 
-    ctx.fillStyle = '#F8FAFC';
-    ctx.fillRect(p.x, p.y, w, l);
+    if (obsType === 'CUPBOARD') {
+      // Cupboard / Wardrobe cabinet styling
+      ctx.fillStyle = '#FFFBEB';
+      ctx.fillRect(p.x, p.y, w, l);
+      ctx.strokeStyle = '#B45309';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(p.x, p.y, w, l);
 
-    // Diagonal hatch pattern
-    ctx.strokeStyle = '#CBD5E1';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(p.x, p.y, w, l);
+      // Cabinet split & knobs
+      ctx.strokeStyle = '#D97706';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      if (w >= l) {
+        const midX = p.x + w / 2;
+        ctx.moveTo(midX, p.y);
+        ctx.lineTo(midX, p.y + l);
+        ctx.stroke();
+        ctx.fillStyle = '#78350F';
+        ctx.beginPath();
+        ctx.arc(midX - 3, p.y + l / 2, 2, 0, Math.PI * 2);
+        ctx.arc(midX + 3, p.y + l / 2, 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        const midY = p.y + l / 2;
+        ctx.moveTo(p.x, midY);
+        ctx.lineTo(p.x + w, midY);
+        ctx.stroke();
+        ctx.fillStyle = '#78350F';
+        ctx.beginPath();
+        ctx.arc(p.x + w / 2, midY - 3, 2, 0, Math.PI * 2);
+        ctx.arc(p.x + w / 2, midY + 3, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-    // Cross lines for architectural wall partition
-    ctx.beginPath();
-    ctx.moveTo(p.x, p.y);
-    ctx.lineTo(p.x + w, p.y + l);
-    ctx.moveTo(p.x + w, p.y);
-    ctx.lineTo(p.x, p.y + l);
-    ctx.stroke();
+      if (layers.labels) {
+        ctx.fillStyle = '#92400E';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`🚪 ${obs.label || 'Cupboard'} (${obsHeight.toFixed(1)}m)`, p.x + w / 2, p.y + 12);
+      }
+    } else if (obsType === 'TABLE') {
+      // Table / Desk styling
+      ctx.fillStyle = '#F8FAFC';
+      ctx.fillRect(p.x, p.y, w, l);
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(p.x, p.y, w, l);
 
-    if (layers.labels) {
-      ctx.fillStyle = '#64748B';
-      ctx.font = '10px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(obs.label || 'Wall Block', p.x + w / 2, p.y + l / 2 + 3);
+      // 4 corner legs
+      ctx.fillStyle = '#94A3B8';
+      const legS = Math.min(6, Math.max(3, w * 0.12));
+      ctx.fillRect(p.x + 2, p.y + 2, legS, legS);
+      ctx.fillRect(p.x + w - legS - 2, p.y + 2, legS, legS);
+      ctx.fillRect(p.x + 2, p.y + l - legS - 2, legS, legS);
+      ctx.fillRect(p.x + w - legS - 2, p.y + l - legS - 2, legS, legS);
+
+      if (layers.labels) {
+        ctx.fillStyle = '#334155';
+        ctx.font = 'bold 9px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`🪑 ${obs.label || 'Table'} (${obsHeight.toFixed(1)}m)`, p.x + w / 2, p.y + l / 2 + 3);
+      }
+    } else {
+      ctx.fillStyle = obsType === 'PILLAR' ? '#E2E8F0' : '#F8FAFC';
+      ctx.fillRect(p.x, p.y, w, l);
+
+      // Diagonal hatch pattern
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(p.x, p.y, w, l);
+
+      // Cross lines for architectural wall partition
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + w, p.y + l);
+      ctx.moveTo(p.x + w, p.y);
+      ctx.lineTo(p.x, p.y + l);
+      ctx.stroke();
+
+      if (layers.labels) {
+        ctx.fillStyle = '#64748B';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        const icon = obsType === 'TOILET' ? '🚽 ' : (obsType === 'PILLAR' ? '🏛️ ' : (obsType === 'PARTITION' ? '🧱 ' : '📦 '));
+        ctx.fillText(icon + (obs.label || 'Wall Block'), p.x + w / 2, p.y + l / 2 + 3);
+      }
     }
     ctx.restore();
   }
@@ -639,9 +709,14 @@
 
   function drawBed(ctx, t, bed) {
     ctx.save();
-    const p = metricToCanvas(bed.x, bed.y + bed.length, t);
-    const bw = bed.width * t.scale;
-    const bl = bed.length * t.scale;
+    const rot = parseInt(bed.rotation_deg, 10) || 0;
+    const isHorizontal = (rot === 90 || rot === 270);
+    const spanX = isHorizontal ? (bed.length || 2.00) : (bed.width || 0.90);
+    const spanY = isHorizontal ? (bed.width || 0.90) : (bed.length || 2.00);
+
+    const p = metricToCanvas(bed.x, bed.y + spanY, t);
+    const bw = spanX * t.scale;
+    const bl = spanY * t.scale;
 
     // Bed frame
     ctx.fillStyle = '#F1F5F9';
@@ -650,26 +725,62 @@
     ctx.lineWidth = 2;
     ctx.strokeRect(p.x, p.y, bw, bl);
 
-    // Bed Pillow (Head)
+    // Bed Pillow (Headboard according to rotation)
     ctx.fillStyle = '#FFFFFF';
     ctx.strokeStyle = '#CBD5E1';
     ctx.lineWidth = 1;
-    const pillowH = bl * 0.22;
-    ctx.fillRect(p.x + 3, p.y + 3, bw - 6, pillowH);
-    ctx.strokeRect(p.x + 3, p.y + 3, bw - 6, pillowH);
 
-    // Blanket crease
-    ctx.strokeStyle = '#CBD5E1';
-    ctx.beginPath();
-    ctx.moveTo(p.x + 4, p.y + pillowH + 10);
-    ctx.lineTo(p.x + bw - 4, p.y + pillowH + 10);
-    ctx.stroke();
+    if (rot === 0) {
+      // North / Top
+      const pillowH = bl * 0.22;
+      ctx.fillRect(p.x + 3, p.y + 3, bw - 6, pillowH);
+      ctx.strokeRect(p.x + 3, p.y + 3, bw - 6, pillowH);
+      // Blanket crease
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.beginPath();
+      ctx.moveTo(p.x + 4, p.y + pillowH + 6);
+      ctx.lineTo(p.x + bw - 4, p.y + pillowH + 6);
+      ctx.stroke();
+    } else if (rot === 180) {
+      // South / Bottom
+      const pillowH = bl * 0.22;
+      ctx.fillRect(p.x + 3, p.y + bl - 3 - pillowH, bw - 6, pillowH);
+      ctx.strokeRect(p.x + 3, p.y + bl - 3 - pillowH, bw - 6, pillowH);
+      // Blanket crease
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.beginPath();
+      ctx.moveTo(p.x + 4, p.y + bl - 3 - pillowH - 6);
+      ctx.lineTo(p.x + bw - 4, p.y + bl - 3 - pillowH - 6);
+      ctx.stroke();
+    } else if (rot === 90) {
+      // East / Right
+      const pillowW = bw * 0.22;
+      ctx.fillRect(p.x + bw - 3 - pillowW, p.y + 3, pillowW, bl - 6);
+      ctx.strokeRect(p.x + bw - 3 - pillowW, p.y + 3, pillowW, bl - 6);
+      // Blanket crease
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.beginPath();
+      ctx.moveTo(p.x + bw - 3 - pillowW - 6, p.y + 4);
+      ctx.lineTo(p.x + bw - 3 - pillowW - 6, p.y + bl - 4);
+      ctx.stroke();
+    } else if (rot === 270) {
+      // West / Left
+      const pillowW = bw * 0.22;
+      ctx.fillRect(p.x + 3, p.y + 3, pillowW, bl - 6);
+      ctx.strokeRect(p.x + 3, p.y + 3, pillowW, bl - 6);
+      // Blanket crease
+      ctx.strokeStyle = '#CBD5E1';
+      ctx.beginPath();
+      ctx.moveTo(p.x + 3 + pillowW + 6, p.y + 4);
+      ctx.lineTo(p.x + 3 + pillowW + 6, p.y + bl - 4);
+      ctx.stroke();
+    }
 
     if (layers.labels) {
       ctx.fillStyle = '#334155';
       ctx.font = 'bold 11px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText(bed.bed_code || bed.bed_id, p.x + bw / 2, p.y + bl / 2 + 10);
+      ctx.fillText(bed.bed_code || bed.bed_id, p.x + bw / 2, p.y + bl / 2 + 4);
     }
     ctx.restore();
   }

@@ -88,35 +88,102 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
       const oy = originY + (roomY - (obs.y + obs.length)) * scale;
       const ow = obs.width * scale;
       const oh = obs.length * scale;
+      const obsType = (obs.type || 'TOILET').toUpperCase();
+      const obsHeight = obs.height !== undefined ? parseFloat(obs.height) : (obsType === 'TABLE' ? 0.75 : 2.00);
 
-      mapCtx.fillStyle = '#F8FAFC';
-      mapCtx.fillRect(ox, oy, ow, oh);
+      if (obsType === 'CUPBOARD') {
+        // Warm Wood / Cabinet styling
+        mapCtx.fillStyle = '#FFFBEB';
+        mapCtx.fillRect(ox, oy, ow, oh);
+        mapCtx.strokeStyle = '#B45309';
+        mapCtx.lineWidth = 2;
+        mapCtx.strokeRect(ox, oy, ow, oh);
 
-      // Hatching
-      mapCtx.save();
-      mapCtx.beginPath();
-      mapCtx.rect(ox, oy, ow, oh);
-      mapCtx.clip();
-
-      mapCtx.strokeStyle = '#CBD5E1';
-      mapCtx.lineWidth = 1;
-      const hatchSpacing = 10;
-      for (let h = -oh; h < ow + oh; h += hatchSpacing) {
+        // Center cabinet door divide line & handle knobs
+        mapCtx.strokeStyle = '#D97706';
+        mapCtx.lineWidth = 1.2;
         mapCtx.beginPath();
-        mapCtx.moveTo(ox + h, oy);
-        mapCtx.lineTo(ox + h + oh, oy + oh);
-        mapCtx.stroke();
+        if (ow >= oh) {
+          // Vertical split down the middle
+          const midX = ox + ow / 2;
+          mapCtx.moveTo(midX, oy);
+          mapCtx.lineTo(midX, oy + oh);
+          mapCtx.stroke();
+          // Door handles
+          mapCtx.fillStyle = '#78350F';
+          mapCtx.beginPath();
+          mapCtx.arc(midX - 3, oy + oh / 2, 2, 0, Math.PI * 2);
+          mapCtx.arc(midX + 3, oy + oh / 2, 2, 0, Math.PI * 2);
+          mapCtx.fill();
+        } else {
+          // Horizontal split
+          const midY = oy + oh / 2;
+          mapCtx.moveTo(ox, midY);
+          mapCtx.lineTo(ox + ow, midY);
+          mapCtx.stroke();
+          // Door handles
+          mapCtx.fillStyle = '#78350F';
+          mapCtx.beginPath();
+          mapCtx.arc(ox + ow / 2, midY - 3, 2, 0, Math.PI * 2);
+          mapCtx.arc(ox + ow / 2, midY + 3, 2, 0, Math.PI * 2);
+          mapCtx.fill();
+        }
+
+        mapCtx.fillStyle = '#92400E';
+        mapCtx.font = '700 9px sans-serif';
+        mapCtx.fillText(`🚪 ${obs.label || 'Cupboard'} (${obsHeight.toFixed(1)}m)`, ox + 4, oy + 12);
+
+      } else if (obsType === 'TABLE') {
+        // Table / Desk styling
+        mapCtx.fillStyle = '#F8FAFC';
+        mapCtx.fillRect(ox, oy, ow, oh);
+        mapCtx.strokeStyle = '#475569';
+        mapCtx.lineWidth = 1.5;
+        mapCtx.strokeRect(ox, oy, ow, oh);
+
+        // 4 corner leg marks
+        mapCtx.fillStyle = '#94A3B8';
+        const legS = Math.min(6, Math.max(3, ow * 0.12));
+        mapCtx.fillRect(ox + 2, oy + 2, legS, legS);
+        mapCtx.fillRect(ox + ow - legS - 2, oy + 2, legS, legS);
+        mapCtx.fillRect(ox + 2, oy + oh - legS - 2, legS, legS);
+        mapCtx.fillRect(ox + ow - legS - 2, oy + oh - legS - 2, legS, legS);
+
+        mapCtx.fillStyle = '#334155';
+        mapCtx.font = '700 9px sans-serif';
+        mapCtx.fillText(`🪑 ${obs.label || 'Table'} (${obsHeight.toFixed(1)}m)`, ox + 6, oy + oh / 2 + 3);
+
+      } else {
+        // TOILET, PARTITION, PILLAR, STORAGE (Hatched architectural partition)
+        mapCtx.fillStyle = obsType === 'PILLAR' ? '#E2E8F0' : '#F8FAFC';
+        mapCtx.fillRect(ox, oy, ow, oh);
+
+        // Hatching
+        mapCtx.save();
+        mapCtx.beginPath();
+        mapCtx.rect(ox, oy, ow, oh);
+        mapCtx.clip();
+
+        mapCtx.strokeStyle = obsType === 'PILLAR' ? '#94A3B8' : '#CBD5E1';
+        mapCtx.lineWidth = 1;
+        const hatchSpacing = obsType === 'PILLAR' ? 6 : 10;
+        for (let h = -oh; h < ow + oh; h += hatchSpacing) {
+          mapCtx.beginPath();
+          mapCtx.moveTo(ox + h, oy);
+          mapCtx.lineTo(ox + h + oh, oy + oh);
+          mapCtx.stroke();
+        }
+        mapCtx.restore();
+
+        mapCtx.strokeStyle = '#475569';
+        mapCtx.lineWidth = 2;
+        mapCtx.strokeRect(ox, oy, ow, oh);
+
+        mapCtx.fillStyle = '#0F172A';
+        mapCtx.font = '700 10px sans-serif';
+        const icon = obsType === 'TOILET' ? '🚽 ' : (obsType === 'PILLAR' ? '🏛️ ' : (obsType === 'PARTITION' ? '🧱 ' : '📦 '));
+        mapCtx.fillText(icon + (obs.label || obs.type), ox + 6, oy + oh / 2 - 2);
       }
-      mapCtx.restore();
-
-      mapCtx.strokeStyle = '#475569';
-      mapCtx.lineWidth = 2;
-      mapCtx.strokeRect(ox, oy, ow, oh);
-
-      mapCtx.fillStyle = '#0F172A';
-      mapCtx.font = '700 10px sans-serif';
-      const icon = obs.type === 'TOILET' ? '🚽 ' : (obs.type === 'PILLAR' ? '🏛️ ' : '📦 ');
-      mapCtx.fillText(icon + (obs.label || obs.type), ox + 6, oy + oh / 2 - 2);
     });
   }
 
@@ -174,13 +241,16 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
   // 5. Hospital Beds Fleet
   if (Array.isArray(ward.beds)) {
     ward.beds.forEach(b => {
-      const bwM = b.width || 0.90;
-      const bhM = b.length || 2.00;
-      const bw = bwM * scale;
-      const bh = bhM * scale;
+      const rot = parseInt(b.rotation_deg, 10) || 0;
+      const isHorizontal = (rot === 90 || rot === 270);
+      const spanXM = isHorizontal ? (b.length || 2.00) : (b.width || 0.90);
+      const spanYM = isHorizontal ? (b.width || 0.90) : (b.length || 2.00);
+
+      const bw = spanXM * scale;
+      const bh = spanYM * scale;
 
       const bx = originX + b.x * scale;
-      const by = originY + (roomY - (b.y + bhM)) * scale;
+      const by = originY + (roomY - (b.y + spanYM)) * scale;
 
       const isOccupied = b.status === 'OCCUPIED';
       const isUnavailable = b.status === 'UNAVAILABLE';
@@ -197,16 +267,43 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
       mapCtx.strokeRect(bx, by, bw, bh);
       mapCtx.setLineDash([]);
 
-      // Pillow at head
+      // Pillow at headboard according to rotation
       mapCtx.fillStyle = isOccupied ? '#FECACA' : (isUnavailable ? '#E2E8F0' : '#BBF7D0');
-      mapCtx.fillRect(bx + 3, by + 3, bw - 6, bh * 0.22);
+      mapCtx.strokeStyle = isOccupied ? '#FCA5A5' : (isUnavailable ? '#CBD5E1' : '#86EFAC');
+      mapCtx.lineWidth = 1;
 
-      // Bed label & status
+      if (rot === 0) {
+        // Headboard North (top)
+        const pilH = bh * 0.22;
+        mapCtx.fillRect(bx + 3, by + 3, bw - 6, pilH);
+        mapCtx.strokeRect(bx + 3, by + 3, bw - 6, pilH);
+      } else if (rot === 180) {
+        // Headboard South (bottom)
+        const pilH = bh * 0.22;
+        mapCtx.fillRect(bx + 3, by + bh - 3 - pilH, bw - 6, pilH);
+        mapCtx.strokeRect(bx + 3, by + bh - 3 - pilH, bw - 6, pilH);
+      } else if (rot === 90) {
+        // Headboard East (right)
+        const pilW = bw * 0.22;
+        mapCtx.fillRect(bx + bw - 3 - pilW, by + 3, pilW, bh - 6);
+        mapCtx.strokeRect(bx + bw - 3 - pilW, by + 3, pilW, bh - 6);
+      } else if (rot === 270) {
+        // Headboard West (left)
+        const pilW = bw * 0.22;
+        mapCtx.fillRect(bx + 3, by + 3, pilW, bh - 6);
+        mapCtx.strokeRect(bx + 3, by + 3, pilW, bh - 6);
+      }
+
+      // Bed label & status centered
+      mapCtx.save();
+      mapCtx.textAlign = 'center';
+      mapCtx.textBaseline = 'middle';
       mapCtx.fillStyle = isOccupied ? '#DC2626' : (isUnavailable ? '#64748B' : '#047857');
       mapCtx.font = '700 9px sans-serif';
-      mapCtx.fillText(b.bed_code, bx + 4, by + bh * 0.50);
+      mapCtx.fillText(b.bed_code, bx + bw / 2, by + bh * 0.48);
       mapCtx.font = '600 8px sans-serif';
-      mapCtx.fillText(b.status || 'AVAILABLE', bx + 4, by + bh * 0.76);
+      mapCtx.fillText(b.status || 'AVAILABLE', bx + bw / 2, by + bh * 0.72);
+      mapCtx.restore();
     });
   }
 

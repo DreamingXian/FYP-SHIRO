@@ -82,9 +82,9 @@ async function getWardConfig(wardId = 'WARD-001') {
   }
   const room = rooms[0];
 
-  // 2. Fetch Obstacles (Toilets, pillars)
+  // 2. Fetch Obstacles (Toilets, pillars, cupboards, tables)
   const [obstacles] = await pool.query(
-    'SELECT obstacle_id, obstacle_type, label, x, y, width, length FROM ward_obstacles WHERE ward_id = ?',
+    'SELECT obstacle_id, obstacle_type, label, x, y, width, length, height FROM ward_obstacles WHERE ward_id = ?',
     [wardId]
   );
 
@@ -129,7 +129,8 @@ async function getWardConfig(wardId = 'WARD-001') {
       x: parseFloat(o.x),
       y: parseFloat(o.y),
       width: parseFloat(o.width),
-      length: parseFloat(o.length)
+      length: parseFloat(o.length),
+      height: parseFloat(o.height !== null && o.height !== undefined ? o.height : (o.obstacle_type === 'TABLE' ? 0.75 : 2.00))
     })),
     beds: beds.map(b => ({
       bed_id: b.bed_id,
@@ -201,9 +202,12 @@ async function saveWardConfig(data) {
       for (let i = 0; i < data.obstacles.length; i++) {
         const obs = data.obstacles[i];
         const obsId = obs.id || `OBS-${wardId}-${i + 1}`;
+        const obsType = obs.type || 'TOILET';
+        const defaultH = obsType === 'TABLE' ? 0.75 : (obsType === 'TOILET' ? 2.60 : 2.00);
+        const obsHeight = obs.height !== undefined ? parseFloat(obs.height) : defaultH;
         await conn.query(
-          'INSERT INTO ward_obstacles (obstacle_id, ward_id, obstacle_type, label, x, y, width, length) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [obsId, wardId, obs.type || 'TOILET', obs.label || 'Obstacle', obs.x || 0, obs.y || 0, obs.width || 1, obs.length || 1]
+          'INSERT INTO ward_obstacles (obstacle_id, ward_id, obstacle_type, label, x, y, width, length, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [obsId, wardId, obsType, obs.label || 'Obstacle', obs.x || 0, obs.y || 0, obs.width || 1, obs.length || 1, obsHeight]
         );
       }
     }

@@ -371,12 +371,16 @@
 
         const w = data.ward;
         const bedsList = (w.beds && w.beds.length > 0)
-          ? w.beds.map(b => `
+          ? w.beds.map(b => {
+              const rot = parseInt(b.rotation_deg, 10) || 0;
+              const rotLabel = rot === 0 ? '0° (N)' : rot === 90 ? '90° (E)' : rot === 180 ? '180° (S)' : '270° (W)';
+              return `
               <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-bottom:1px solid var(--border-light); font-size:12px;">
-                <div><strong>${b.bed_code || b.bed_id}</strong> (${b.bed_id})</div>
+                <div><strong>${b.bed_code || b.bed_id}</strong> <span style="font-size:10px; color:var(--text-muted); font-weight:600;">[${rotLabel}]</span></div>
                 <div style="font-family:monospace; color:var(--text-muted);">${Number(b.x).toFixed(2)}m, ${Number(b.y).toFixed(2)}m</div>
                 <span class="badge ${b.status === 'AVAILABLE' ? 'badge-live' : b.status === 'OCCUPIED' ? 'badge-alert' : 'badge-neutral'}">${b.status}</span>
-              </div>`).join('')
+              </div>`;
+            }).join('')
           : '<div style="color:var(--text-muted); font-size:12px; padding:8px; text-align:center;">No beds configured.</div>';
 
         // Format Wall Anchors as structured individual cards
@@ -406,23 +410,24 @@
         // Format Obstacles as structured individual cards (fixing undefined bug)
         const obstaclesList = (w.obstacles && w.obstacles.length > 0)
           ? w.obstacles.map(o => {
-              const typeStr = o.type || 'CUTOUT';
-              const icon = typeStr === 'TOILET' ? '🚽' : typeStr === 'PILLAR' ? '🏛️' : '📦';
+              const typeStr = (o.type || 'CUTOUT').toUpperCase();
+              const icon = typeStr === 'TOILET' ? '🚽' : typeStr === 'CUPBOARD' ? '🚪' : typeStr === 'TABLE' ? '🪑' : typeStr === 'PILLAR' ? '🏛️' : typeStr === 'PARTITION' ? '🧱' : '📦';
+              const hVal = Number(o.height !== undefined ? o.height : (typeStr === 'TABLE' ? 0.75 : 2.00)).toFixed(2);
               return `
                 <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
-                    <strong style="color:var(--text-primary); font-size:12px;">${icon} ${o.label || o.id || 'Cutout Zone'}</strong>
+                    <strong style="color:var(--text-primary); font-size:12px;">${icon} ${o.label || o.id || 'Obstacle'}</strong>
                     <span class="badge badge-neutral" style="font-size:10px;">${typeStr}</span>
                   </div>
                   <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
-                    Type: ${typeStr}
+                    Type: ${typeStr} · Height: ${hVal}m
                   </div>
                   <div style="font-size:11px; color:var(--text-secondary);">
                     Position: (${Number(o.x).toFixed(2)}m, ${Number(o.y).toFixed(2)}m) · Size: ${Number(o.width).toFixed(2)}m × ${Number(o.length).toFixed(2)}m
                   </div>
                 </div>`;
             }).join('')
-          : '<div style="color:var(--text-muted); font-size:12px; padding:12px; text-align:center;">No obstacle cutout zones.</div>';
+          : '<div style="color:var(--text-muted); font-size:12px; padding:12px; text-align:center;">No obstacles configured.</div>';
 
         // Door details handling (fixing undefined @ NaNm)
         const doorWall = w.door?.wall || w.door_wall || 'SOUTH';
@@ -758,10 +763,10 @@
       const tbody = document.getElementById('obstacles-table-body');
       tbody.innerHTML = '';
       const list = currentWard.obstacles || [];
-      document.getElementById('obstacle-count-badge').innerText = `${list.length} Cutout${list.length === 1 ? '' : 's'}`;
+      document.getElementById('obstacle-count-badge').innerText = `${list.length} Obstacle${list.length === 1 ? '' : 's'}`;
 
       if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 14px;">No cutouts configured. Entire room is open rectangle.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 14px;">No obstacles configured. Entire room is open rectangle.</td></tr>`;
         return;
       }
 
@@ -770,14 +775,19 @@
         const yVal = Number(obs.y !== undefined ? obs.y : 0).toFixed(2);
         const wVal = Number(obs.width !== undefined ? obs.width : 1.0).toFixed(2);
         const lVal = Number(obs.length !== undefined ? obs.length : 1.0).toFixed(2);
+        const obsType = (obs.type || 'TOILET').toUpperCase();
+        const defaultH = obsType === 'TABLE' ? 0.75 : (obsType === 'TOILET' ? 2.60 : 2.00);
+        const hVal = Number(obs.height !== undefined ? obs.height : defaultH).toFixed(2);
 
         const row = `<tr>
           <td>
-            <select class="form-control" style="padding: 4px 8px; font-size: 11px;" onchange="updateObstacle(${index}, 'type', this.value)">
-              <option value="TOILET" ${obs.type === 'TOILET' ? 'selected' : ''}>🚽 Toilet</option>
-              <option value="PILLAR" ${obs.type === 'PILLAR' ? 'selected' : ''}>🏛️ Pillar</option>
-              <option value="STORAGE" ${obs.type === 'STORAGE' ? 'selected' : ''}>📦 Storage</option>
-              <option value="PARTITION" ${obs.type === 'PARTITION' ? 'selected' : ''}>🧱 Partition</option>
+            <select class="form-control" style="padding: 4px 8px; font-size: 11px; font-weight: 600;" onchange="onObstacleTypeChange(${index}, this.value)">
+              <option value="TOILET" ${obsType === 'TOILET' ? 'selected' : ''}>🚽 Toilet / Ensuite</option>
+              <option value="CUPBOARD" ${obsType === 'CUPBOARD' ? 'selected' : ''}>🚪 Cupboard / Wardrobe</option>
+              <option value="TABLE" ${obsType === 'TABLE' ? 'selected' : ''}>🪑 Table / Desk</option>
+              <option value="PARTITION" ${obsType === 'PARTITION' ? 'selected' : ''}>🧱 Partition</option>
+              <option value="PILLAR" ${obsType === 'PILLAR' ? 'selected' : ''}>🏛️ Pillar</option>
+              <option value="STORAGE" ${obsType === 'STORAGE' ? 'selected' : ''}>📦 Storage</option>
             </select>
           </td>
           <td><input type="text" class="form-control" style="padding: 4px 8px; font-size: 12px;" value="${obs.label || ''}" oninput="updateObstacle(${index}, 'label', this.value)"></td>
@@ -798,6 +808,12 @@
             </div>
           </td>
           <td>
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <input type="number" step="0.05" min="0.10" class="form-control" style="width: 58px; padding: 4px;" value="${hVal}" oninput="updateObstacle(${index}, 'height', this.value)">
+              <span style="font-size: 11px; color: var(--text-muted);">m</span>
+            </div>
+          </td>
+          <td>
             <button class="btn btn-danger-outline btn-sm" onclick="deleteObstacle(${index})">🗑</button>
           </td>
         </tr>`;
@@ -805,17 +821,45 @@
       });
     }
 
+    function onObstacleTypeChange(index, newType) {
+      if (!currentWard.obstacles || !currentWard.obstacles[index]) return;
+      const obs = currentWard.obstacles[index];
+      const prevType = obs.type;
+      obs.type = newType;
+
+      // Suggest appropriate default height and label if user hasn't explicitly set custom values
+      if (newType === 'TABLE') {
+        if (!obs.height || obs.height === 2.00 || obs.height === 2.60) obs.height = 0.75;
+        if (!obs.width || obs.width === 1.80) obs.width = 1.00;
+        if (!obs.length || obs.length === 1.60) obs.length = 0.80;
+        if (!obs.label || obs.label.includes('Bathroom') || obs.label.includes('Cutout') || obs.label.includes('Cupboard')) obs.label = `Table ${index + 1}`;
+      } else if (newType === 'CUPBOARD') {
+        if (!obs.height || obs.height === 0.75 || obs.height === 2.60) obs.height = 2.00;
+        if (!obs.width || obs.width === 1.80) obs.width = 1.20;
+        if (!obs.length || obs.length === 1.60) obs.length = 0.60;
+        if (!obs.label || obs.label.includes('Bathroom') || obs.label.includes('Cutout') || obs.label.includes('Table')) obs.label = `Cupboard ${index + 1}`;
+      } else if (newType === 'TOILET') {
+        if (!obs.height || obs.height === 0.75 || obs.height === 2.00) obs.height = 2.60;
+        if (!obs.label || obs.label.includes('Table') || obs.label.includes('Cupboard')) obs.label = `Ensuite Bathroom ${index + 1}`;
+      }
+      renderObstaclesTable();
+      updateWardStats();
+      redrawWardMap();
+      markUnsavedChanges();
+    }
+
     function addObstacle() {
       if (!currentWard.obstacles) currentWard.obstacles = [];
       const newIdx = currentWard.obstacles.length + 1;
       currentWard.obstacles.push({
         id: `OBS-${currentWard.ward_id}-${newIdx}`,
-        type: 'TOILET',
-        label: `Bathroom Cutout ${newIdx}`,
+        type: 'CUPBOARD',
+        label: `Cupboard ${newIdx}`,
         x: 0.00,
-        y: Math.max(0, Math.round((currentWard.width_y - 1.60) * 100) / 100),
-        width: 1.80,
-        length: 1.60
+        y: Math.max(0, Math.round((currentWard.width_y - 1.20) * 100) / 100),
+        width: 1.20,
+        length: 0.60,
+        height: 2.00
       });
       renderObstaclesTable();
       updateWardStats();
@@ -827,7 +871,7 @@
       if (currentWard.obstacles && currentWard.obstacles[index]) {
         if (field === 'x' || field === 'y') {
           currentWard.obstacles[index][field] = Math.max(0, Math.round((parseFloat(value) || 0) * 100) / 100);
-        } else if (field === 'width' || field === 'length') {
+        } else if (field === 'width' || field === 'length' || field === 'height') {
           currentWard.obstacles[index][field] = Math.max(0.10, Math.round((parseFloat(value) || 0.10) * 100) / 100);
         } else {
           currentWard.obstacles[index][field] = value;
@@ -856,12 +900,17 @@
       document.getElementById('bed-count-badge').innerText = `${list.length} Bed${list.length === 1 ? '' : 's'}`;
 
       if (list.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 14px;">No beds registered in this ward.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 14px;">No beds registered in this ward.</td></tr>`;
         return;
       }
 
       list.forEach((b, index) => {
         const statusVal = b.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE';
+        const rot = parseInt(b.rotation_deg, 10) || 0;
+        const isHorizontal = (rot === 90 || rot === 270);
+        const spanXM = isHorizontal ? (b.length || 2.00) : (b.width || 0.90);
+        const spanYM = isHorizontal ? (b.width || 0.90) : (b.length || 2.00);
+
         const xVal = Number(b.x !== undefined ? b.x : 0).toFixed(2);
         const yVal = Number(b.y !== undefined ? b.y : 0).toFixed(2);
 
@@ -877,7 +926,17 @@
               <input type="number" step="0.01" min="0" class="form-control" style="width: 65px; padding: 4px;" value="${yVal}" oninput="updateBed(${index}, 'y', this.value)">
             </div>
           </td>
-          <td style="color: var(--text-secondary); font-size: 12px;">0.90m × 2.00m</td>
+          <td>
+            <select class="form-control" style="padding: 4px 8px; font-size: 11px; font-weight: 600;" onchange="updateBed(${index}, 'rotation_deg', this.value)">
+              <option value="0" ${rot === 0 ? 'selected' : ''}>⬆️ 0° (North)</option>
+              <option value="90" ${rot === 90 ? 'selected' : ''}>➡️ 90° (East)</option>
+              <option value="180" ${rot === 180 ? 'selected' : ''}>⬇️ 180° (South)</option>
+              <option value="270" ${rot === 270 ? 'selected' : ''}>⬅️ 270° (West)</option>
+            </select>
+          </td>
+          <td style="color: var(--text-secondary); font-size: 12px; font-weight: 600; white-space: nowrap;">
+            ${spanXM.toFixed(2)}m × ${spanYM.toFixed(2)}m
+          </td>
           <td>
             <select class="form-control" style="padding: 4px 8px; font-size: 11px;" onchange="updateBed(${index}, 'status', this.value)">
               <option value="AVAILABLE" ${statusVal === 'AVAILABLE' ? 'selected' : ''}>✅ Available</option>
@@ -920,6 +979,9 @@
       if (currentWard.beds && currentWard.beds[index]) {
         if (field === 'x' || field === 'y') {
           currentWard.beds[index][field] = Math.max(0, Math.round((parseFloat(value) || 0) * 100) / 100);
+        } else if (field === 'rotation_deg') {
+          currentWard.beds[index].rotation_deg = parseInt(value, 10) || 0;
+          renderBedsTable();
         } else if (field === 'status') {
           currentWard.beds[index].status = value === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE';
         } else {
@@ -1056,6 +1118,182 @@
         updateWardStats();
         redrawWardMap();
         markUnsavedChanges();
+      }
+    }
+
+    /**
+     * Phase 3: Auto-Suggest Optimal BLE Anchors Engine
+     * Calculates mathematically optimal perimeter wall coordinates (X, Y, Z)
+     * maximizing triangle area (low GDOP) and clearing line-of-sight (LOS) to beds over furniture.
+     */
+    function autoSuggestAnchors() {
+      if (!currentWard) return;
+      const roomX = parseFloat(currentWard.length_x) || 6.40;
+      const roomY = parseFloat(currentWard.width_y) || 4.80;
+      const roomZ = parseFloat(currentWard.height_z) || 2.60;
+
+      // Mounting height: high on wall near ceiling to clear 0.75m tables and 0.85m hospital beds
+      const zMount = Math.max(1.80, Math.round(Math.min(2.50, roomZ - 0.20) * 100) / 100);
+
+      const obstacles = currentWard.obstacles || [];
+      const door = currentWard.door || { wall: 'SOUTH', x: 2.80, width: 0.90 };
+      const beds = currentWard.beds || [];
+
+      // Check if point (px, py) is inside or too close (< 0.20m) to any obstacle
+      function isObstacleBlocked(px, py, minClearance = 0.20) {
+        for (const obs of obstacles) {
+          const ox1 = (obs.x || 0) - minClearance;
+          const ox2 = (obs.x || 0) + (obs.width || 1.0) + minClearance;
+          const oy1 = (obs.y || 0) - minClearance;
+          const oy2 = (obs.y || 0) + (obs.length || 1.0) + minClearance;
+          if (px >= ox1 && px <= ox2 && py >= oy1 && py <= oy2) {
+            return obs;
+          }
+        }
+        return null;
+      }
+
+      // Check if point collides with door opening threshold
+      function isDoorBlocked(px, py) {
+        const wall = door.wall || 'SOUTH';
+        const dx1 = (door.x || 0) - 0.25;
+        const dx2 = (door.x || 0) + (door.width || 0.90) + 0.25;
+        if (wall === 'SOUTH' && Math.abs(py) < 0.35 && px >= dx1 && px <= dx2) return true;
+        if (wall === 'NORTH' && Math.abs(py - roomY) < 0.35 && px >= dx1 && px <= dx2) return true;
+        if (wall === 'WEST' && Math.abs(px) < 0.35 && py >= dx1 && py <= dx2) return true;
+        if (wall === 'EAST' && Math.abs(px - roomX) < 0.35 && py >= dx1 && py <= dx2) return true;
+        return false;
+      }
+
+      // 2D line segment intersection with box
+      function lineIntersectsBox(x1, y1, x2, y2, bx1, by1, bx2, by2) {
+        const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+        if (maxX < bx1 || minX > bx2 || maxY < by1 || minY > by2) return false;
+        function ccw(ax, ay, bx, by, cx, cy) {
+          return (cy - ay) * (bx - ax) > (by - ay) * (cx - ax);
+        }
+        function intersect(p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y) {
+          return (ccw(p1x, p1y, p3x, p3y, p4x, p4y) !== ccw(p2x, p2y, p3x, p3y, p4x, p4y)) &&
+                 (ccw(p1x, p1y, p2x, p2y, p3x, p3y) !== ccw(p1x, p1y, p2x, p2y, p4x, p4y));
+        }
+        if (x1 >= bx1 && x1 <= bx2 && y1 >= by1 && y1 <= by2) return true;
+        if (x2 >= bx1 && x2 <= bx2 && y2 >= by1 && y2 <= by2) return true;
+        return intersect(x1, y1, x2, y2, bx1, by1, bx2, by1) ||
+               intersect(x1, y1, x2, y2, bx2, by1, bx2, by2) ||
+               intersect(x1, y1, x2, y2, bx2, by2, bx1, by2) ||
+               intersect(x1, y1, x2, y2, bx1, by2, bx1, by1);
+      }
+
+      // Count bed line-of-sight obstructions for a candidate anchor
+      function countBlockedBeds(ax, ay) {
+        let blocked = 0;
+        for (const b of beds) {
+          const rot = parseInt(b.rotation_deg, 10) || 0;
+          const spanX = (rot === 90 || rot === 270) ? (b.length || 2.00) : (b.width || 0.90);
+          const spanY = (rot === 90 || rot === 270) ? (b.width || 0.90) : (b.length || 2.00);
+          const bedCenterX = b.x + spanX / 2;
+          const bedCenterY = b.y + spanY / 2;
+          for (const obs of obstacles) {
+            const obsH = obs.height !== undefined ? parseFloat(obs.height) : (obs.type === 'TABLE' ? 0.75 : 2.00);
+            if (obsH >= 1.50) {
+              if (lineIntersectsBox(ax, ay, bedCenterX, bedCenterY, obs.x, obs.y, obs.x + obs.width, obs.y + obs.length)) {
+                blocked++;
+                break;
+              }
+            }
+          }
+        }
+        return blocked;
+      }
+
+      // Candidate Anchor A (North-West)
+      let candA = { x: 0.40, y: Math.max(0.40, Math.round((roomY - 0.40) * 100) / 100) };
+      let blockA = isObstacleBlocked(candA.x, candA.y);
+      if (blockA) {
+        candA.x = Math.min(roomX - 0.50, Math.round((blockA.x + blockA.width + 0.35) * 100) / 100);
+        candA.y = Math.max(0.40, Math.round((roomY - 0.40) * 100) / 100);
+      }
+
+      // Candidate Anchor B (North-East)
+      let candB = { x: Math.max(0.40, Math.round((roomX - 0.40) * 100) / 100), y: Math.max(0.40, Math.round((roomY - 0.40) * 100) / 100) };
+      let blockB = isObstacleBlocked(candB.x, candB.y);
+      if (blockB) {
+        candB.x = Math.max(0.40, Math.round((blockB.x - 0.35) * 100) / 100);
+      }
+
+      // Candidate Anchor C (South wall, forms wide triangle with A & B)
+      let candC = { x: Math.round((roomX / 2) * 100) / 100, y: 0.40 };
+      if (isDoorBlocked(candC.x, candC.y) || isObstacleBlocked(candC.x, candC.y)) {
+        const altLeftX = Math.max(0.45, Math.round(((door.x || 0) - 0.50) * 100) / 100);
+        const altRightX = Math.min(roomX - 0.45, Math.round(((door.x || 0) + (door.width || 0.90) + 0.50) * 100) / 100);
+        if (!isObstacleBlocked(altLeftX, 0.40) && countBlockedBeds(altLeftX, 0.40) <= countBlockedBeds(altRightX, 0.40)) {
+          candC.x = altLeftX;
+        } else if (!isObstacleBlocked(altRightX, 0.40)) {
+          candC.x = altRightX;
+        }
+      }
+
+      // Ensure at least 3 anchors exist in currentWard
+      if (!Array.isArray(currentWard.anchors)) currentWard.anchors = [];
+      while (currentWard.anchors.length < 3) {
+        const letter = String.fromCharCode(65 + currentWard.anchors.length);
+        currentWard.anchors.push({
+          anchor_id: `Anchor ${letter}`,
+          device_id: null,
+          mac_address: '',
+          x: 0,
+          y: 0,
+          z: zMount,
+          wall_location: `Wall ${letter}`,
+          status: 'STANDBY'
+        });
+      }
+
+      // Update coordinates while retaining any enrolled hardware device bindings
+      currentWard.anchors[0].x = candA.x;
+      currentWard.anchors[0].y = candA.y;
+      currentWard.anchors[0].z = zMount;
+      currentWard.anchors[0].wall_location = candA.y >= roomY - 0.50 ? 'North Wall (Upper Perimeter)' : 'West Wall (Upper Perimeter)';
+
+      currentWard.anchors[1].x = candB.x;
+      currentWard.anchors[1].y = candB.y;
+      currentWard.anchors[1].z = zMount;
+      currentWard.anchors[1].wall_location = 'North-East Wall (Upper Perimeter)';
+
+      currentWard.anchors[2].x = candC.x;
+      currentWard.anchors[2].y = candC.y;
+      currentWard.anchors[2].z = zMount;
+      currentWard.anchors[2].wall_location = 'South Wall (Upper Perimeter)';
+
+      // If a 4th anchor exists, position in opposite South corner
+      if (currentWard.anchors.length >= 4) {
+        const candD = {
+          x: candC.x > roomX / 2 ? 0.40 : Math.max(0.40, Math.round((roomX - 0.40) * 100) / 100),
+          y: 0.40,
+          z: zMount
+        };
+        if (!isObstacleBlocked(candD.x, candD.y) && !isDoorBlocked(candD.x, candD.y)) {
+          currentWard.anchors[3].x = candD.x;
+          currentWard.anchors[3].y = candD.y;
+          currentWard.anchors[3].z = zMount;
+          currentWard.anchors[3].wall_location = 'South Corner (Upper Perimeter)';
+        }
+      }
+
+      const triArea = Math.abs((candA.x * (candB.y - candC.y) + candB.x * (candC.y - candA.y) + candC.x * (candA.y - candB.y)) / 2);
+
+      renderAnchorsTable();
+      redrawWardMap();
+      markUnsavedChanges();
+
+      const msg = `✨ Optimal anchor placement calculated! Mounting height: ${zMount}m near ceiling (clears tables & bed frames). Baseline coverage: ${triArea.toFixed(1)} m². Click "Save Changes" to apply.`;
+      if (typeof showToast === 'function') {
+        showToast(msg, 'success', 5000);
+      } else if (window.showToast) {
+        window.showToast(msg, 'success', 5000);
+      } else {
+        alert(msg);
       }
     }
 
@@ -1293,6 +1531,7 @@ window.syncWardDimensions = syncWardDimensions;
 window.syncWardDoor = syncWardDoor;
 window.markUnsavedChanges = markUnsavedChanges;
 window.renderObstaclesTable = renderObstaclesTable;
+window.onObstacleTypeChange = onObstacleTypeChange;
 window.addObstacle = addObstacle;
 window.updateObstacle = updateObstacle;
 window.deleteObstacle = deleteObstacle;
@@ -1308,6 +1547,7 @@ window.updateAnchorLiveStatus = updateAnchorLiveStatus;
 window.addAnchor = addAnchor;
 window.updateAnchor = updateAnchor;
 window.deleteAnchor = deleteAnchor;
+window.autoSuggestAnchors = autoSuggestAnchors;
 window.updateWardStats = updateWardStats;
 window.applyWardTemplate = applyWardTemplate;
 window.saveWardConfiguration = saveWardConfiguration;
