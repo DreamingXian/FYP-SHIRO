@@ -139,6 +139,8 @@
       const isSelected = (s.device_id === selectedTagId);
       const isResident = s.is_ward_resident;
       const bedLabel = s.assigned_bed_id ? s.assigned_bed_id : 'No Bed';
+      const pos = liveTagPositions.get(s.device_id);
+      const isTagOffline = pos ? (pos.status === 'OFFLINE' || (Date.now() - (pos.lastSeen || 0) > 6000)) : false;
 
       const item = document.createElement('div');
       item.className = 'live-map-subject-item';
@@ -164,8 +166,11 @@
             <div style="font-size:10px; color:var(--text-muted); font-family:monospace;">${s.device_id} · ${bedLabel}</div>
           </div>
         </div>
-        <div>
-          <span class="badge ${isResident ? 'badge-live' : 'badge-neutral'}" style="font-size:9px;">
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px;">
+          <span class="badge ${isTagOffline ? 'badge-alert' : 'badge-live'}" style="font-size:9px;">
+            ${isTagOffline ? '● OFFLINE' : '● ONLINE'}
+          </span>
+          <span style="font-size:9px; color:var(--text-muted);">
             ${isResident ? 'Resident' : 'Visiting'}
           </span>
         </div>
@@ -236,6 +241,7 @@
 
     const vitals = liveVitals.get(selectedTagId) || {};
     const pos = liveTagPositions.get(selectedTagId) || null;
+    const isOffline = pos ? (pos.status === 'OFFLINE' || (Date.now() - (pos.lastSeen || 0) > 6000)) : false;
 
     const bpmEl = document.getElementById('live-map-val-bpm');
     const spo2El = document.getElementById('live-map-val-spo2');
@@ -243,6 +249,17 @@
     const coordsEl = document.getElementById('live-map-val-coords');
     const proximityEl = document.getElementById('live-map-val-proximity');
     const confEl = document.getElementById('live-map-val-confidence');
+    const vitalsStatusEl = document.getElementById('live-map-vitals-status');
+
+    if (vitalsStatusEl) {
+      if (isOffline) {
+        vitalsStatusEl.innerText = '● OFFLINE (LAST KNOWN)';
+        vitalsStatusEl.className = 'badge badge-alert';
+      } else {
+        vitalsStatusEl.innerText = '● LIVE STREAM';
+        vitalsStatusEl.className = 'badge badge-live';
+      }
+    }
 
     if (bpmEl) {
       bpmEl.innerText = vitals.bpm !== undefined ? vitals.bpm : '--';
@@ -261,15 +278,21 @@
 
     if (coordsEl) {
       if (pos && pos.x !== undefined && pos.y !== undefined) {
-        coordsEl.innerText = `(${pos.x.toFixed(2)}m, ${pos.y.toFixed(2)}m)`;
+        const prefix = isOffline ? 'Last Known: ' : '';
+        coordsEl.innerText = `${prefix}(${pos.x.toFixed(2)}m, ${pos.y.toFixed(2)}m)`;
       } else {
         coordsEl.innerText = 'Awaiting signal...';
       }
     }
 
     if (confEl && pos) {
-      confEl.innerText = pos.confidence || '3-Anchor 2D';
-      confEl.className = `badge ${pos.confidence === 'HIGH' ? 'badge-live' : (pos.confidence === 'MEDIUM' ? 'badge-warning' : 'badge-neutral')}`;
+      if (isOffline) {
+        confEl.innerText = 'OFFLINE (LAST KNOWN)';
+        confEl.className = 'badge badge-alert';
+      } else {
+        confEl.innerText = pos.confidence || '3-Anchor 2D';
+        confEl.className = `badge ${pos.confidence === 'HIGH' ? 'badge-live' : (pos.confidence === 'MEDIUM' ? 'badge-warning' : 'badge-neutral')}`;
+      }
     }
 
     // Calculate proximity to assigned bed
@@ -700,62 +723,82 @@
   function drawWristbandDots(ctx, t) {
     const now = Date.now();
 
+    // 1. Reconcile and purge raw MAC ghost keys
+    for (const [tagId, pos] of liveTagPositions.entries()) {
+      if (tagId.includes(':')) {
+        const canonical = trackedSubjects.find(s => s.mac_address && s.mac_address.toUpperCase() === tagId.toUpperCase());
+        if (canonical) {
+          if (!liveTagPositions.has(canonical.device_id)) {
+            liveTagPositions.set(canonical.device_id, { ...pos });
+          }
+          liveTagPositions.delete(tagId);
+          continue;
+        }
+      }
+    }
+
     for (const [tagId, pos] of liveTagPositions.entries()) {
       if (pos.x === undefined || pos.y === undefined) continue;
 
       ctx.save();
       const p = metricToCanvas(pos.x, pos.y, t);
       const isSelected = (tagId === selectedTagId);
+      const isOffline = (pos.status === 'OFFLINE' || (now - (pos.lastSeen || 0) > 6000));
 
-      // Ripple Expanding Wave Animation
-      const rippleR = 12 + ((ripplePhase * 10) % 20);
-      const rippleOpacity = Math.max(0, 1 - (rippleR - 12) / 20);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, rippleR, 0, Math.PI * 2);
-      ctx.strokeStyle = isSelected 
-        ? `rgba(2, 132, 199, ${rippleOpacity})` 
-        : `rgba(13, 148, 136, ${rippleOpacity})`;
-      ctx.lineWidth = 2;
-      ctx.stroke();
+      // 2. Ripple Expanding Wave Animation (ONLY when ONLINE, disabled when OFFLINE)
+      if (!isOffline) {
+        const rippleR = 12 + ((ripplePhase * 10) % 20);
+        const rippleOpacity = Math.max(0, 1 - (rippleR - 12) / 20);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rippleR, 0, Math.PI * 2);
+        ctx.strokeStyle = isSelected 
+          ? `rgba(2, 132, 199, ${rippleOpacity})` 
+          : `rgba(13, 148, 136, ${rippleOpacity})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
 
-      // Outer Selection Ring
+      // 3. Outer Selection Ring
       if (isSelected) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
-        ctx.strokeStyle = '#0284C7';
+        ctx.strokeStyle = isOffline ? 'rgba(100, 116, 139, 0.80)' : '#0284C7';
         ctx.lineWidth = 3;
         ctx.setLineDash([4, 2]);
         ctx.stroke();
         ctx.setLineDash([]);
       }
 
-      // Core Solid Dot
+      // 4. Core Solid Dot (Grey when OFFLINE, Vibrant Cyan/Teal when ONLINE)
       ctx.beginPath();
       ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-      ctx.fillStyle = isSelected ? '#0284C7' : '#0D9488';
+      ctx.fillStyle = isOffline ? '#64748B' : (isSelected ? '#0284C7' : '#0D9488');
       ctx.fill();
-      ctx.strokeStyle = '#FFFFFF';
+      ctx.strokeStyle = isOffline ? '#CBD5E1' : '#FFFFFF';
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
-      // Floating Name Badge above Dot
+      // 5. Floating Name Badge above Dot
       if (layers.labels) {
         const subject = trackedSubjects.find(s => s.device_id === tagId);
-        const nameText = subject ? subject.full_name : tagId;
+        const baseName = subject ? subject.full_name : tagId;
+        const nameText = isOffline ? `${baseName} [OFFLINE]` : baseName;
 
         ctx.font = 'bold 11px sans-serif';
         const textW = ctx.measureText(nameText).width;
 
-        // Pill background
+        // Pill background (Grey when OFFLINE)
         const pillX = p.x - textW / 2 - 8;
         const pillY = p.y - 28;
-        ctx.fillStyle = isSelected ? '#0284C7' : 'rgba(30, 41, 59, 0.85)';
+        ctx.fillStyle = isOffline 
+          ? 'rgba(100, 116, 139, 0.90)' 
+          : (isSelected ? '#0284C7' : 'rgba(30, 41, 59, 0.85)');
         ctx.beginPath();
         ctx.roundRect(pillX, pillY, textW + 16, 18, 9);
         ctx.fill();
 
         // Pill text
-        ctx.fillStyle = '#FFFFFF';
+        ctx.fillStyle = isOffline ? '#F1F5F9' : '#FFFFFF';
         ctx.textAlign = 'center';
         ctx.fillText(nameText, p.x, pillY + 13);
       }
@@ -793,13 +836,25 @@
       return;
     }
 
-    // 1. Position update from Multilateration Engine
+    // 1. Ghost Tag Purge event
+    window.wsClient.on('IPS_TAG_PURGE', (msg) => {
+      if (msg.tag_id && liveTagPositions.has(msg.tag_id)) {
+        liveTagPositions.delete(msg.tag_id);
+      }
+    });
+
+    // 2. Position update from Multilateration Engine
     window.wsClient.on('IPS_POSITION_UPDATE', (msg) => {
       if (!isLiveMapActive || !activeWard) return;
       if (msg.ward_id !== activeWard.ward_id) return;
 
       const tagId = msg.tag_id;
       if (!tagId) return;
+
+      // Purge ghost MAC key if tag_mac is provided and differs from tagId
+      if (msg.tag_mac && msg.tag_mac !== tagId && liveTagPositions.has(msg.tag_mac)) {
+        liveTagPositions.delete(msg.tag_mac);
+      }
 
       const existing = liveTagPositions.get(tagId);
       if (!existing) {
@@ -808,29 +863,34 @@
           y: msg.y,
           targetX: msg.x,
           targetY: msg.y,
+          status: msg.status || 'ONLINE',
           confidence: msg.confidence,
           anchors: msg.anchors_used || [],
-          lastSeen: Date.now()
+          lastSeen: msg.timestamp || Date.now()
         });
       } else {
         existing.targetX = msg.x;
         existing.targetY = msg.y;
+        existing.status = msg.status || 'ONLINE';
         existing.confidence = msg.confidence;
         existing.anchors = msg.anchors_used || [];
-        existing.lastSeen = Date.now();
+        existing.lastSeen = msg.timestamp || Date.now();
       }
 
       const tagsBadge = document.getElementById('live-map-tags-badge');
       if (tagsBadge) {
-        tagsBadge.innerText = `● ${liveTagPositions.size} Tag${liveTagPositions.size === 1 ? '' : 's'} Localized`;
+        const onlineCount = Array.from(liveTagPositions.values()).filter(p => p.status !== 'OFFLINE').length;
+        tagsBadge.innerText = `● ${onlineCount}/${liveTagPositions.size} Active Tags`;
       }
+
+      renderSubjectsList();
 
       if (tagId === selectedTagId) {
         updateTelemetryCard();
       }
     });
 
-    // 2. Physiological Telemetry from Wristband (BPM, SpO2, Battery)
+    // 3. Physiological Telemetry from Wristband (BPM, SpO2, Battery)
     window.wsClient.on('TELEMETRY', (msg) => {
       if (!isLiveMapActive) return;
       const data = msg.data || msg;
@@ -880,3 +940,4 @@
   window.openWardLiveMap = openWardLiveMap;
   window.closeWardLiveMap = closeWardLiveMap;
 })();
+

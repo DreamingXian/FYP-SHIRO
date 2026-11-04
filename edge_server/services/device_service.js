@@ -22,7 +22,12 @@ async function syncEnrolledDevicesCache() {
     enrolledDevicesByMac.clear();
     for (const r of rows) {
       if (r.mac_address) {
-        enrolledDevicesByMac.set(r.mac_address.toUpperCase().trim(), r);
+        const clean = r.mac_address.toUpperCase().trim();
+        enrolledDevicesByMac.set(clean, r);
+        enrolledDevicesByMac.set(clean.replace(/[:-]/g, ''), r);
+      }
+      if (r.device_id) {
+        enrolledDevicesByMac.set(r.device_id.toUpperCase().trim(), r);
       }
     }
   } catch (_) {}
@@ -33,7 +38,8 @@ async function syncEnrolledDevicesCache() {
  */
 function findEnrolledDeviceByMac(mac) {
   if (!mac) return null;
-  return enrolledDevicesByMac.get(mac.toUpperCase().trim()) || null;
+  const clean = mac.toUpperCase().trim();
+  return enrolledDevicesByMac.get(clean) || enrolledDevicesByMac.get(clean.replace(/[:-]/g, '')) || null;
 }
 
 /**
