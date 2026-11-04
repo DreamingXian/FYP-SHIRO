@@ -190,6 +190,20 @@ async function applyCalibration(req, res, body) {
   }
 }
 
+async function resetCalibration(req, res, body) {
+  try {
+    const calibrationService = require('../services/calibration_service');
+    const payload = JSON.parse(body || '{}');
+    const wardId = payload.ward_id || 'WARD-001';
+    const result = await calibrationService.resetCalibrations(wardId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+  }
+}
+
 module.exports = {
   listWards,
   getWard,
@@ -201,6 +215,7 @@ module.exports = {
   resetDefault,
   startCalibration,
   getCalibrationStatus,
-  applyCalibration
+  applyCalibration,
+  resetCalibration
 };
 

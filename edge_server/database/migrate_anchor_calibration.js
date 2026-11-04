@@ -28,3 +28,4 @@ module.exports = { migrate };
 if (require.main === module) {
   migrate().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
 }
+

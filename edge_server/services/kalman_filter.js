@@ -60,6 +60,12 @@ function setAnchorCalibration(anchorId, A, n) {
   return existing;
 }
 
+function clearAnchorCalibration(anchorId) {
+  if (!anchorId) return;
+  const key = anchorId.toString().toLowerCase().trim();
+  anchorCalibrations.delete(key);
+}
+
 function updateCalibration(newA, newN) {
   if (newA !== undefined && !isNaN(parseFloat(newA))) activeCalibration.A = parseFloat(newA);
   if (newN !== undefined && !isNaN(parseFloat(newN))) activeCalibration.n = parseFloat(newN);
@@ -86,6 +92,7 @@ module.exports = {
   calculateDistance,
   getCalibration,
   setAnchorCalibration,
+  clearAnchorCalibration,
   updateCalibration
 };
 

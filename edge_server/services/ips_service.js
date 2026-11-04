@@ -3,7 +3,7 @@
 // Robust 2D Weighted Multilateration, Median+Kalman Filtering & Offline Handling
 // =============================================================================
 const { getPool } = require('../database/db');
-const { KalmanFilter1D, calculateDistance, getCalibration } = require('./kalman_filter');
+const { KalmanFilter1D, calculateDistance, getCalibration, setAnchorCalibration, clearAnchorCalibration } = require('./kalman_filter');
 const { broadcastToClients } = require('./websocket_service');
 const deviceService = require('./device_service');
 const calibrationService = require('./calibration_service');
@@ -280,12 +280,15 @@ async function reloadWardAnchorsCache() {
         if (d > maxReach) maxReach = d;
       }
 
-      // Register calibrated parameters if present in DB
+      // Register or clear calibrated parameters
       if (a.calibrated_a !== null && a.calibrated_a !== undefined) {
         const calA = parseFloat(a.calibrated_a);
         const calN = a.calibrated_n !== null && a.calibrated_n !== undefined ? parseFloat(a.calibrated_n) : 3.2;
         setAnchorCalibration(a.anchor_id, calA, calN);
         if (a.device_id) setAnchorCalibration(a.device_id, calA, calN);
+      } else {
+        clearAnchorCalibration(a.anchor_id);
+        if (a.device_id) clearAnchorCalibration(a.device_id);
       }
 
       const data = {

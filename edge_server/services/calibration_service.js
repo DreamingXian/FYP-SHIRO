@@ -264,9 +264,41 @@ async function applyCalibrations(wardId, calibrations) {
   };
 }
 
+/**
+ * Reset all anchor calibrations for a ward back to original default settings
+ */
+async function resetCalibrations(wardId) {
+  const wardService = require('./ward_service');
+  const pool = getPool();
+  const { clearAnchorCalibration } = require('./kalman_filter');
+
+  const [anchors] = await pool.query('SELECT anchor_id, device_id FROM ward_anchors WHERE ward_id = ?', [wardId]);
+  for (const a of anchors) {
+    clearAnchorCalibration(a.anchor_id);
+    if (a.device_id) clearAnchorCalibration(a.device_id);
+  }
+
+  await wardService.resetWardAnchorCalibrations(wardId);
+
+  broadcastToClients({
+    type: 'ANCHOR_CALIBRATION_RESET',
+    ward_id: wardId,
+    timestamp: new Date().toLocaleTimeString()
+  });
+
+  activeSession = null;
+
+  return {
+    success: true,
+    message: 'Ward anchor calibrations reset to original factory defaults.'
+  };
+}
+
 module.exports = {
   startSession,
   recordSample,
   getSessionResults,
-  applyCalibrations
+  applyCalibrations,
+  resetCalibrations
 };
+

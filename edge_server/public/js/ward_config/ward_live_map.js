@@ -16,6 +16,9 @@
   let calibrationCountdownInterval = null;
   let calibrationResults = null;
   let calibrationLiveCounts = {};
+  let calCanvas = null;
+  let calCtx = null;
+  let calAnimationFrameId = null;
 
   // Localized Tag Positions: tagId -> { x, y, targetX, targetY, confidence, anchors: [], lastSeen }
   const liveTagPositions = new Map();
@@ -1213,6 +1216,12 @@
     modal.style.display = 'flex';
     isCalibrationOpen = true;
 
+    // Set ward pill and dimensions in calibration modal
+    const wardPill = document.getElementById('cal-modal-ward-pill');
+    if (wardPill) wardPill.innerText = activeWard.ward_id;
+    const dimPill = document.getElementById('cal-preview-dimensions-pill');
+    if (dimPill) dimPill.innerText = `${activeWard.length_x.toFixed(2)}m × ${activeWard.width_y.toFixed(2)}m`;
+
     // Reset view steps
     resetCalibrationStep();
 
@@ -1285,6 +1294,7 @@
     }
 
     onCalibrationLandmarkChanged();
+    initCalCanvas();
   };
 
   window.closeCalibrationModal = function() {
@@ -1293,6 +1303,10 @@
     isCalibrationOpen = false;
     isCustomLandmarkSelected = false;
     calibrationTarget = null;
+    if (calAnimationFrameId) {
+      cancelAnimationFrame(calAnimationFrameId);
+      calAnimationFrameId = null;
+    }
     if (calibrationCountdownInterval) {
       clearInterval(calibrationCountdownInterval);
       calibrationCountdownInterval = null;
@@ -1590,6 +1604,207 @@
     onCalibrationLandmarkChanged();
   };
 
+  // --- Dedicated Calibration Reference Map Preview ---
+  function initCalCanvas() {
+    calCanvas = document.getElementById('cal-preview-canvas');
+    if (!calCanvas) return;
+    calCtx = calCanvas.getContext('2d');
+
+    calCanvas.removeEventListener('click', onCalCanvasClick);
+    calCanvas.addEventListener('click', onCalCanvasClick);
+
+    // Initial resize after modal flex layout renders
+    setTimeout(() => {
+      resizeCalCanvas();
+      drawCalPreviewMap();
+    }, 60);
+
+    if (!calAnimationFrameId) {
+      calAnimationFrameId = requestAnimationFrame(calRenderLoop);
+    }
+  }
+
+  function resizeCalCanvas() {
+    if (!calCanvas) return;
+    const parent = calCanvas.parentElement;
+    if (parent) {
+      const rect = parent.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const targetW = Math.max(100, Math.floor(rect.width * dpr));
+      const targetH = Math.max(100, Math.floor(rect.height * dpr));
+      if (calCanvas.width !== targetW || calCanvas.height !== targetH) {
+        calCanvas.width = targetW;
+        calCanvas.height = targetH;
+      }
+    }
+  }
+
+  function calRenderLoop() {
+    if (!isCalibrationOpen) {
+      calAnimationFrameId = null;
+      return;
+    }
+    resizeCalCanvas();
+    drawCalPreviewMap();
+    calAnimationFrameId = requestAnimationFrame(calRenderLoop);
+  }
+
+  function drawCalPreviewMap() {
+    if (!calCtx || !calCanvas || !activeWard) return;
+    const w = calCanvas.width;
+    const h = calCanvas.height;
+    calCtx.clearRect(0, 0, w, h);
+
+    const t = getCanvasTransform(w, h, activeWard.length_x, activeWard.width_y);
+
+    // 1. Grid
+    drawMetricGrid(calCtx, t);
+
+    // 2. Room Walls
+    drawRoomPerimeter(calCtx, t, activeWard);
+
+    // 3. Obstacles
+    if (Array.isArray(activeWard.obstacles)) {
+      activeWard.obstacles.forEach(obs => drawObstacle(calCtx, t, obs));
+    }
+
+    // 4. Door
+    if (activeWard.door) {
+      drawDoor(calCtx, t, activeWard);
+    }
+
+    // 5. Beds (pure layout, with bed labels and rotation)
+    if (Array.isArray(activeWard.beds)) {
+      activeWard.beds.forEach(bed => drawBed(calCtx, t, bed));
+    }
+
+    // 6. Target Reticle (Pulsing Cyan Crosshair + Label)
+    if (calibrationTarget) {
+      drawCalibrationTarget(calCtx, t, calibrationTarget);
+    }
+  }
+
+  function onCalCanvasClick(evt) {
+    if (!calCanvas || !activeWard) return;
+
+    const rect = calCanvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const clickX = (evt.clientX - rect.left) * dpr;
+    const clickY = (evt.clientY - rect.top) * dpr;
+
+    const t = getCanvasTransform(calCanvas.width, calCanvas.height, activeWard.length_x, activeWard.width_y);
+    const mx = Math.max(0.15, Math.min(activeWard.length_x - 0.15, (clickX - t.offsetX) / t.scale));
+    const my = Math.max(0.15, Math.min(activeWard.width_y - 0.15, (t.cHeight - clickY - t.offsetY) / t.scale));
+
+    // Check if clicked inside any hospital bed
+    let clickedBed = null;
+    if (Array.isArray(activeWard.beds)) {
+      for (const b of activeWard.beds) {
+        const rot = parseInt(b.rotation_deg, 10) || 0;
+        const isRotated = (rot === 90 || rot === 270);
+        const bw = isRotated ? (parseFloat(b.length) || 2.0) : (parseFloat(b.width) || 0.9);
+        const bl = isRotated ? (parseFloat(b.width) || 0.9) : (parseFloat(b.length) || 2.0);
+        const bx = parseFloat(b.x);
+        const by = parseFloat(b.y);
+
+        if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bl) {
+          clickedBed = b;
+          break;
+        }
+      }
+    }
+
+    const lSelect = document.getElementById('cal-landmark-select');
+    if (clickedBed && lSelect) {
+      // Auto select bed in dropdown
+      const optVal = `bed_${clickedBed.bed_id}`;
+      for (let i = 0; i < lSelect.options.length; i++) {
+        if (lSelect.options[i].value === optVal) {
+          lSelect.selectedIndex = i;
+          break;
+        }
+      }
+      onCalibrationLandmarkChanged();
+      if (window.showToast) window.showToast(`Selected ${clickedBed.bed_code || 'Bed'}`, 'info', 1000);
+    } else {
+      // Custom point anywhere on floor
+      if (lSelect) {
+        for (let i = 0; i < lSelect.options.length; i++) {
+          if (lSelect.options[i].value === 'custom') {
+            lSelect.selectedIndex = i;
+            break;
+          }
+        }
+      }
+      isCustomLandmarkSelected = true;
+      calibrationTarget = {
+        x: Math.round(mx * 100) / 100,
+        y: Math.round(my * 100) / 100,
+        z: 0.85,
+        label: 'Custom Map Point'
+      };
+      const note = document.getElementById('cal-landmark-note');
+      if (note) note.innerText = 'Custom Point Elevation (~0.85m)';
+      updateCalibrationTargetDisplay();
+    }
+  }
+
+  window.resetAnchorCalibrationToDefault = async function() {
+    if (!activeWard) return;
+
+    const executeReset = async () => {
+      try {
+        const res = await fetch('/api/ward/calibration/reset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ward_id: activeWard.ward_id })
+        });
+        const data = await res.json();
+        if (data.success) {
+          // Clear calibrated_a and calibrated_n on activeWard anchors
+          if (Array.isArray(activeWard.anchors)) {
+            activeWard.anchors.forEach(a => {
+              a.calibrated_a = null;
+              a.calibrated_n = null;
+            });
+          }
+
+          // Update Card 4 text on main screen
+          const calA = document.getElementById('live-map-cal-a');
+          const calN = document.getElementById('live-map-cal-n');
+          if (calA) calA.innerText = 'Log-Distance Model: A = -52.0 dBm';
+          if (calN) calN.innerText = 'Path Loss: n = 3.2';
+
+          // Update modal display if open
+          updateCalibrationTargetDisplay();
+
+          if (window.showToast) {
+            window.showToast('✅ Ward anchors reset to default factory baseline (-52.0 dBm, n=3.2)', 'success', 3500);
+          }
+        } else {
+          if (window.showToast) window.showToast(`Error: ${data.error || 'Failed to reset calibrations'}`, 'danger');
+        }
+      } catch (err) {
+        if (window.showToast) window.showToast(`Error: ${err.message}`, 'danger');
+      }
+    };
+
+    if (typeof window.showModal === 'function') {
+      window.showModal({
+        title: 'Reset Anchor Calibration',
+        message: `Are you sure you want to reset all anchors in ${activeWard.ward_id} back to default factory baseline (A = -52.0 dBm, n = 3.2)? This removes all empirical offsets.`,
+        type: 'warning',
+        confirmText: 'Reset to Defaults',
+        cancelText: 'Cancel',
+        onConfirm: executeReset
+      });
+    } else {
+      if (confirm(`Reset all anchors in ${activeWard.ward_id} back to default factory baseline (-52.0 dBm, n=3.2)?`)) {
+        executeReset();
+      }
+    }
+  };
+
   // --- WebSocket Live Listener ---
   function setupWebSocketListeners() {
     if (!window.wsClient) {
@@ -1735,6 +1950,23 @@
         }
       }
     });
+
+    // 6. Anchor calibration reset event
+    window.wsClient.on('ANCHOR_CALIBRATION_RESET', (msg) => {
+      if (activeWard && msg.ward_id === activeWard.ward_id) {
+        if (Array.isArray(activeWard.anchors)) {
+          activeWard.anchors.forEach(a => {
+            a.calibrated_a = null;
+            a.calibrated_n = null;
+          });
+        }
+        const calA = document.getElementById('live-map-cal-a');
+        const calN = document.getElementById('live-map-cal-n');
+        if (calA) calA.innerText = 'Log-Distance Model: A = -52.0 dBm';
+        if (calN) calN.innerText = 'Path Loss: n = 3.2';
+        updateCalibrationTargetDisplay();
+      }
+    });
   }
 
   // Auto setup on load
@@ -1749,5 +1981,6 @@
   window.startCalibrationSession = startCalibrationSession;
   window.resetCalibrationStep = resetCalibrationStep;
   window.applyCalibrationResults = applyCalibrationResults;
+  window.resetAnchorCalibrationToDefault = resetAnchorCalibrationToDefault;
 })();
 

@@ -61,6 +61,11 @@ async function handleWardRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
+  if (pathname === '/api/ward/calibration/reset' && req.method === 'POST') {
+    await wardController.resetCalibration(req, res, body);
+    return true;
+  }
+
   return false;
 }
 

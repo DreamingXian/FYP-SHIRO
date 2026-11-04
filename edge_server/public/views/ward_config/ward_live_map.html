@@ -223,23 +223,24 @@
   </div>
 
   <!-- =========================================================================
-       CALIBRATION MODAL DIALOG (1-Click Empirical Landmark Calibration)
+       CALIBRATION MODAL DIALOG (Split View: Controls + Dedicated Clean Map)
        ========================================================================= -->
-  <div id="ward-calibration-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.65); backdrop-filter: blur(4px); z-index: 10000; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;">
-    <div class="card" style="width: 100%; max-width: 680px; max-height: 92vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3); border: 1.5px solid var(--border); border-radius: 14px; background: #FFFFFF; padding: 0;">
+  <div id="ward-calibration-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.70); backdrop-filter: blur(5px); z-index: 10000; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box;">
+    <div class="card" style="width: 100%; max-width: 1100px; height: 88vh; max-height: 740px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.35); border: 1.5px solid var(--border); border-radius: 14px; background: #FFFFFF; padding: 0;">
       
       <!-- Modal Header -->
-      <div style="padding: 16px 22px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+      <div style="padding: 14px 22px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
         <div style="display: flex; align-items: center; gap: 10px;">
           <div style="width: 36px; height: 36px; border-radius: 8px; background: #EEF2FF; color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700;">
             🎯
           </div>
           <div>
-            <div style="font-size: 16px; font-weight: 700; color: var(--text-primary);">
-              1-Click Empirical Anchor Calibration
+            <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+              <span>1-Click Empirical Anchor Calibration</span>
+              <span class="badge badge-info" id="cal-modal-ward-pill" style="font-size: 10px;">WARD</span>
             </div>
             <div style="font-size: 11px; color: var(--text-muted);">
-              Tune anchor reception coefficients (A) using known physical landmarks in this ward
+              Reference Landmark Positioning &amp; Dynamic Multipath Compensation
             </div>
           </div>
         </div>
@@ -248,148 +249,179 @@
         </button>
       </div>
 
-      <!-- Modal Body (Dynamic Step Stages) -->
-      <div style="padding: 22px; overflow-y: auto; flex: 1;">
+      <!-- Split Layout Body: Left Controls + Right Clean Reference Canvas -->
+      <div style="display: flex; gap: 16px; flex: 1; min-height: 0; padding: 16px 20px; overflow: hidden; box-sizing: border-box;">
         
-        <!-- STEP 1: SETUP -->
-        <div id="cal-step-setup">
-          <!-- Helpful guidance card -->
-          <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; font-size: 12px; color: #1E40AF; line-height: 1.5;">
-            <strong>📌 How to Calibrate:</strong>
-            <ol style="margin: 6px 0 0 18px; padding: 0;">
-              <li>Select a known physical landmark (e.g. <b>Bed 1</b> or <b>Room Center</b>) below.</li>
-              <li>Place the wristband stationary at that physical location (mattress height ~0.85m).</li>
-              <li>Maintain clear line-of-sight and keep still during the 10-second sampling window.</li>
-            </ol>
-          </div>
-
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px;">
-            <div>
-              <label style="font-size: 12px; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 6px;">
-                Reference Landmark:
-              </label>
-              <select id="cal-landmark-select" class="form-control" style="font-size: 12px; padding: 8px 12px; border-radius: 6px; width: 100%; border: 1px solid var(--border);" onchange="onCalibrationLandmarkChanged()">
-                <!-- Populated dynamically with Beds & Center -->
-              </select>
+        <!-- LEFT PANEL: Calibration Steps & Telemetry (430px) -->
+        <div style="width: 430px; flex-shrink: 0; display: flex; flex-direction: column; height: 100%; overflow-y: auto; padding-right: 6px; box-sizing: border-box;">
+          
+          <!-- STEP 1: SETUP -->
+          <div id="cal-step-setup">
+            <!-- Helpful guidance card -->
+            <div style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; font-size: 11.5px; color: #1E40AF; line-height: 1.45;">
+              <strong>📌 Quick Calibration Guide:</strong>
+              <ol style="margin: 4px 0 0 16px; padding: 0;">
+                <li>Choose a landmark or click directly on the <b>Reference Map</b>.</li>
+                <li>Place the wristband stationary at that landmark (height ~0.85m).</li>
+                <li>Keep still during the 10-second sampling window.</li>
+              </ol>
             </div>
 
-            <div>
-              <label style="font-size: 12px; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 6px;">
-                Wristband Tag to Sample:
-              </label>
-              <select id="cal-tag-select" class="form-control" style="font-size: 12px; padding: 8px 12px; border-radius: 6px; width: 100%; border: 1px solid var(--border);">
-                <!-- Populated dynamically with active tags -->
-              </select>
-            </div>
-          </div>
-
-          <!-- Target Metric Coordinates Badge -->
-          <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 18px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-            <div>
-              <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">
-                Target Ground-Truth Coordinates
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+              <div>
+                <label style="font-size: 11px; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 4px;">
+                  Reference Landmark:
+                </label>
+                <select id="cal-landmark-select" class="form-control" style="font-size: 11px; padding: 7px 10px; border-radius: 6px; width: 100%; border: 1px solid var(--border);" onchange="onCalibrationLandmarkChanged()">
+                  <!-- Populated dynamically with Beds & Center -->
+                </select>
               </div>
-              <div class="mono" style="font-size: 14px; font-weight: 700; color: var(--primary); margin-top: 2px;" id="cal-coords-preview">
-                X: 1.25m | Y: 3.20m | Z: 0.85m
+
+              <div>
+                <label style="font-size: 11px; font-weight: 700; color: var(--text-primary); display: block; margin-bottom: 4px;">
+                  Wristband Tag to Sample:
+                </label>
+                <select id="cal-tag-select" class="form-control" style="font-size: 11px; padding: 7px 10px; border-radius: 6px; width: 100%; border: 1px solid var(--border);">
+                  <!-- Populated dynamically with active tags -->
+                </select>
               </div>
             </div>
-            <span class="badge badge-info" id="cal-landmark-note">Bed Mattress Elevation</span>
+
+            <!-- Target Metric Coordinates Badge -->
+            <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+              <div>
+                <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">
+                  Target Coordinates
+                </div>
+                <div class="mono" style="font-size: 13px; font-weight: 700; color: var(--primary); margin-top: 2px;" id="cal-coords-preview">
+                  X: 1.25m | Y: 3.20m | Z: 0.85m
+                </div>
+              </div>
+              <span class="badge badge-info" id="cal-landmark-note" style="font-size: 10px;">Bed Mattress Elevation</span>
+            </div>
+
+            <!-- Anchors Distance Preview -->
+            <div style="margin-bottom: 12px;">
+              <div style="font-size: 11px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; display: flex; justify-content: space-between;">
+                <span>Wall Anchors in Ward (<span id="cal-anchor-count">3</span>)</span>
+                <span style="font-size: 10px; color: var(--text-muted);">Current Settings</span>
+              </div>
+              <div id="cal-anchors-preview-list" style="display: flex; flex-direction: column; gap: 5px;">
+                <!-- Populated dynamically -->
+              </div>
+            </div>
           </div>
 
-          <!-- Anchors Distance Preview -->
-          <div style="margin-bottom: 14px;">
-            <div style="font-size: 12px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px;">
-              Stationary Anchors in Ward (<span id="cal-anchor-count">3</span>)
+          <!-- STEP 2: SAMPLING PROGRESS -->
+          <div id="cal-step-progress" style="display: none; text-align: center; padding: 20px 10px;">
+            <div style="font-size: 40px; margin-bottom: 8px; animation: pulse 1.5s infinite;">
+              📡
             </div>
-            <div id="cal-anchors-preview-list" style="display: flex; flex-direction: column; gap: 6px;">
-              <!-- Populated dynamically -->
+            <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px;">
+              Sampling Anchor RSSI Packets...
+            </div>
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 18px;">
+              Keep wristband stationary at the landmark reticle shown on the map.
+            </div>
+
+            <!-- Progress Bar & Timer -->
+            <div style="max-width: 380px; margin: 0 auto 18px auto;">
+              <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; margin-bottom: 5px;">
+                <span id="cal-progress-status" style="color: var(--text-secondary);">Collecting samples...</span>
+                <span class="mono" id="cal-countdown-text" style="color: var(--primary);">10.0s remaining</span>
+              </div>
+              <div style="width: 100%; height: 9px; background: #E2E8F0; border-radius: 999px; overflow: hidden;">
+                <div id="cal-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #4F46E5, #06B6D4); transition: width 0.2s ease;"></div>
+              </div>
+            </div>
+
+            <!-- Live Sample Count by Anchor -->
+            <div id="cal-live-sample-counts" style="display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 12px;">
+              <!-- Live anchor packet badges -->
             </div>
           </div>
+
+          <!-- STEP 3: RESULTS & COMPARISON REVIEW -->
+          <div id="cal-step-results" style="display: none;">
+            <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 18px;">✅</span>
+              <div>
+                <strong style="color: #166534; font-size: 12px;">Sampling Complete!</strong>
+                <div style="font-size: 10.5px; color: #15803D; margin-top: 1px;">
+                  Calculated per-anchor A parameters via 50th-percentile median inversion.
+                </div>
+              </div>
+            </div>
+
+            <div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 12px;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 11px; text-align: left;">
+                <thead>
+                  <tr style="background: #F8FAFC; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 10px; text-transform: uppercase;">
+                    <th style="padding: 8px 10px;">Anchor</th>
+                    <th style="padding: 8px 8px;">True Dist</th>
+                    <th style="padding: 8px 8px;">Median RSSI</th>
+                    <th style="padding: 8px 8px;">Current A</th>
+                    <th style="padding: 8px 8px;">Calibrated A</th>
+                    <th style="padding: 8px 10px;">Offset (Δ)</th>
+                  </tr>
+                </thead>
+                <tbody id="cal-results-table-body">
+                  <!-- Dynamically populated comparison rows -->
+                </tbody>
+              </table>
+            </div>
+
+            <div style="font-size: 10.5px; color: var(--text-muted); line-height: 1.45; background: #F8FAFC; border-radius: 6px; padding: 8px 10px; border: 1px solid var(--border);">
+              💡 <b>Note:</b> These calibrated parameters are saved to MySQL (<span class="mono">ward_anchors</span>) and will automatically improve localization accuracy for <b>all wristbands</b> in this ward.
+            </div>
+          </div>
+
         </div>
 
-        <!-- STEP 2: SAMPLING PROGRESS -->
-        <div id="cal-step-progress" style="display: none; text-align: center; padding: 25px 10px;">
-          <div style="font-size: 46px; margin-bottom: 10px; animation: pulse 1.5s infinite;">
-            📡
-          </div>
-          <div style="font-size: 17px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px;">
-            Sampling Anchor RSSI Packets...
-          </div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 22px;">
-            Please ensure wristband remains stationary on the chosen landmark.
-          </div>
-
-          <!-- Progress Bar & Timer -->
-          <div style="max-width: 440px; margin: 0 auto 22px auto;">
-            <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; margin-bottom: 6px;">
-              <span id="cal-progress-status" style="color: var(--text-secondary);">Collecting RF samples...</span>
-              <span class="mono" id="cal-countdown-text" style="color: var(--primary);">10.0s remaining</span>
+        <!-- RIGHT PANEL: Dedicated Clean Reference Ward Map -->
+        <div style="flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 10px; overflow: hidden; position: relative; box-sizing: border-box;">
+          <!-- Map Header Bar -->
+          <div style="padding: 8px 14px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 11px; flex-shrink: 0;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-weight: 700; color: var(--text-primary);">🗺️ Reference Ward Layout</span>
+              <span style="font-size: 10px; color: var(--text-muted);" id="cal-preview-dimensions-pill">6.40m × 4.80m</span>
             </div>
-            <div style="width: 100%; height: 10px; background: #E2E8F0; border-radius: 999px; overflow: hidden;">
-              <div id="cal-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #4F46E5, #06B6D4); transition: width 0.2s ease;"></div>
+            <div style="color: var(--primary); font-size: 11px; font-weight: 600;">
+              💡 Click any bed or floor to set target
             </div>
           </div>
 
-          <!-- Live Sample Count by Anchor -->
-          <div id="cal-live-sample-counts" style="display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; margin-top: 14px;">
-            <!-- Live anchor packet badges -->
-          </div>
-        </div>
-
-        <!-- STEP 3: RESULTS & COMPARISON REVIEW -->
-        <div id="cal-step-results" style="display: none;">
-          <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 20px;">✅</span>
-            <div>
-              <strong style="color: #166534; font-size: 13px;">Calibration Sampling Complete!</strong>
-              <div style="font-size: 11px; color: #15803D; margin-top: 2px;">
-                Outliers filtered via 50th-percentile median. Review calculated per-anchor parameters before applying.
-              </div>
-            </div>
-          </div>
-
-          <div style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px;">
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
-              <thead>
-                <tr style="background: #F8FAFC; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 11px; text-transform: uppercase;">
-                  <th style="padding: 10px 14px;">Anchor</th>
-                  <th style="padding: 10px 12px;">True Distance</th>
-                  <th style="padding: 10px 12px;">Median RSSI</th>
-                  <th style="padding: 10px 12px;">Current A</th>
-                  <th style="padding: 10px 12px;">Calibrated A</th>
-                  <th style="padding: 10px 14px;">Offset (Δ)</th>
-                </tr>
-              </thead>
-              <tbody id="cal-results-table-body">
-                <!-- Dynamically populated comparison rows -->
-              </tbody>
-            </table>
-          </div>
-
-          <div style="font-size: 11px; color: var(--text-muted); line-height: 1.5; background: #F8FAFC; border-radius: 6px; padding: 10px 12px; border: 1px solid var(--border);">
-            💡 <b>Note:</b> These calibrated parameters are saved to MySQL (<span class="mono">ward_anchors</span>) and will automatically improve localization accuracy for <b>all wristbands</b> in this ward.
+          <!-- Preview Canvas Viewport -->
+          <div id="cal-preview-canvas-container" style="flex: 1; min-height: 0; position: relative; width: 100%; height: 100%; overflow: hidden; background: #FFFFFF;">
+            <canvas id="cal-preview-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; cursor: crosshair;"></canvas>
           </div>
         </div>
 
       </div>
 
       <!-- Modal Footer Action Buttons -->
-      <div style="padding: 14px 22px; background: #F8FAFC; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
-        <button type="button" class="btn btn-outline" onclick="closeCalibrationModal()" style="font-size: 12px; padding: 8px 16px;" id="cal-btn-cancel">
-          Cancel
+      <div style="padding: 12px 22px; background: #F8FAFC; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
+        <!-- Left: Reset to Default Button -->
+        <button type="button" class="btn btn-outline" onclick="resetAnchorCalibrationToDefault()" style="font-size: 11px; padding: 7px 14px; border-color: #FCA5A5; color: #DC2626; background: #FEF2F2; font-weight: 600; display: flex; align-items: center; gap: 6px;" title="Revert calibrated values to default factory settings (A = -52.0 dBm, n = 3.2)">
+          <span>🔄</span> Reset Anchors to Factory Default
         </button>
 
-        <div style="display: flex; gap: 10px;">
+        <!-- Right: Control / Navigation Buttons -->
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <button type="button" class="btn btn-outline" onclick="closeCalibrationModal()" style="font-size: 12px; padding: 7px 16px;" id="cal-btn-cancel">
+            Close
+          </button>
+
           <!-- Step 1 Button -->
-          <button type="button" class="btn btn-primary" id="cal-btn-start" onclick="startCalibrationSession()" style="font-size: 12px; padding: 8px 18px; display: flex; align-items: center; gap: 6px;">
+          <button type="button" class="btn btn-primary" id="cal-btn-start" onclick="startCalibrationSession()" style="font-size: 12px; padding: 7px 18px; display: flex; align-items: center; gap: 6px;">
             <span>🚀</span> Start 10s Calibration
           </button>
 
           <!-- Step 3 Buttons -->
-          <button type="button" class="btn btn-outline" id="cal-btn-restart" onclick="resetCalibrationStep()" style="display: none; font-size: 12px; padding: 8px 16px;">
+          <button type="button" class="btn btn-outline" id="cal-btn-restart" onclick="resetCalibrationStep()" style="display: none; font-size: 12px; padding: 7px 16px;">
             🔄 Re-calibrate
           </button>
-          <button type="button" class="btn btn-primary" id="cal-btn-apply" onclick="applyCalibrationResults()" style="display: none; font-size: 12px; padding: 8px 20px; background: #16A34A; border-color: #16A34A; display: flex; align-items: center; gap: 6px;">
+          <button type="button" class="btn btn-primary" id="cal-btn-apply" onclick="applyCalibrationResults()" style="display: none; font-size: 12px; padding: 7px 20px; background: #16A34A; border-color: #16A34A; display: flex; align-items: center; gap: 6px;">
             <span>✅</span> Accept &amp; Save to Ward
           </button>
         </div>

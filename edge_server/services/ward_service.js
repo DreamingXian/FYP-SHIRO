@@ -443,6 +443,26 @@ async function saveWardAnchorCalibrations(wardId, calibrations) {
   return { success: true };
 }
 
+/**
+ * Reset all calibrated parameters for a ward's anchors back to NULL (defaults)
+ */
+async function resetWardAnchorCalibrations(wardId) {
+  const pool = getPool();
+  await pool.query(
+    `UPDATE ward_anchors 
+     SET calibrated_a = NULL, calibrated_n = NULL, last_calibrated_at = NULL 
+     WHERE ward_id = ?`,
+    [wardId]
+  );
+
+  // Reload IPS engine anchor cache so runtime localization immediately drops overrides
+  ipsService.reloadWardAnchorsCache().catch(err => {
+    console.warn('[WARD SERVICE] Error refreshing IPS cache after calibration reset:', err.message);
+  });
+
+  return { success: true };
+}
+
 module.exports = {
   getAllWards,
   getWardConfig,
@@ -451,6 +471,7 @@ module.exports = {
   resetDefaultWard,
   getWardIpsData,
   saveWardAnchorCalibrations,
+  resetWardAnchorCalibrations,
   WARD_TEMPLATES
 };
 
