@@ -142,6 +142,10 @@ The HW-605 (MAX30102) and MPU-6050 share the hardware I2C bus, with battery sens
 | **SCL** | **D5** (GPIO 22) | I2C Clock Line |
 | **BAT+ (via 100k/100k divider)** | **D0** (GPIO 0) | Analog Battery Voltage Monitor |
 
+
+### Prototype:
+<img width="4608" height="3456" alt="IMG_20261108_073603" src="https://github.com/user-attachments/assets/161d6580-bc69-401d-99b6-7488180824b3" />
+
 ---
 
 ## 5. Quick Startup Procedure
