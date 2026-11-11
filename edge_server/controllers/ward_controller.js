@@ -216,6 +216,23 @@ module.exports = {
   startCalibration,
   getCalibrationStatus,
   applyCalibration,
-  resetCalibration
+  resetCalibration,
+  saveSpatialAnchor
 };
+
+async function saveSpatialAnchor(req, res, body) {
+  try {
+    const payload = JSON.parse(body || '{}');
+    const wardId = payload.ward_id || 'WARD-005';
+    const uuid = payload.spatial_anchor_uuid || '';
+    const { getPool } = require('../database/db');
+    await getPool().query('UPDATE ward_rooms SET spatial_anchor_uuid = ? WHERE ward_id = ?', [uuid, wardId]);
+    console.log(`[WARD SPATIAL ANCHOR] Saved anchor UUID "${uuid}" for ${wardId}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, ward_id: wardId, spatial_anchor_uuid: uuid }));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: err.message }));
+  }
+}
 

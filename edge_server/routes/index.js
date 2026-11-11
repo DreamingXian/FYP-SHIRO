@@ -8,6 +8,7 @@ const { handleWardRoutes } = require('./ward_routes');
 const { handlePatientRoutes } = require('./patient_routes');
 const { handleDeviceRoutes } = require('./device_routes');
 const { handleBindingRoutes } = require('./binding_routes');
+const { handleAlertRoutes } = require('./alert_routes');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -65,6 +66,11 @@ async function handleRequest(req, res) {
 
   if (pathname.startsWith('/api/bindings')) {
     const handled = await handleBindingRoutes(pathname, req, res, parsedUrl, body);
+    if (handled) return;
+  }
+
+  if (pathname.startsWith('/api/alerts')) {
+    const handled = await handleAlertRoutes(pathname, req, res, parsedUrl, body);
     if (handled) return;
   }
 

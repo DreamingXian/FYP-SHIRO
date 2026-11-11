@@ -42,7 +42,7 @@
    * Enter Live 2D IPS Map View for a given ward
    * @param {string} wardId 
    */
-  async function openWardLiveMap(wardId) {
+  async function openWardLiveMap(wardId, targetTagId = null) {
     if (!wardId) return;
 
     try {
@@ -93,13 +93,16 @@
       // Populate Tracked Subjects list on Left Panel
       renderSubjectsList();
 
-      // Default select the first subject bound to this ward, or any active subject
-      const wardResident = trackedSubjects.find(s => s.is_ward_resident) || trackedSubjects[0];
-      if (wardResident) {
-        selectSubject(wardResident.device_id);
+      // Focus on requested targetTagId if provided, else resident or first active tag
+      if (targetTagId) {
+        selectSubject(targetTagId);
       } else {
-        // Seed an empty subject state
-        selectSubject('TAG-001');
+        const wardResident = trackedSubjects.find(s => s.is_ward_resident) || trackedSubjects[0];
+        if (wardResident) {
+          selectSubject(wardResident.device_id);
+        } else {
+          selectSubject('TAG-001');
+        }
       }
 
       // Initialize Canvas
@@ -262,6 +265,40 @@
 
     // Refresh telemetry displays
     updateTelemetryCard();
+
+    // Automatically trigger 1 Hz active stream for selected subject (debounced per tag)
+    triggerActiveModeForTag(tagId, false);
+  }
+
+  // Active mode throttle cache per tag: tagId -> timestamp
+  const lastActiveTriggers = new Map();
+
+  function triggerActiveModeForTag(tagId, force = false) {
+    if (!tagId || !window.wsClient) return;
+
+    const now = Date.now();
+    const lastTime = lastActiveTriggers.get(tagId) || 0;
+    if (!force && (now - lastTime < 18000)) {
+      return; // Already triggered within the last 18 seconds
+    }
+    lastActiveTriggers.set(tagId, now);
+
+    const subject = trackedSubjects.find(s => s.device_id === tagId);
+    const targetMac = subject?.mac_address || null;
+
+    window.wsClient.send(JSON.stringify({
+      action: 'SET_ACTIVE_MODE',
+      data: {
+        tagId: tagId,
+        targetMac: targetMac,
+        duration: 60
+      }
+    }));
+
+    if (force && window.showToast) {
+      window.showToast(`Engaging 1 Hz active vitals stream for ${subject?.full_name || tagId}...`, 'info');
+    }
+    console.log(`[LIVE MAP] Triggered 1 Hz active mode for ${tagId} (${targetMac || 'auto'})`);
   }
 
   /**
@@ -286,9 +323,27 @@
       if (isOffline) {
         vitalsStatusEl.innerText = '● OFFLINE (LAST KNOWN)';
         vitalsStatusEl.className = 'badge badge-alert';
-      } else {
-        vitalsStatusEl.innerText = '● LIVE STREAM';
+        vitalsStatusEl.style.background = '';
+        vitalsStatusEl.style.color = '';
+        vitalsStatusEl.style.border = '';
+      } else if (vitals.motion === 'FALL_EMERGENCY') {
+        vitalsStatusEl.innerText = '🚨 1 Hz EMERGENCY STREAM';
+        vitalsStatusEl.className = 'badge badge-alert';
+        vitalsStatusEl.style.background = '#FEE2E2';
+        vitalsStatusEl.style.color = '#DC2626';
+        vitalsStatusEl.style.border = '1px solid #F87171';
+      } else if (vitals.active || (vitals.touch && vitals.bpm > 0)) {
+        vitalsStatusEl.innerText = '● 1 Hz ACTIVE STREAM';
         vitalsStatusEl.className = 'badge badge-live';
+        vitalsStatusEl.style.background = '#DCFCE7';
+        vitalsStatusEl.style.color = '#15803D';
+        vitalsStatusEl.style.border = '1px solid #86EFAC';
+      } else {
+        vitalsStatusEl.innerText = '● 3-MIN POWER SAVING';
+        vitalsStatusEl.className = 'badge';
+        vitalsStatusEl.style.background = '#E0F2FE';
+        vitalsStatusEl.style.color = '#0369A1';
+        vitalsStatusEl.style.border = '1px solid #0EA5E9';
       }
     }
 
@@ -304,7 +359,12 @@
 
     if (batteryEl) {
       const bat = vitals.battery !== undefined ? vitals.battery : (vitals.bat !== undefined ? vitals.bat : null);
-      batteryEl.innerText = bat !== null ? `${bat}%` : '--';
+      if (bat !== null) {
+        batteryEl.innerText = `${bat}%${vitals.charging ? ' ⚡' : ''}`;
+        batteryEl.style.color = vitals.charging ? 'var(--warning, #F59E0B)' : (bat <= 20 ? 'var(--danger, #DC2626)' : 'var(--text-primary)');
+      } else {
+        batteryEl.innerText = '--';
+      }
     }
 
     if (coordsEl) {
@@ -415,6 +475,18 @@
 
     // Click handler to select wristband dots on canvas
     canvas.addEventListener('click', onCanvasClick);
+
+    // Manual 1 Hz Active Monitoring button
+    const btnActiveStream = document.getElementById('live-map-btn-activate-stream');
+    if (btnActiveStream) {
+      btnActiveStream.onclick = () => {
+        if (selectedTagId) {
+          triggerActiveModeForTag(selectedTagId, true);
+        } else {
+          if (window.showToast) window.showToast('Please select a patient or wristband first.', 'warning');
+        }
+      };
+    }
 
     // Start drawing loop
     if (!animationFrameId) {
@@ -1894,6 +1966,15 @@
       if (data.spo2 !== undefined) current.spo2 = data.spo2;
       if (data.bat !== undefined || data.battery !== undefined) {
         current.battery = (data.bat !== undefined) ? data.bat : data.battery;
+      }
+      if (data.charging !== undefined) {
+        current.charging = (data.charging === true || data.charging === 'true');
+      }
+      if (data.active !== undefined) {
+        current.active = (data.active === true || data.active === 'true');
+      }
+      if (data.motion !== undefined) {
+        current.motion = data.motion;
       }
       current.lastSeen = Date.now();
       liveVitals.set(tagId, current);

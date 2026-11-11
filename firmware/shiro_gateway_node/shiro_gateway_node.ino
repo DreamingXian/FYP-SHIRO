@@ -1,10 +1,10 @@
 /*
  * =========================================================================================
- *   SHIRO Edge Node - BLE-to-MQTT Bridge Gateway
- *   Hardware: ESP32-S3 (ESP32-S3-N16R8 Dev Module)
- *   Function: Connects to 'SHIRO-WRISTBAND' over BLE 5.0, subscribes to notifications,
- *             and forwards physiological/motion packets immediately to MQTT over Wi-Fi.
- *   Project:  MR-Patient Connect (SHIRO) - Final Year Project (RSWG7)
+ *   [DEPRECATED / ARCHIVED] SHIRO Standalone Gateway Node
+ *   Note: In Path 2 (Unified Architecture), standalone Gateway hardware is no longer needed!
+ *         All Wall Anchors ('shiro_anchor_node.ino') now directly receive both RSSI location
+ *         data and physiological vitals (BPM, SpO2, Battery, Motion) via BLE Broadcast.
+ *   Keep this file only for historical reference / standalone testing.
  * =========================================================================================
  */
 
@@ -27,59 +27,110 @@ const char* gateway_status_topic = "shiro/ward-A1/gateway/status";
 unsigned long lastGatewayHeartbeat = 0;
 
 // =============================================================================
-// 2. BLE Configuration (Matching Wristband)
+// 2. Multi-Wristband BLE Configuration
 // =============================================================================
 static BLEUUID serviceUUID("4fafc201-1fb5-459e-8fcc-c5c9c331914b");
 static BLEUUID charUUID("beb5483e-36e1-4688-b7f5-ea07361b26a8");
 
-static boolean doConnect = false;
-static boolean connected = false;
+const int MAX_WRISTBANDS = 4;
+
+struct WristbandConnection {
+  BLEClient* client = nullptr;
+  BLERemoteCharacteristic* remoteChar = nullptr;
+  String mac = "";
+  bool connected = false;
+};
+
+WristbandConnection wristbands[MAX_WRISTBANDS];
+
 static boolean isScanning = false;
-static BLERemoteCharacteristic* pRemoteCharacteristic = nullptr;
-static BLEAdvertisedDevice* myDevice = nullptr;
+static boolean doConnect = false;
+static int pendingSlot = -1;
+static BLEAdvertisedDevice* pendingDevice = nullptr;
+static unsigned long lastScanAttempt = 0;
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-
 unsigned long lastMqttRetry = 0;
 
 // -----------------------------------------------------------------------------
-// BLE Notification Buffer & Thread-Safe Cross-Core Handoff
-// (Eliminates synchronous TCP/MQTT publish locks inside BLE task that caused 2000ms latency)
+// Thread-Safe Multi-Packet FIFO Queue (Prevents packet collision across wristbands)
 // -----------------------------------------------------------------------------
-static char blePayloadBuffer[256];
-static volatile bool newBlePacketAvailable = false;
+const int PAYLOAD_QUEUE_SIZE = 12;
+static char payloadQueue[PAYLOAD_QUEUE_SIZE][384];
+static int queueHead = 0;
+static int queueTail = 0;
+static portMUX_TYPE queueMux = portMUX_INITIALIZER_UNLOCKED;
 
+void enqueuePacket(uint8_t* pData, size_t length) {
+  if (length == 0 || length >= 384) return;
+  portENTER_CRITICAL(&queueMux);
+  int nextHead = (queueHead + 1) % PAYLOAD_QUEUE_SIZE;
+  if (nextHead != queueTail) { // queue not full
+    memcpy(payloadQueue[queueHead], pData, length);
+    payloadQueue[queueHead][length] = '\0';
+    queueHead = nextHead;
+  }
+  portEXIT_CRITICAL(&queueMux);
+}
+
+bool dequeuePacket(char* outBuffer, size_t maxLen) {
+  portENTER_CRITICAL(&queueMux);
+  if (queueHead == queueTail) {
+    portEXIT_CRITICAL(&queueMux);
+    return false;
+  }
+  strncpy(outBuffer, payloadQueue[queueTail], maxLen - 1);
+  outBuffer[maxLen - 1] = '\0';
+  queueTail = (queueTail + 1) % PAYLOAD_QUEUE_SIZE;
+  portEXIT_CRITICAL(&queueMux);
+  return true;
+}
+
+// -----------------------------------------------------------------------------
+// BLE Notification Callback
+// -----------------------------------------------------------------------------
 static void notifyCallback(
   BLERemoteCharacteristic* pBLERemoteCharacteristic,
   uint8_t* pData,
   size_t length,
   bool isNotify) {
-
-  if (length > 0 && length < sizeof(blePayloadBuffer)) {
-    memcpy(blePayloadBuffer, pData, length);
-    blePayloadBuffer[length] = '\0';
-    newBlePacketAvailable = true; // Hand off to loopTask for thread-safe MQTT publish
-  }
+  enqueuePacket(pData, length);
 }
 
 // -----------------------------------------------------------------------------
-// BLE Client Callbacks
+// Helper: Count Active Connected Wristbands
 // -----------------------------------------------------------------------------
-class MyClientCallback : public BLEClientCallbacks {
-  void onConnect(BLEClient* pclient) {
-    connected = true;
-    Serial.println("\n>>> [GATEWAY] Connected to Wristband via BLE! <<<");
+int getConnectedCount() {
+  int count = 0;
+  for (int i = 0; i < MAX_WRISTBANDS; i++) {
+    if (wristbands[i].connected) count++;
+  }
+  return count;
+}
 
-    // CRITICAL: Force ultra-fast connection interval (12-24 * 1.25ms = 15ms - 30ms)
-    // Prevents ESP32 BLE stack from negotiating to 1000ms - 2000ms battery-saver intervals!
-    pclient->updateConnParams(12, 24, 0, 400);
+// -----------------------------------------------------------------------------
+// BLE Client Callbacks for Each Slot
+// -----------------------------------------------------------------------------
+class WristbandClientCallbacks : public BLEClientCallbacks {
+  int slotIndex;
+public:
+  WristbandClientCallbacks(int slot) : slotIndex(slot) {}
+
+  void onConnect(BLEClient* pclient) {
+    wristbands[slotIndex].connected = true;
+    Serial.printf("\n>>> [GATEWAY] Wristband [Slot %d] Connected! Total active: %d <<<\n",
+                  slotIndex, getConnectedCount());
+    // Balanced connection interval (24-48 * 1.25ms = 30ms - 60ms)
+    pclient->updateConnParams(24, 48, 0, 400);
   }
 
   void onDisconnect(BLEClient* pclient) {
-    connected = false;
-    isScanning = false;
-    Serial.println("\n>>> [GATEWAY] Disconnected from Wristband! <<<");
+    Serial.printf("\n>>> [GATEWAY] Wristband [Slot %d] (%s) Disconnected! <<<\n",
+                  slotIndex, wristbands[slotIndex].mac.c_str());
+    wristbands[slotIndex].connected = false;
+    wristbands[slotIndex].mac = "";
+    wristbands[slotIndex].remoteChar = nullptr;
   }
 };
 
@@ -92,72 +143,95 @@ void scanEndedCB(BLEScanResults results) {
 }
 
 // -----------------------------------------------------------------------------
-// Connect to the Wristband's BLE GATT Server
+// Connect to a Specific Wristband Slot
 // -----------------------------------------------------------------------------
-bool connectToServer() {
-  Serial.print("Connecting to: ");
-  Serial.println(myDevice->getAddress().toString().c_str());
+bool connectWristbandToSlot(int slot, BLEAdvertisedDevice* device) {
+  if (slot < 0 || slot >= MAX_WRISTBANDS || device == nullptr) return false;
 
-  BLEClient* pClient = BLEDevice::createClient();
-  pClient->setClientCallbacks(new MyClientCallback());
+  String targetMac = device->getAddress().toString();
+  Serial.printf("[GATEWAY] Connecting Slot %d to Wristband: %s...\n", slot, targetMac.c_str());
 
-  // Connect to the remote BLE Server
-  if (!pClient->connect(myDevice)) {
-    Serial.println("Failed to connect to Wristband.");
+  if (wristbands[slot].client == nullptr) {
+    wristbands[slot].client = BLEDevice::createClient();
+    wristbands[slot].client->setClientCallbacks(new WristbandClientCallbacks(slot));
+  }
+
+  // Connect to the remote BLE server
+  if (!wristbands[slot].client->connect(device)) {
+    Serial.printf("[GATEWAY] Failed to connect to %s on Slot %d.\n", targetMac.c_str(), slot);
     return false;
   }
 
-  // Force connection interval (min 15ms, max 30ms, 0 latency, 4s supervision timeout)
-  pClient->updateConnParams(12, 24, 0, 400);
+  // Request MTU 256 for complete JSON telemetry payloads
+  wristbands[slot].client->setMTU(256);
 
-  // Obtain reference to the service
-  BLERemoteService* pRemoteService = pClient->getService(serviceUUID);
+  // Set balanced connection timing (30ms - 60ms interval)
+  wristbands[slot].client->updateConnParams(24, 48, 0, 400);
+
+  // Discover Service
+  BLERemoteService* pRemoteService = wristbands[slot].client->getService(serviceUUID);
   if (pRemoteService == nullptr) {
-    Serial.println("Failed to find SHIRO service UUID.");
-    pClient->disconnect();
+    Serial.println("[GATEWAY] Failed to find SHIRO service UUID.");
+    wristbands[slot].client->disconnect();
     return false;
   }
 
-  // Obtain reference to the characteristic
-  pRemoteCharacteristic = pRemoteService->getCharacteristic(charUUID);
-  if (pRemoteCharacteristic == nullptr) {
-    Serial.println("Failed to find SHIRO characteristic UUID.");
-    pClient->disconnect();
+  // Discover Characteristic
+  wristbands[slot].remoteChar = pRemoteService->getCharacteristic(charUUID);
+  if (wristbands[slot].remoteChar == nullptr) {
+    Serial.println("[GATEWAY] Failed to find SHIRO characteristic UUID.");
+    wristbands[slot].client->disconnect();
     return false;
   }
 
-  // Register for Notifications
-  if (pRemoteCharacteristic->canNotify()) {
-    pRemoteCharacteristic->registerForNotify(notifyCallback);
-    Serial.println("[OK] Subscribed to Wristband notifications!");
+  // Register for notifications
+  if (wristbands[slot].remoteChar->canNotify()) {
+    wristbands[slot].remoteChar->registerForNotify(notifyCallback);
+    Serial.printf("[OK] Subscribed to Slot %d (%s) notifications!\n", slot, targetMac.c_str());
   }
 
-  connected = true;
-
-  // CRITICAL: Stop BLE scanning when connected so 2.4GHz radio can dedicate
-  // 100% bandwidth to BLE GATT connection and Wi-Fi MQTT transmission!
-  BLEDevice::getScan()->stop();
-  BLEDevice::getScan()->clearResults();
-  isScanning = false;
-
+  wristbands[slot].mac = targetMac;
+  wristbands[slot].connected = true;
   return true;
 }
 
 // -----------------------------------------------------------------------------
-// BLE Advertised Device Callbacks (Search for SHIRO-WRISTBAND)
+// BLE Advertised Device Callbacks (Discovery)
 // -----------------------------------------------------------------------------
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    Serial.print(".");
-    if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
-      Serial.println("\n[FOUND] SHIRO-WRISTBAND detected!");
-      BLEDevice::getScan()->stop();
-      isScanning = false;
-      if (myDevice != nullptr) {
-        delete myDevice;
+    bool isWristband = false;
+
+    // Match by Device Name or Service UUID
+    if (advertisedDevice.haveName() && advertisedDevice.getName() == "SHIRO-WRISTBAND") {
+      isWristband = true;
+    } else if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
+      isWristband = true;
+    }
+
+    if (isWristband && !doConnect) {
+      String foundMac = advertisedDevice.getAddress().toString();
+
+      // Check if already connected
+      for (int i = 0; i < MAX_WRISTBANDS; i++) {
+        if (wristbands[i].connected && wristbands[i].mac.equalsIgnoreCase(foundMac)) {
+          return; // Already actively connected
+        }
       }
-      myDevice = new BLEAdvertisedDevice(advertisedDevice);
-      doConnect = true;
+
+      // Find an available slot
+      for (int i = 0; i < MAX_WRISTBANDS; i++) {
+        if (!wristbands[i].connected) {
+          Serial.printf("\n[FOUND NEW WRISTBAND] %s -> Allocating Slot %d\n", foundMac.c_str(), i);
+          if (pendingDevice != nullptr) delete pendingDevice;
+          pendingDevice = new BLEAdvertisedDevice(advertisedDevice);
+          pendingSlot = i;
+          doConnect = true;
+          BLEDevice::getScan()->stop();
+          isScanning = false;
+          return;
+        }
+      }
     }
   }
 };
@@ -213,24 +287,25 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
 
-  Serial.println("\n=============================================");
-  Serial.println("  SHIRO Edge Node (ESP32-S3 Gateway V2)");
-  Serial.println("=============================================");
+  Serial.println("\n==========================================================");
+  Serial.println("  SHIRO Edge Node - Multi-Wristband BLE Gateway (V3)");
+  Serial.println("  Supports up to 4 concurrent wristbands simultaneously");
+  Serial.println("==========================================================");
 
   setupWifi();
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setBufferSize(512);
   mqttClient.setKeepAlive(15);
 
-  // Initialize BLE Stack as Scanner
-  Serial.println("Starting BLE Scanner for 'SHIRO-WRISTBAND'...");
+  // Initialize BLE Stack
+  Serial.println("Starting BLE Multi-Scanner for 'SHIRO-WRISTBAND'...");
   BLEDevice::init("SHIRO-GATEWAY");
   BLEScan* pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  pBLEScan->setInterval(160); // 100ms interval for rapid discovery
-  pBLEScan->setWindow(120);   // 75ms window
+  pBLEScan->setInterval(160); // 100ms interval
+  pBLEScan->setWindow(100);   // ~62ms window (balanced duty cycle)
   pBLEScan->setActiveScan(true);
-  pBLEScan->start(5, scanEndedCB, false);
+  pBLEScan->start(4, scanEndedCB, false);
   isScanning = true;
 }
 
@@ -241,46 +316,56 @@ void loop() {
   // 1. Maintain Non-blocking MQTT Connection
   handleMQTT();
 
-  // 2. Immediately forward any incoming BLE telemetry packet from Wristband
-  // (Executed on Core 1 thread for 100% thread safety and zero BLE radio stalls)
-  if (newBlePacketAvailable && mqttClient.connected()) {
-    newBlePacketAvailable = false;
-    mqttClient.publish(mqtt_topic, blePayloadBuffer);
-    Serial.printf("[BLE -> MQTT] %s\n", blePayloadBuffer);
+  // 2. Dequeue and forward all buffered telemetry packets to MQTT
+  char packet[384];
+  while (dequeuePacket(packet, sizeof(packet))) {
+    if (mqttClient.connected()) {
+      mqttClient.publish(mqtt_topic, packet);
+      Serial.printf("[BLE -> MQTT] %s\n", packet);
+    }
   }
 
   unsigned long now = millis();
 
   // 3. Transmit Standalone Gateway Heartbeat every 1.5s
-  // Keeps Gateway visibly ONLINE on Edge Server even when wristband is turned off
   if (now - lastGatewayHeartbeat >= 1500) {
     lastGatewayHeartbeat = now;
     if (mqttClient.connected()) {
-      char hbPayload[130];
+      int activeCount = getConnectedCount();
+      char hbPayload[160];
       snprintf(hbPayload, sizeof(hbPayload),
-               "{\"mac\":\"%s\",\"status\":\"ONLINE\",\"tag_connected\":%s}",
-               WiFi.macAddress().c_str(), connected ? "true" : "false");
+               "{\"mac\":\"%s\",\"status\":\"ONLINE\",\"active_wristbands\":%d,\"capacity\":%d}",
+               WiFi.macAddress().c_str(), activeCount, MAX_WRISTBANDS);
       mqttClient.publish(gateway_status_topic, hbPayload);
     }
   }
 
-  // 4. Handle BLE Connection logic
-  if (doConnect == true) {
-    if (connectToServer()) {
-      Serial.println("[GATEWAY] Ready! Streaming data to MQTT in real-time...");
+  // 4. Handle Pending BLE Connection
+  if (doConnect && pendingDevice != nullptr && pendingSlot >= 0) {
+    if (connectWristbandToSlot(pendingSlot, pendingDevice)) {
+      Serial.printf("[GATEWAY] Slot %d successfully active! Total wristbands: %d\n",
+                    pendingSlot, getConnectedCount());
     } else {
-      Serial.println("[GATEWAY] Failed to connect. Will retry scan.");
-      isScanning = false;
+      Serial.printf("[GATEWAY] Slot %d connection failed. Will retry scan.\n", pendingSlot);
     }
+    delete pendingDevice;
+    pendingDevice = nullptr;
+    pendingSlot = -1;
     doConnect = false;
+    isScanning = false;
   }
 
-  // 5. Continuously Re-scan if disconnected and not already scanning
-  if (!connected && !isScanning) {
-    Serial.println("\n[GATEWAY] Scanning for Wristband beacon...");
-    BLEDevice::getScan()->start(5, scanEndedCB, false);
-    isScanning = true;
+  // 5. Periodic Background Scanner for discovering additional wristbands
+  // If we have free slots and aren't already scanning or connecting:
+  if (!doConnect && !isScanning && getConnectedCount() < MAX_WRISTBANDS) {
+    if (now - lastScanAttempt >= 3000) {
+      lastScanAttempt = now;
+      Serial.printf("\n[GATEWAY] Background scanning for additional wristbands (%d/%d slots in use)...\n",
+                    getConnectedCount(), MAX_WRISTBANDS);
+      BLEDevice::getScan()->start(4, scanEndedCB, false);
+      isScanning = true;
+    }
   }
 
-  delay(5); // 5ms loop yield
+  delay(5); // 5ms loop yield for FreeRTOS and Wi-Fi tasks
 }

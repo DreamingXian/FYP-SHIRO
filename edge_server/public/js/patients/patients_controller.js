@@ -408,6 +408,7 @@ function renderPatientsTable(patients) {
         <td style="color: var(--text-secondary); font-size: 12px;">${p.admission_date || '-'}</td>
         <td>${statusBadge}</td>
         <td style="text-align: right; white-space: nowrap;">
+          <button class="btn btn-outline btn-sm" onclick="event.stopPropagation(); openPatientVitalsHistoryModal('${p.patient_id}', '${p.full_name.replace(/'/g, "\\'")}')" title="View InfluxDB Historical Vitals" style="margin-right: 4px;">📈 Vitals</button>
           <button class="btn btn-outline btn-sm" onclick="event.stopPropagation(); editPatientInfo('${p.patient_id}')" style="margin-right: 4px;">Edit Infos</button>
           ${secondaryActionBtn}
           <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation(); confirmDeletePatient('${p.patient_id}', '${p.full_name.replace(/'/g, "\\'")}')" title="Delete record" style="margin-left: 4px;">🗑️</button>
@@ -936,10 +937,14 @@ async function viewPatientProfileReadOnly(patientId) {
         </div>
       </div>
 
-      <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px;">
+      <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px;">
         <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">Medical History, Chronic Conditions &amp; Drug Allergies:</div>
         <div style="color:var(--text-secondary); line-height:1.5; white-space:pre-wrap;">${p.medical_history || 'No recorded chronic illnesses or known drug allergies.'}</div>
       </div>
+
+      <button type="button" class="btn btn-outline btn-sm" onclick="openPatientVitalsHistoryModal('${p.patient_id}', '${p.full_name.replace(/'/g, "\\'")}')" style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; color:var(--primary); border-color:var(--primary);">
+        📈 <span>View InfluxDB Historical Vitals Trends (Table 4.10: 30-Day Retention)</span>
+      </button>
     `;
 
     if (window.showModal) {
@@ -1196,6 +1201,307 @@ function resetAdmissionForm() {
   handleWardSelectionChange();
 }
 
+// =============================================================================
+// HISTORICAL TIME-SERIES VITALS VIEWER (INFLUXDB ENGINE - TABLE 4.10)
+// Retention Policy: 30 Days (Downsampled after 7d)
+// =============================================================================
+
+/**
+ * Opens InfluxDB Historical Vitals Modal with range filtering (-1h, -6h, -24h, -7d, -30d)
+ */
+async function openPatientVitalsHistoryModal(patientId, patientName, defaultRange = '-24h') {
+  const safeName = patientName || patientId;
+  const modalHtml = `
+    <div style="margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+      <div>
+        <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+          <span>📈 ${safeName}</span>
+          <span class="mono" style="font-size: 12px; color: var(--primary); font-weight: 600;">(${patientId})</span>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+          InfluxDB Engine · Bucket: <span class="mono">shiro_telemetry</span> · 
+          <span class="badge badge-info" style="font-size: 10px; padding: 2px 6px;">Table 4.10: 30-Day Vitals Retention</span>
+        </div>
+      </div>
+      
+      <!-- Range Filter Buttons -->
+      <div id="vitals-range-pills" style="display: flex; gap: 6px; background: #F1F5F9; padding: 4px; border-radius: 6px; border: 1px solid var(--border);">
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-1h" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-1h', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">1h</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-6h" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-6h', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">6h</button>
+        <button type="button" class="btn btn-primary btn-sm range-btn" data-range="-24h" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-24h', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">24h</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-7d" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-7d', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">7d</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-30d" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-30d', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;" title="Full 30-Day InfluxDB Table 4.10 Retention">30d</button>
+      </div>
+    </div>
+
+    <!-- Dynamic Container for stats, charts, and table -->
+    <div id="vitals-history-dynamic-container" style="min-height: 380px;">
+      <div style="text-align: center; padding: 48px; color: var(--text-muted);">
+        <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+        <div>Querying InfluxDB time-series records for ${safeName}...</div>
+      </div>
+    </div>
+  `;
+
+  if (window.showModal) {
+    window.showModal({
+      title: `Patient Physiological Telemetry (InfluxDB)`,
+      customHtml: modalHtml,
+      isWide: true,
+      type: 'info',
+      confirmText: 'Close'
+    });
+  }
+
+  // Load initial range data
+  await switchVitalsHistoryRange(patientId, safeName, defaultRange);
+}
+
+/**
+ * Handles time range switching, queries /api/patients/vitals-history, and renders charts
+ */
+async function switchVitalsHistoryRange(patientId, patientName, range, clickedBtn = null) {
+  const container = document.getElementById('vitals-history-dynamic-container');
+  if (!container) return;
+
+  // Update active button state
+  const pills = document.querySelectorAll('#vitals-range-pills .range-btn');
+  pills.forEach(b => {
+    b.className = 'btn btn-outline btn-sm range-btn';
+  });
+  if (clickedBtn) {
+    clickedBtn.className = 'btn btn-primary btn-sm range-btn';
+  } else {
+    const defaultBtn = document.querySelector(`#vitals-range-pills .range-btn[data-range="${range}"]`);
+    if (defaultBtn) defaultBtn.className = 'btn btn-primary btn-sm range-btn';
+  }
+
+  container.innerHTML = `
+    <div style="text-align: center; padding: 48px; color: var(--text-muted);">
+      <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
+      <div>Loading InfluxDB records for range ${range}...</div>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(`/api/patients/vitals-history?id=${encodeURIComponent(patientId)}&range=${encodeURIComponent(range)}`);
+    const data = await res.json();
+
+    if (!data.success || !Array.isArray(data.vitals) || data.vitals.length === 0) {
+      container.innerHTML = `
+        <div style="background: #F8FAFC; border: 1px dashed var(--border); border-radius: 8px; padding: 36px 20px; text-align: center; margin-top: 10px;">
+          <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
+          <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;">No InfluxDB Vitals Recorded for Selected Range (${range})</div>
+          <div style="font-size: 12px; color: var(--text-muted); max-width: 520px; margin: 8px auto 14px auto; line-height: 1.5;">
+            Telemetry is automatically ingested into bucket <span class="mono">shiro_telemetry</span> when this patient's wristband is bound and streaming (either in scheduled 3-min passive bursts or active 1 Hz inspection).
+          </div>
+          <div style="display: flex; gap: 8px; justify-content: center; font-size: 11px;">
+            <span class="badge badge-info">Patient: ${patientId}</span>
+            <span class="badge badge-neutral">Device: ${data.device_id || 'Standby'}</span>
+            <span class="badge badge-neutral">MAC: ${data.wristband_mac || 'Pending'}</span>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const vitals = data.vitals;
+
+    // Filter valid numeric HR and SpO2
+    const validHR = vitals.map(v => v.heart_rate).filter(h => h !== null && h > 0);
+    const validSpO2 = vitals.map(v => v.spo2).filter(s => s !== null && s > 0);
+
+    const minHR = validHR.length > 0 ? Math.min(...validHR) : '--';
+    const maxHR = validHR.length > 0 ? Math.max(...validHR) : '--';
+    const avgHR = validHR.length > 0 ? Math.round(validHR.reduce((a, b) => a + b, 0) / validHR.length) : '--';
+
+    const minSpO2 = validSpO2.length > 0 ? Math.min(...validSpO2) : '--';
+    const maxSpO2 = validSpO2.length > 0 ? Math.max(...validSpO2) : '--';
+    const avgSpO2 = validSpO2.length > 0 ? (validSpO2.reduce((a, b) => a + b, 0) / validSpO2.length).toFixed(1) : '--';
+
+    // Build SVG Trend Charts
+    const hrSvg = generateVitalsSvg(vitals, 'heart_rate', 40, 160, 60, 100, '#DC2626', '#22C55E', 'BPM');
+    const spo2Svg = generateVitalsSvg(vitals, 'spo2', 75, 100, 95, 100, '#0284C7', '#0EA5E9', '%');
+
+    container.innerHTML = `
+      <!-- 4-Card Summary KPI Strip -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px;">
+        <div style="background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px 12px;">
+          <div style="font-size: 11px; font-weight: 600; color: #991B1B;">❤️ Mean Heart Rate</div>
+          <div style="font-size: 20px; font-weight: 800; color: #DC2626; margin-top: 2px;">
+            ${avgHR} <span style="font-size: 11px; font-weight: 500;">BPM</span>
+          </div>
+          <div style="font-size: 10px; color: #B91C1C; margin-top: 2px;">Min: ${minHR} · Max: ${maxHR}</div>
+        </div>
+
+        <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 10px 12px;">
+          <div style="font-size: 11px; font-weight: 600; color: #166534;">🫁 Mean SpO2 Saturation</div>
+          <div style="font-size: 20px; font-weight: 800; color: #15803D; margin-top: 2px;">
+            ${avgSpO2}<span style="font-size: 11px; font-weight: 500;">%</span>
+          </div>
+          <div style="font-size: 10px; color: #166534; margin-top: 2px;">Min: ${minSpO2}% · Max: ${maxSpO2}%</div>
+        </div>
+
+        <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;">
+          <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">📊 Recorded Influx Samples</div>
+          <div style="font-size: 20px; font-weight: 800; color: var(--text-primary); margin-top: 2px;">
+            ${vitals.length} <span style="font-size: 11px; font-weight: 500;">points</span>
+          </div>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">Query Range: ${range}</div>
+        </div>
+
+        <div style="background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; padding: 10px 12px;">
+          <div style="font-size: 11px; font-weight: 600; color: #0369A1;">🛡️ Retention Status</div>
+          <div style="font-size: 14px; font-weight: 700; color: #0284C7; margin-top: 4px;">
+            30-Day Policy
+          </div>
+          <div style="font-size: 10px; color: #0284C7; margin-top: 2px;">Downsampled after 7d</div>
+        </div>
+      </div>
+
+      <!-- Trend Chart 1: Heart Rate (BPM) -->
+      <div style="background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <div style="font-size: 12px; font-weight: 700; color: #991B1B;">❤️ Heart Rate Trend (BPM)</div>
+          <div style="font-size: 10px; color: var(--text-muted);">
+            <span style="display: inline-block; width: 10px; height: 10px; background: #DCFCE7; border: 1px solid #86EFAC; border-radius: 2px; margin-right: 4px; vertical-align: middle;"></span>
+            Normal Zone: 60–100 BPM
+          </div>
+        </div>
+        ${hrSvg}
+      </div>
+
+      <!-- Trend Chart 2: Blood Oxygen SpO2 (%) -->
+      <div style="background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <div style="font-size: 12px; font-weight: 700; color: #0369A1;">🫁 Oxygen Saturation Trend (SpO2 %)</div>
+          <div style="font-size: 10px; color: var(--text-muted);">
+            <span style="display: inline-block; width: 10px; height: 10px; background: #E0F2FE; border: 1px solid #7DD3FC; border-radius: 2px; margin-right: 4px; vertical-align: middle;"></span>
+            Normal Zone: 95–100%
+          </div>
+        </div>
+        ${spo2Svg}
+      </div>
+
+      <!-- Compact Recent Point Log -->
+      <details style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">
+        <summary style="cursor: pointer; font-weight: 600; padding: 4px 0; color: var(--primary);">
+          📋 View Most Recent Telemetry Sample Rows (${Math.min(vitals.length, 10)} of ${vitals.length})
+        </summary>
+        <div style="max-height: 140px; overflow-y: auto; margin-top: 6px; border: 1px solid var(--border); border-radius: 6px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+            <thead>
+              <tr style="background: #F8FAFC; border-bottom: 1px solid var(--border); text-align: left;">
+                <th style="padding: 6px 10px;">Timestamp</th>
+                <th style="padding: 6px 10px;">Heart Rate</th>
+                <th style="padding: 6px 10px;">SpO2</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${vitals.slice(-10).reverse().map(v => {
+                const d = new Date(v.time);
+                const timeStr = d.toLocaleTimeString() + ' (' + d.toLocaleDateString() + ')';
+                return `
+                  <tr style="border-bottom: 1px solid #F1F5F9;">
+                    <td style="padding: 4px 10px;" class="mono">${timeStr}</td>
+                    <td style="padding: 4px 10px; font-weight: 600; color: ${v.heart_rate > 100 || v.heart_rate < 50 ? '#DC2626' : '#15803D'};">${v.heart_rate || '--'} BPM</td>
+                    <td style="padding: 4px 10px; font-weight: 600; color: ${v.spo2 < 94 ? '#DC2626' : '#0369A1'};">${v.spo2 ? v.spo2 + '%' : '--'}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    `;
+
+  } catch (err) {
+    container.innerHTML = `
+      <div style="padding: 24px; text-align: center; color: var(--danger);">
+        Error loading InfluxDB vitals: ${err.message}
+      </div>
+    `;
+  }
+}
+
+/**
+ * Generates an SVG line graph with normal range shading and interactive data points
+ */
+function generateVitalsSvg(points, field, minAxis, maxAxis, normalLow, normalHigh, strokeColor, normalBgColor, unit) {
+  const w = 680;
+  const h = 130;
+  const padLeft = 45;
+  const padRight = 20;
+  const padTop = 15;
+  const padBottom = 22;
+
+  const plotW = w - padLeft - padRight;
+  const plotH = h - padTop - padBottom;
+
+  const validPoints = points.filter(p => p[field] !== null && p[field] !== undefined && p[field] > 0);
+  if (validPoints.length === 0) {
+    return `<div style="text-align:center; padding:20px; color:var(--text-muted); font-size:11px;">No valid ${field} data points in this window.</div>`;
+  }
+
+  const getY = (val) => padTop + plotH - ((Math.min(maxAxis, Math.max(minAxis, val)) - minAxis) / (maxAxis - minAxis)) * plotH;
+  const getX = (idx) => padLeft + (validPoints.length > 1 ? (idx / (validPoints.length - 1)) * plotW : plotW / 2);
+
+  // Normal zone band coordinates
+  const yNormalTop = getY(normalHigh);
+  const yNormalBottom = getY(normalLow);
+  const normalBandH = Math.max(2, yNormalBottom - yNormalTop);
+
+  // Generate SVG path polyline
+  let pathD = '';
+  const circles = [];
+
+  validPoints.forEach((p, idx) => {
+    const x = getX(idx);
+    const y = getY(p[field]);
+    if (idx === 0) pathD += `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+    else pathD += ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+
+    const isAbnormal = p[field] < normalLow || p[field] > normalHigh;
+    const dotColor = isAbnormal ? '#DC2626' : strokeColor;
+    const timeLabel = new Date(p.time).toLocaleTimeString();
+    circles.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${validPoints.length > 50 ? 2 : 3.5}" fill="${dotColor}" stroke="#FFFFFF" stroke-width="1.5"><title>${timeLabel}: ${p[field]} ${unit}</title></circle>`);
+  });
+
+  // Generate Y-axis gridlines
+  const yGridVals = [minAxis, normalLow, normalHigh, maxAxis];
+  const gridLines = yGridVals.map(val => {
+    const y = getY(val);
+    return `
+      <line x1="${padLeft}" y1="${y.toFixed(1)}" x2="${w - padRight}" y2="${y.toFixed(1)}" stroke="#E2E8F0" stroke-width="1" stroke-dasharray="3,3" />
+      <text x="${padLeft - 6}" y="${(y + 3.5).toFixed(1)}" font-size="9" text-anchor="end" fill="#64748B">${val}</text>
+    `;
+  }).join('');
+
+  // Start & End Time labels
+  const startTimeStr = new Date(validPoints[0].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const endTimeStr = new Date(validPoints[validPoints.length - 1].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  return `
+    <svg viewBox="0 0 ${w} ${h}" style="width: 100%; height: auto; display: block; overflow: visible;">
+      <!-- Normal Range Shaded Box -->
+      <rect x="${padLeft}" y="${yNormalTop.toFixed(1)}" width="${plotW}" height="${normalBandH.toFixed(1)}" fill="${normalBgColor}" opacity="0.18" rx="2" />
+      
+      <!-- Gridlines -->
+      ${gridLines}
+
+      <!-- Data Trend Line -->
+      <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+
+      <!-- Data Point Circles -->
+      ${circles.join('')}
+
+      <!-- X-Axis Labels -->
+      <text x="${padLeft}" y="${h - 4}" font-size="9" fill="#64748B">${startTimeStr}</text>
+      <text x="${w - padRight}" y="${h - 4}" font-size="9" text-anchor="end" fill="#64748B">${endTimeStr}</text>
+    </svg>
+  `;
+}
+
 // Global exports for inline HTML event handlers and SPA router
 window.initPatientsModule = initPatientsModule;
 window.handlePatientAdmission = handlePatientAdmission;
@@ -1214,6 +1520,8 @@ window.openAssignBedModal = openAssignBedModal;
 window.viewPatientProfileReadOnly = viewPatientProfileReadOnly;
 window.editPatientInfo = editPatientInfo;
 window.resetAdmissionForm = resetAdmissionForm;
+window.openPatientVitalsHistoryModal = openPatientVitalsHistoryModal;
+window.switchVitalsHistoryRange = switchVitalsHistoryRange;
 
 // Wire automatic initialization when document loads or tab switches
 document.addEventListener('DOMContentLoaded', () => {

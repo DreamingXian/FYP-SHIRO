@@ -97,11 +97,17 @@
 
       <!-- Card 3: Real-Time Physiological Telemetry -->
       <div class="card" style="padding: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <strong style="font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
             <span>❤️ Live Physiological Vitals</span>
           </strong>
           <span class="badge badge-live" id="live-map-vitals-status">● LIVE STREAM</span>
+        </div>
+
+        <div style="margin-bottom: 10px;">
+          <button id="live-map-btn-activate-stream" class="btn btn-outline btn-sm" style="width: 100%; font-size: 11px; padding: 5px 10px; font-weight: 600; border-color: #0284C7; color: #0284C7; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;" title="Send remote trigger to escalate wristband to 1 Hz active vitals mode for 60 seconds">
+            <span>⚡ Engage 1 Hz Active Stream</span>
+          </button>
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">

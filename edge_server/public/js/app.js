@@ -89,6 +89,23 @@ async function initializeApp() {
     }
   }
 
+  // Global helper to switch to a ward's live map directly from any tab
+  window.navigateToWardLiveMap = function(wardId, targetTagId = null) {
+    navTabs.forEach(b => b.classList.remove('active'));
+    tabPanes.forEach(p => p.classList.remove('active'));
+
+    const activeBtn = document.querySelector('.nav-tab-btn[data-tab="tab-ward-config"]');
+    if (activeBtn) activeBtn.classList.add('active');
+
+    const targetPane = document.getElementById('tab-ward-config');
+    if (targetPane) targetPane.classList.add('active');
+
+    if (typeof window.openWardLiveMap === 'function') {
+      window.openWardLiveMap(wardId, targetTagId);
+    }
+  };
+  window.switchTab = switchTab;
+
   navTabs.forEach(btn => {
     btn.addEventListener('click', () => {
       const targetTabId = btn.getAttribute('data-tab');

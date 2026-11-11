@@ -74,6 +74,14 @@ async function testAndInitDatabase() {
       console.log('[DATABASE] Verified Hardware Device Registry schema and benchmark fleet in MySQL.');
     }
 
+    // 6b. Run init_emergency_logs.sql to ensure emergency audit log table exists
+    const emergencySqlPath = path.join(__dirname, 'init_emergency_logs.sql');
+    if (fs.existsSync(emergencySqlPath)) {
+      const emergencySql = fs.readFileSync(emergencySqlPath, 'utf8');
+      await p.query(emergencySql);
+      console.log('[DATABASE] Verified Emergency Incident Audit Log schema (Table 4.13) in MySQL.');
+    }
+
     // 7. Ensure availability_status column exists in devices table
     const { migrate } = require('./migrate_devices_availability');
     await migrate();

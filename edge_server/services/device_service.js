@@ -30,7 +30,7 @@ async function syncEnrolledDevicesCache() {
         enrolledDevicesByMac.set(r.device_id.toUpperCase().trim(), r);
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 /**
@@ -54,8 +54,8 @@ function recordDiscoveredDevice(data) {
   const lastBroadcast = existing._last_broadcast || 0;
 
   // Preserve existing RSSI if incoming packet didn't supply one (e.g. Gateway physiological telemetry)
-  const effectiveRssi = data.rssi !== undefined 
-    ? data.rssi 
+  const effectiveRssi = data.rssi !== undefined
+    ? data.rssi
     : (existing.rssi !== undefined ? existing.rssi : null);
 
   const record = {
@@ -66,8 +66,9 @@ function recordDiscoveredDevice(data) {
     rssi: effectiveRssi,
     detected_by_anchor: data.detected_by_anchor || existing.detected_by_anchor || null,
     battery_level: data.battery_level !== undefined ? data.battery_level : (existing.battery_level || null),
+    is_charging: data.is_charging !== undefined ? data.is_charging : (existing.is_charging || false),
     ip_address: data.ip_address || existing.ip_address || null,
-    status_text: data.status_text || existing.status_text || null,
+    status_text: data.status_text || (data.is_charging ? 'CHARGING' : (existing.status_text || null)),
     first_detected: existing.first_detected || new Date().toLocaleTimeString(),
     last_detected: new Date().toISOString(),
     _last_broadcast: lastBroadcast
@@ -89,6 +90,7 @@ function recordDiscoveredDevice(data) {
         rssi: record.rssi,
         detected_by_anchor: record.detected_by_anchor,
         battery_level: record.battery_level,
+        is_charging: record.is_charging,
         ip_address: record.ip_address,
         status_text: record.status_text,
         first_detected: record.first_detected,
@@ -302,7 +304,7 @@ async function deleteDevice(deviceId) {
   try {
     const ipsService = require('./ips_service');
     ipsService.purgeTag(deviceId, mac);
-  } catch (_) {}
+  } catch (_) { }
 
   return {
     success: true,
@@ -325,9 +327,6 @@ async function getNextDeviceId(deviceType) {
     padLen = 3;
   } else if (deviceType === 'WRISTBAND') {
     prefix = 'TAG-';
-    padLen = 3;
-  } else if (deviceType === 'EDGE_NODE') {
-    prefix = 'EDGE-';
     padLen = 3;
   } else if (deviceType === 'HEADSET') {
     prefix = 'QUEST3-';
@@ -386,8 +385,9 @@ async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata =
       if (dev.mac_address) {
         enrolledDevicesByMac.set(dev.mac_address.toUpperCase().trim(), dev);
       }
-      let updateSql = `UPDATE devices SET status = 'ONLINE', last_seen = NOW()`;
-      const params = [];
+      const effectiveStatus = metadata.status || 'ONLINE';
+      let updateSql = `UPDATE devices SET status = ?, last_seen = NOW()`;
+      const params = [effectiveStatus];
 
       if (metadata.ip) {
         updateSql += `, ip_address = ?`;
@@ -408,10 +408,11 @@ async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata =
         type: 'DEVICE_HEARTBEAT',
         device_id: dev.device_id,
         device_type: dev.device_type,
-        status: 'ONLINE',
+        status: effectiveStatus,
         availability_status: dev.availability_status || 'AVAILABLE',
         last_seen: new Date().toLocaleTimeString(),
         battery_level: metadata.battery_level,
+        is_charging: metadata.is_charging || (effectiveStatus === 'CHARGING'),
         rssi: metadata.rssi
       });
     } else {
@@ -437,7 +438,7 @@ async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata =
         if (hex12) {
           derivedMac = hex12[1].match(/.{1,2}/g).join(':').toUpperCase();
         } else {
-          derivedMac = (deviceType === 'ANCHOR' 
+          derivedMac = (deviceType === 'ANCHOR'
             ? `ANCHOR-${suggestedId.toUpperCase().replace(/^ANCHOR-/, '')}`
             : `DEV-${suggestedId.toUpperCase()}`);
         }
@@ -452,9 +453,7 @@ async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata =
 
       // Calculate realistic RSSI
       let effectiveRssi = undefined;
-      if (deviceType === 'EDGE_NODE') {
-        effectiveRssi = null; // Wi-Fi / LAN, no BLE RSSI
-      } else if (metadata.rssi !== undefined) {
+      if (metadata.rssi !== undefined) {
         effectiveRssi = metadata.rssi;
       }
 
@@ -462,12 +461,13 @@ async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata =
         mac: derivedMac,
         suggested_id: suggestedId,
         device_type: deviceType,
-        hardware_model: metadata.model || (deviceType === 'ANCHOR' ? 'ESP32-WROOM-32E' : deviceType === 'EDGE_NODE' ? 'ESP32-S3-N16R8' : 'Seeed Studio XIAO ESP32-C6'),
+        hardware_model: metadata.model || (deviceType === 'ANCHOR' ? 'ESP32-WROOM-32E' : 'Seeed Studio XIAO ESP32-C6'),
         rssi: effectiveRssi,
         detected_by_anchor: metadata.detected_by_anchor || null,
         battery_level: metadata.battery_level,
+        is_charging: metadata.is_charging || false,
         ip_address: metadata.ip || null,
-        status_text: metadata.status_text || null
+        status_text: metadata.status || metadata.status_text || null
       });
     }
   } catch (err) {
@@ -550,7 +550,7 @@ setInterval(async () => {
   // 2. Mark enrolled devices OFFLINE if no packet in 12 seconds (absorbs normal Wi-Fi jitter)
   try {
     const [stale] = await pool.query(
-      `SELECT device_id, device_type FROM devices WHERE status = 'ONLINE' AND last_seen < (NOW() - INTERVAL 12 SECOND)`
+      `SELECT device_id, device_type FROM devices WHERE status IN ('ONLINE', 'CHARGING') AND last_seen < (NOW() - INTERVAL 12 SECOND)`
     );
     for (const d of stale) {
       await pool.query(`UPDATE devices SET status = 'OFFLINE' WHERE device_id = ?`, [d.device_id]);
@@ -561,7 +561,7 @@ setInterval(async () => {
         status: 'OFFLINE'
       });
     }
-  } catch (_) {}
+  } catch (_) { }
 }, 2000);
 
 setTimeout(syncEnrolledDevicesCache, 1000);

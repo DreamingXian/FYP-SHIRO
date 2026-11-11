@@ -19,6 +19,11 @@ async function handleWardRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
+  if (pathname === '/api/ward/save-anchor' && req.method === 'POST') {
+    await wardController.saveSpatialAnchor(req, res, body);
+    return true;
+  }
+
   if ((pathname === '/api/ward/config' || pathname === '/api/ward/get') && req.method === 'GET') {
     await wardController.getWard(req, res, parsedUrl);
     return true;

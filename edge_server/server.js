@@ -41,7 +41,13 @@ async function bootstrap() {
     console.log(`======================================================`);
     console.log(`[HTTP DASHBOARD] Accessible at:`);
     console.log(`  -> Localhost:  http://localhost:${config.HTTP_PORT}`);
-    console.log(`  -> Network IP: http://${config.LOCAL_IP}:${config.HTTP_PORT}`);
+    if (config.ALL_IPS && config.ALL_IPS.length > 0) {
+      config.ALL_IPS.forEach(i => {
+        console.log(`  -> ${i.name}: http://${i.address}:${config.HTTP_PORT}`);
+      });
+    } else {
+      console.log(`  -> Network IP: http://${config.LOCAL_IP}:${config.HTTP_PORT}`);
+    }
     console.log(`[MQTT BROKER]  tcp://${config.LOCAL_IP}:${config.MQTT_PORT} (ESP32 Gateway)`);
     console.log(`[WEBSOCKET]    ws://${config.LOCAL_IP}:${config.HTTP_PORT} (Web & Quest 3 HMD)`);
     console.log(`======================================================\n`);

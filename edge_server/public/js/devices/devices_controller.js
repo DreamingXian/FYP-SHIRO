@@ -60,18 +60,14 @@ function setupDeviceWsListeners() {
     markDeviceLiveStatus(msg.anchor, 'ANCHOR', { rssi: msg.raw_rssi });
   });
 
-  // 2. Live Telemetry from Wristbands via Ward Edge Gateway
+  // 2. Live Telemetry from Wristbands via Anchor Beacons
   window.wsClient.on('TELEMETRY', (msg) => {
-    // Both Edge Node and Wristband are active
-    if (msg.gateway_id) {
-      markDeviceLiveStatus(msg.gateway_id, 'EDGE_NODE');
-    } else {
-      const gw = cachedFleet.find(d => d.device_type === 'EDGE_NODE');
-      if (gw) markDeviceLiveStatus(gw.device_id, 'EDGE_NODE');
-    }
     const wristbandId = msg.data?.tag_id || msg.tag_id || 'TAG-001';
+    const isCharging = (msg.data?.charging === true || msg.data?.charging === 'true');
     markDeviceLiveStatus(wristbandId, 'WRISTBAND', {
-      battery: msg.data?.bat !== undefined ? msg.data.bat : (msg.data?.battery !== undefined ? msg.data.battery : null)
+      battery: msg.data?.bat !== undefined ? msg.data.bat : (msg.data?.battery !== undefined ? msg.data.battery : null),
+      status: isCharging ? 'CHARGING' : 'ONLINE',
+      is_charging: isCharging
     });
   });
 
@@ -81,6 +77,7 @@ function setupDeviceWsListeners() {
     markDeviceLiveStatus(msg.device_id, msg.device_type, {
       status: msg.status || 'ONLINE',
       battery: msg.battery_level,
+      is_charging: msg.is_charging || (msg.status === 'CHARGING'),
       rssi: msg.rssi
     });
   });
@@ -135,6 +132,24 @@ function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
           } else {
             statusCell.innerHTML = `<span class="badge badge-neutral">● ${dev.status}</span>`;
           }
+        }
+
+        const powerCell = row.querySelector('.device-power-cell');
+        if (powerCell && dev.battery_level !== null && dev.battery_level !== undefined) {
+          const bat = Math.min(100, Math.max(0, dev.battery_level));
+          const isCharging = (dev.status === 'CHARGING' || extra.is_charging === true);
+          const barColor = isCharging ? '#D97706' : (bat > 40 ? '#16A34A' : bat > 20 ? '#D97706' : '#DC2626');
+          const textColor = isCharging ? '#D97706' : (bat <= 20 ? '#DC2626' : 'var(--text-secondary)');
+          powerCell.innerHTML = `
+            <div style="width: 100px;">
+              <div style="font-size: 11px; font-weight: 600; color: ${textColor}; margin-bottom: 2px;">
+                ${bat}% ${isCharging ? '⚡ Charging' : ''}
+              </div>
+              <div class="progress-bar-bg" style="height:6px; background:#E2E8F0; border-radius:3px; overflow:hidden; margin:0;">
+                <div class="progress-bar-fill" style="width: ${bat}%; height:100%; background: ${barColor}; border-radius:3px;"></div>
+              </div>
+            </div>
+          `;
         }
       }
     }
@@ -221,15 +236,6 @@ async function refreshDiscoveryRadar() {
  * Helper to render connection status badge for discovery radar.
  */
 function getRadarSignalHtml(d) {
-  if (d.device_type === 'EDGE_NODE') {
-    return `
-      <div style="display:flex; align-items:center; gap:8px;">
-        <span class="badge badge-live" style="font-size:11px;">🌐 Wi-Fi (LAN)</span>
-        <span class="mono" style="font-size:11px; color:var(--text-muted);">${d.ip_address || 'Connected'}</span>
-      </div>
-    `;
-  }
-
   if (d.device_type === 'ANCHOR') {
     const isTracking = d.status_text === 'TRACKING' || (d.rssi !== null && d.rssi !== 0 && !isNaN(d.rssi));
     return `
@@ -252,7 +258,7 @@ function getRadarSignalHtml(d) {
   // WRISTBAND
   return `
     <div style="display:flex; align-items:center; gap:8px;">
-      <span class="badge badge-info" style="font-size:11px;">🛏️ BLE Active</span>
+      <span class="badge badge-info" style="font-size:11px;">🛏️ BLE Broadcast</span>
     </div>
   `;
 }
@@ -261,17 +267,21 @@ function getRadarSignalHtml(d) {
  * Helper to render power source / battery bar for discovery radar.
  */
 function getRadarBatteryHtml(d) {
-  if (d.device_type === 'EDGE_NODE' || d.device_type === 'ANCHOR') {
+  if (d.device_type === 'ANCHOR') {
     return `<span style="color:var(--text-muted); font-size:12px;">⚡ AC Mains Power</span>`;
   }
   if (d.battery_level !== null && d.battery_level !== undefined) {
     const batVal = Math.min(100, Math.max(0, d.battery_level));
-    const batColor = batVal > 40 ? 'var(--success)' : batVal > 20 ? 'var(--warning)' : 'var(--danger)';
+    const isCharging = (d.is_charging === true || d.status_text === 'CHARGING' || d.status === 'CHARGING');
+    const batColor = isCharging ? '#D97706' : (batVal > 40 ? '#16A34A' : batVal > 20 ? '#D97706' : '#DC2626');
+    const textColor = isCharging ? '#D97706' : (batVal <= 20 ? '#DC2626' : 'var(--text-secondary)');
     return `
       <div style="width: 100px;">
-        <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 2px;">${batVal}%</div>
-        <div class="progress-bar-bg" style="height:5px; background:var(--border); border-radius:3px; overflow:hidden;">
-          <div style="width: ${batVal}%; height:100%; background: ${batColor};"></div>
+        <div style="font-size: 11px; font-weight: 600; color: ${textColor}; margin-bottom: 2px;">
+          ${batVal}% ${isCharging ? '⚡ Charging' : ''}
+        </div>
+        <div class="progress-bar-bg" style="height:6px; background:#E2E8F0; border-radius:3px; overflow:hidden; margin:0;">
+          <div class="progress-bar-fill" style="width: ${batVal}%; height:100%; background: ${batColor}; border-radius:3px;"></div>
         </div>
       </div>
     `;
@@ -332,8 +342,6 @@ function renderDiscoveryTable(items) {
         ? `<span class="badge badge-info">🛏️ Wristband</span>`
         : d.device_type === 'ANCHOR'
         ? `<span class="badge badge-neutral">📡 Anchor</span>`
-        : d.device_type === 'EDGE_NODE'
-        ? `<span class="badge badge-live">🌐 Edge Node</span>`
         : `<span class="badge badge-neutral">🥽 Headset</span>`;
 
       tr.innerHTML = `
@@ -418,7 +426,6 @@ function updateFleetCounts() {
   const pillAll = document.getElementById('filter-pill-all');
   const pillWristband = document.getElementById('filter-pill-wristband');
   const pillAnchor = document.getElementById('filter-pill-anchor');
-  const pillEdge = document.getElementById('filter-pill-edgenode');
   const pillHeadset = document.getElementById('filter-pill-headset');
 
   const countBadge = document.getElementById('fleet-count-badge');
@@ -432,7 +439,6 @@ function updateFleetCounts() {
   const total = cachedFleet.length;
   const wristbands = cachedFleet.filter(d => d.device_type === 'WRISTBAND').length;
   const anchors = cachedFleet.filter(d => d.device_type === 'ANCHOR').length;
-  const edgeNodes = cachedFleet.filter(d => d.device_type === 'EDGE_NODE').length;
   const headsets = cachedFleet.filter(d => d.device_type === 'HEADSET').length;
 
   const online = cachedFleet.filter(d => d.status === 'ONLINE' || d.status === 'CHARGING').length;
@@ -445,7 +451,6 @@ function updateFleetCounts() {
   if (pillAll) pillAll.innerText = `All Nodes (${total})`;
   if (pillWristband) pillWristband.innerText = `🛏️ Wristbands (${wristbands})`;
   if (pillAnchor) pillAnchor.innerText = `📡 Anchors (${anchors})`;
-  if (pillEdge) pillEdge.innerText = `🌐 Edge Nodes (${edgeNodes})`;
   if (pillHeadset) pillHeadset.innerText = `🥽 Headsets (${headsets})`;
 
   if (countBadge) countBadge.innerText = `${total} Device${total === 1 ? '' : 's'}`;
@@ -551,7 +556,6 @@ function renderDevicesTable(filtered) {
   tbody.innerHTML = filtered.map(d => {
     let typeBadge = `<span class="badge badge-info">🛏️ Wristband</span>`;
     if (d.device_type === 'ANCHOR') typeBadge = `<span class="badge badge-neutral">📡 Anchor</span>`;
-    if (d.device_type === 'EDGE_NODE') typeBadge = `<span class="badge badge-live">🌐 Edge Node</span>`;
     if (d.device_type === 'HEADSET') typeBadge = `<span class="badge badge-neutral" style="color:var(--primary); font-weight:700;">🥽 Headset</span>`;
 
     let statusBadge = `<span class="badge badge-live">● ONLINE</span>`;
@@ -564,14 +568,16 @@ function renderDevicesTable(filtered) {
     let powerDisplay = `<span style="color:var(--text-muted); font-size:11px;">⚡ Mains / USB</span>`;
     if (d.battery_level !== null && d.battery_level !== undefined) {
       const bat = Math.min(100, Math.max(0, d.battery_level));
-      const barColor = bat > 40 ? 'var(--success)' : bat > 20 ? 'var(--warning)' : 'var(--danger)';
+      const isCharging = (d.status === 'CHARGING' || d.is_charging === true);
+      const batColor = isCharging ? '#D97706' : (bat > 40 ? '#16A34A' : bat > 20 ? '#D97706' : '#DC2626');
+      const textColor = isCharging ? '#D97706' : (bat <= 20 ? '#DC2626' : 'var(--text-secondary)');
       powerDisplay = `
         <div style="width: 100px;">
-          <div style="font-size: 11px; font-weight: 600; color: ${bat <= 20 ? 'var(--danger)' : 'var(--text-secondary)'}; margin-bottom: 2px;">
-            ${bat}% ${d.status === 'CHARGING' ? '⚡' : ''}
+          <div style="font-size: 11px; font-weight: 600; color: ${textColor}; margin-bottom: 2px;">
+            ${bat}% ${isCharging ? '⚡ Charging' : ''}
           </div>
-          <div class="progress-bar-bg" style="height:5px; background:var(--border); border-radius:3px; overflow:hidden;">
-            <div style="width: ${bat}%; height:100%; background: ${barColor};"></div>
+          <div class="progress-bar-bg" style="height:6px; background:#E2E8F0; border-radius:3px; overflow:hidden; margin:0;">
+            <div class="progress-bar-fill" style="width: ${bat}%; height:100%; background: ${batColor}; border-radius:3px;"></div>
           </div>
         </div>
       `;
@@ -605,7 +611,7 @@ function renderDevicesTable(filtered) {
           <div style="font-size:12px; color:var(--text-primary);">${d.hardware_model}</div>
           <span class="badge badge-neutral" style="font-size:10px;">${d.firmware_version || 'v1.0.0'}</span>
         </td>
-        <td>${powerDisplay}</td>
+        <td class="device-power-cell">${powerDisplay}</td>
         <td class="device-status-cell">
           ${statusBadge}
         </td>
@@ -662,17 +668,15 @@ async function openEnrollModal(mac, model, type, battery, ip) {
   } catch (_) {}
 
   if (!initialId) {
-    initialId = type === 'ANCHOR' ? 'anchor-001' : type === 'EDGE_NODE' ? 'EDGE-001' : 'TAG-001';
+    initialId = type === 'ANCHOR' ? 'anchor-001' : 'TAG-001';
   }
 
   const typeName = type === 'WRISTBAND' ? '🛏️ Wearable Wristband Tag'
     : type === 'ANCHOR' ? '📡 Stationary Wall Anchor'
-    : type === 'EDGE_NODE' ? '🌐 Ward Edge Node Gateway'
     : '🥽 Meta Quest 3 Headset';
 
   const typePill = type === 'WRISTBAND' ? `<span class="badge badge-info">🛏️ Wristband</span>`
     : type === 'ANCHOR' ? `<span class="badge badge-neutral">📡 Anchor</span>`
-    : type === 'EDGE_NODE' ? `<span class="badge badge-live">🌐 Edge Node</span>`
     : `<span class="badge badge-neutral">🥽 Headset</span>`;
 
   const modalHtml = `
@@ -771,7 +775,6 @@ async function openManualEnrollModal() {
         <select class="form-control" id="manual-dev-type" onchange="updateSuggestedManualId()">
           <option value="WRISTBAND" selected>🛏️ Wearable Wristband Tag</option>
           <option value="ANCHOR">📡 Stationary Wall Anchor</option>
-          <option value="EDGE_NODE">🌐 Ward Edge Node Gateway</option>
           <option value="HEADSET">🥽 Meta Quest 3 Headset</option>
         </select>
       </div>
@@ -797,7 +800,6 @@ async function openManualEnrollModal() {
     const t = document.getElementById('manual-dev-type')?.value;
     const modelInput = document.getElementById('manual-dev-model');
     if (t === 'ANCHOR' && modelInput) modelInput.value = 'ESP32-WROOM-32E';
-    if (t === 'EDGE_NODE' && modelInput) modelInput.value = 'ESP32-S3-N16R8 Dev Module';
     if (t === 'HEADSET' && modelInput) modelInput.value = 'Meta Quest 3 (128GB)';
     if (t === 'WRISTBAND' && modelInput) modelInput.value = 'Seeed Studio XIAO ESP32-C6';
 

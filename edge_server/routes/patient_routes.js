@@ -64,6 +64,50 @@ async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
+  // 11. GET /api/patients/vitals-history - Query InfluxDB Time-Series Trends
+  if (pathname === '/api/patients/vitals-history' && req.method === 'GET') {
+    const timeSeriesService = require('../services/time_series_service');
+    const { getPool } = require('../database/db');
+    const patientId = parsedUrl.searchParams.get('id') || 'P-001';
+    const range = parsedUrl.searchParams.get('range') || '-24h';
+    try {
+      let wristbandMac = null;
+      let deviceId = null;
+      try {
+        const pool = getPool();
+        const [rows] = await pool.query(`
+          SELECT pb.device_id, d.mac_address 
+          FROM patient_bindings pb
+          JOIN devices d ON pb.device_id = d.device_id
+          WHERE pb.patient_id = ? AND pb.status = 'ACTIVE'
+          LIMIT 1
+        `, [patientId]);
+        if (rows.length > 0) {
+          deviceId = rows[0].device_id;
+          wristbandMac = rows[0].mac_address;
+        }
+      } catch (dbErr) {
+        console.warn('[PATIENT VITALS ROUTE] Could not resolve binding:', dbErr.message);
+      }
+
+      const vitals = await timeSeriesService.queryVitalsHistory(patientId, range, wristbandMac, deviceId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ 
+        success: true, 
+        patient_id: patientId, 
+        device_id: deviceId,
+        wristband_mac: wristbandMac,
+        range, 
+        count: vitals.length, 
+        vitals 
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return true;
+  }
+
   return false;
 }
 

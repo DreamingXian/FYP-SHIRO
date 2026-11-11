@@ -7,6 +7,8 @@ const { KalmanFilter1D, calculateDistance, getCalibration } = require('./kalman_
 const { broadcastToClients } = require('./websocket_service');
 const deviceService = require('./device_service');
 const ipsService = require('./ips_service');
+const alertService = require('./alert_service');
+const timeSeriesService = require('./time_series_service');
 
 let aedesInstance = null;
 let tcpServer = null;
@@ -40,12 +42,6 @@ async function startMqttBroker(port = 1883) {
       const enrolled = mac ? deviceService.findEnrolledDeviceByMac(mac) : null;
       const anchorId = enrolled ? enrolled.device_id : (mac || 'anchor-001');
       deviceService.recordActiveDeviceTraffic(anchorId, 'ANCHOR', { mac, clientId: client.id, ip, model: 'ESP32-WROOM-32E', rssi: null });
-    } else if (client.id.includes('Gateway') || client.id.includes('Edge_Node')) {
-      const hexMatch = client.id.match(/([0-9A-Fa-f]{12})$/);
-      const mac = hexMatch ? hexMatch[1].match(/.{1,2}/g).join(':').toUpperCase() : null;
-      const enrolled = mac ? deviceService.findEnrolledDeviceByMac(mac) : null;
-      const gatewayId = enrolled ? enrolled.device_id : 'EDGE-001';
-      deviceService.recordActiveDeviceTraffic(gatewayId, 'EDGE_NODE', { mac, clientId: client.id, ip, model: 'ESP32-S3-N16R8 Dev Module', rssi: null });
     }
   });
 
@@ -97,7 +93,7 @@ async function startMqttBroker(port = 1883) {
           status_text: isStandby ? 'STANDBY' : 'TRACKING'
         });
 
-        // If anchor detected a wristband tag, update that tag's presence with its real MAC and RSSI
+        // If anchor detected a wristband tag, update that tag's presence with its real MAC, RSSI, and live vitals
         if (!isStandby && (parsed.tag_mac || parsed.tag || parsed.tag_id)) {
           const tagMac = (parsed.tag_mac || parsed.mac_tag || (parsed.mac && parsed.mac !== anchorMac ? parsed.mac : null)) 
             ? (parsed.tag_mac || parsed.mac_tag || parsed.mac).toUpperCase() 
@@ -105,10 +101,16 @@ async function startMqttBroker(port = 1883) {
           const enrolledTag = tagMac ? deviceService.findEnrolledDeviceByMac(tagMac) : null;
           const detectedTag = enrolledTag ? enrolledTag.device_id : (parsed.tag || parsed.tag_id || tagMac || 'TAG-001');
 
+          const isCharging = (parsed.charging === true || parsed.charging === 'true');
+          const batLevel = parsed.battery !== undefined ? parseInt(parsed.battery, 10) : (parsed.bat !== undefined ? parseInt(parsed.bat, 10) : null);
+
           deviceService.recordActiveDeviceTraffic(detectedTag, 'WRISTBAND', {
             mac: tagMac,
             rssi: rawRssi,
             detected_by_anchor: anchorId,
+            battery_level: batLevel,
+            status: isCharging ? 'CHARGING' : 'ONLINE',
+            is_charging: isCharging,
             model: 'Seeed Studio XIAO ESP32-C6'
           });
 
@@ -121,6 +123,50 @@ async function startMqttBroker(port = 1883) {
             rawRssi,
             timestamp: Date.now()
           });
+
+          // Feed IMU kinematics into IPS 4-State Motion Filter
+          if (parsed.g !== undefined) {
+            ipsService.recordKinematics(detectedTag, parseFloat(parsed.g), Date.now(), parsed.motion || null);
+          }
+
+          // Evaluate Fall Anomaly & Critical Vitals Alarm Pipeline
+          alertService.evaluateTelemetry(parsed, detectedTag, tagMac);
+
+          // Broadcast live vitals for Patient Monitors, Live Map & VR Headsets!
+          if (parsed.bpm !== undefined || parsed.spo2 !== undefined || parsed.battery !== undefined) {
+            const isActiveMode = (parsed.active === true || parsed.active === 'true' || parsed.motion === 'FALL_EMERGENCY');
+
+            broadcastToClients({
+              type: 'TELEMETRY',
+              topic: topic,
+              data: {
+                tag_id: detectedTag,
+                tag_mac: tagMac,
+                bpm: parsed.bpm || 0,
+                spo2: parsed.spo2 || 0,
+                g: parsed.g !== undefined ? parseFloat(parsed.g) : 1.0,
+                motion: parsed.motion || 'STATIONARY',
+                touch: parsed.touch !== undefined ? parseInt(parsed.touch, 10) : 0,
+                active: isActiveMode,
+                battery: batLevel,
+                charging: isCharging,
+                detected_by_anchor: anchorId
+              },
+              timestamp: new Date().toLocaleTimeString()
+            });
+
+            // Log time-series telemetry to InfluxDB (Table 4.10)
+            if ((parsed.bpm && parsed.bpm > 0) || (parsed.spo2 && parsed.spo2 > 0)) {
+              timeSeriesService.logVitals({
+                patientId: enrolledTag?.bound_patient_id || detectedTag,
+                wristbandMac: tagMac,
+                bpm: parsed.bpm || 0,
+                spo2: parsed.spo2 || 0,
+                quality: parsed.touch ? 0.95 : 0.40,
+                mode: isActiveMode ? 'ACTIVE_STREAM' : 'PASSIVE_3MIN'
+              });
+            }
+          }
         }
 
         // Only compute distance and broadcast chart if a valid RF signal is present (not standby 0)
@@ -144,74 +190,17 @@ async function startMqttBroker(port = 1883) {
           });
         }
       } 
-      // 2. Gateway standalone heartbeat packet
-      else if (topic.includes('gateway') || parsed.gateway) {
-        const ip = client?.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
-        const gatewayMac = parsed.mac ? parsed.mac.toUpperCase() : null;
-        const enrolledGw = gatewayMac ? deviceService.findEnrolledDeviceByMac(gatewayMac) : null;
-        const gwId = enrolledGw ? enrolledGw.device_id : (parsed.gateway || 'EDGE-001');
-        deviceService.recordActiveDeviceTraffic(gwId, 'EDGE_NODE', {
-          mac: gatewayMac,
-          ip,
-          clientId: client?.id,
-          model: 'ESP32-S3-N16R8 Dev Module',
-          rssi: null
-        });
-      }
-      // 3. Wristband Physiological Telemetry (HR, SpO2, Accelerometer)
-      else {
-        const ip = client?.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
-        let gatewayMac = parsed.gateway_mac ? parsed.gateway_mac.toUpperCase() : null;
-        if (!gatewayMac && client?.id && client.id.startsWith('SHIRO_Gateway_')) {
-          const raw = client.id.replace('SHIRO_Gateway_', '');
-          if (raw.length === 12) {
-            gatewayMac = raw.match(/.{1,2}/g).join(':').toUpperCase();
-          }
-        }
-
-        let activeGwId = null;
-        if (gatewayMac) {
-          const enrolledGw = deviceService.findEnrolledDeviceByMac(gatewayMac);
-          activeGwId = enrolledGw ? enrolledGw.device_id : 'EDGE-001';
-          deviceService.recordActiveDeviceTraffic(activeGwId, 'EDGE_NODE', {
-            mac: gatewayMac,
-            ip,
-            clientId: client?.id,
-            model: 'ESP32-S3-N16R8 Dev Module',
-            rssi: null
-          });
-        }
-
-        // STRICT CHECK: ONLY record a wristband if payload actually contains valid vitals/kinematics!
-        // Never synthesize a phantom wristband on empty/gateway packets!
-        const hasVitals = parsed.bpm !== undefined || parsed.ir !== undefined || parsed.spo2 !== undefined || parsed.g !== undefined;
-        if ((parsed.tag_id || parsed.tag_mac) && hasVitals) {
-          const tagMac = (parsed.tag_mac || parsed.mac) ? (parsed.tag_mac || parsed.mac).toUpperCase() : null;
-          const enrolledTag = tagMac ? deviceService.findEnrolledDeviceByMac(tagMac) : null;
-          const tagId = enrolledTag ? enrolledTag.device_id : (parsed.tag_id || tagMac || 'TAG-001');
-          deviceService.recordActiveDeviceTraffic(tagId, 'WRISTBAND', {
-            mac: tagMac,
-            battery_level: parsed.bat !== undefined ? parsed.bat : (parsed.battery !== undefined ? parsed.battery : null),
-            model: 'Seeed Studio XIAO ESP32-C6'
-            // NOTE: Do not pass rssi here so existing anchor RSSI is NEVER overwritten or wiped to null!
-          });
-          parsed.tag_id = tagId;
-
-          // Feed IMU kinematics into IPS 4-State Motion Filter
-          if (parsed.g !== undefined) {
-            ipsService.recordKinematics(tagId, parseFloat(parsed.g), Date.now(), parsed.motion || null);
-          }
-        }
-
+      // 2. Generic direct telemetry fallback
+      else if (parsed.bpm !== undefined || parsed.battery !== undefined || parsed.g !== undefined) {
         broadcastToClients({
           type: 'TELEMETRY',
           topic: topic,
           data: parsed,
-          gateway_id: activeGwId,
           timestamp: new Date().toLocaleTimeString()
         });
       }
     } catch (e) {
+      console.warn(`[MQTT PARSE WARNING] Malformed or truncated packet on "${topic}": ${messageStr.slice(0, 120)}... (${e.message})`);
       // Fallback for non-JSON raw strings
       broadcastToClients({
         type: 'RAW',
@@ -225,7 +214,28 @@ async function startMqttBroker(port = 1883) {
   return { aedes: aedesInstance, tcpServer };
 }
 
+/**
+ * Publish an MQTT message to connected nodes/anchors
+ */
+function publishMqtt(topic, payload) {
+  if (!aedesInstance) {
+    console.warn('[MQTT PUBLISH] Broker not started yet.');
+    return false;
+  }
+  const message = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  aedesInstance.publish({
+    topic,
+    payload: Buffer.from(message),
+    qos: 0,
+    retain: false
+  }, (err) => {
+    if (err) console.error('[MQTT PUBLISH ERROR]', err.message);
+  });
+  return true;
+}
+
 module.exports = {
-  startMqttBroker
+  startMqttBroker,
+  publishMqtt
 };
 

@@ -1,81 +1,121 @@
 # SHIRO: Spatial Health Interface & Real-Time Observer
 
 > **MR-Patient Connect (SHIRO)** — Final Year Project (RSWG7)  
-> An edge-computed, privacy-preserving IoT vitals telemetry and indoor positioning system with an interactive web operations dashboard.
+> An edge-computed, privacy-preserving clinical IoT telemetry, indoor positioning (IPS), and Mixed Reality (MR) spatial digital twin platform for inpatient healthcare.  
+> **Maintainer:** Tan Shou Xian  
+> **Repository:** https://github.com/DreamingXian/FYP-SHIRO.git  
 
 ---
 
 ## 1. Project Overview
 
-**SHIRO** is a healthcare IoT monitoring platform designed for hospital inpatient environments. The system continuously streams physiological signals (photoplethysmography pulse, blood oxygen, and motion kinematics) from wearable patient wristbands, and tracks relative indoor positioning across stationary wall anchors using Bluetooth Low Energy (BLE) RSSI and Extended Kalman Filter (EKF) signal conditioning.
+**SHIRO** is a hospital-grade healthcare IoT and Spatial Mixed Reality monitoring ecosystem. The system continuously streams physiological signals (photoplethysmography heart rate, blood oxygen saturation, and 6-DOF motion kinematics) from wearable patient wristbands, and tracks real-time 2D/3D indoor positioning across stationary wall anchors using Bluetooth Low Energy (BLE) RSSI, 1D Extended Kalman Filtering (EKF), and non-linear multi-anchor trilateration.
 
-A centralized Edge Server aggregates sensor telemetry through an embedded MQTT broker, stores clinical and architectural data in a MySQL database, and serves a modular Single Page Application (SPA) web dashboard for real-time monitoring, hardware fleet provisioning, and ward configuration.
+A centralized Edge Server aggregates telemetry through an embedded MQTT broker, stores architectural and clinical records in a MySQL database, streams high-frequency biometrics to InfluxDB, and powers an interactive Single Page Application (SPA) web dashboard.
+
+Wearing a **Meta Quest 3** Mixed Reality headset, clinicians enter a color Passthrough digital twin of the ward. Patient vital signs float at eye level beside the patient, dock seamlessly to hospital bed headboards with zero jitter, and an interactive 2D ward radar HUD appears upon glancing at the wrist.
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        SHIRO SYSTEM ARCHITECTURE                       │
-└────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                                SHIRO SYSTEM ARCHITECTURE                               │
+└────────────────────────────────────────────────────────────────────────────────────────┘
 
- [ Patient Wristband ]
-   Seeed Studio XIAO ESP32-C6 + MAX30102 PPG + MPU-6050 IMU
+ [ Tier 1: Patient Wristband ]
+   Seeed Studio XIAO ESP32-C6 + MAX30102 PPG + MPU-6050 (6-DOF IMU)
      │
-     ├──(BLE 5.0 GATT Notifications @ 5 Hz)──► [ Edge Node Gateway ]
-     │                                          ESP32-S3-N16R8
+     ├──(BLE 5.0 GATT Notifications @ 5 Hz)──► [ Tier 1.5: Edge Node Gateway ]
+     │                                          ESP32-S3-N16R8 (USB CDC)
      │                                                │
      │                                                ├──(Wi-Fi MQTT TCP:1883)──┐
      │                                                                          ▼
-     └──(BLE Advertising Beacons @ 10 Hz)───► [ Stationary Wall Anchors ]     [ Central Edge Server ]
-                                                ESP32-WROOM-32E (A, B, ...)     Host PC / Laptop
+     └──(BLE Advertising Beacons @ 10 Hz)────► [ Tier 1.5: Stationary Anchors ] [ Tier 2: Central Edge Server ]
+                                                3x ESP32-WROOM-32E (A, B, C)    Host PC / Laptop
                                                       │                         - Embedded Aedes MQTT Broker (:1883)
-                                                      └──(Wi-Fi MQTT TCP:1883)─►- HTTP & WebSocket Server (:3000)
-                                                                                - Extended Kalman Filter (EKF)
+                                                      └──(Wi-Fi MQTT TCP:1883)─►- HTTP REST Server (:3000)
+                                                                                - WebSocket Server (:3000)
+                                                                                - 1D Extended Kalman Filter (EKF)
+                                                                                - Multi-Anchor Trilateration Engine
                                                                                 - MySQL Database (XAMPP :3306)
-                                                                                - Web Management Dashboard
+                                                                                - InfluxDB Time-Series Engine
+                                                                                - Web Operations Dashboard
+                                                                                        │
+                                                                                        ├──(WebSocket JSON:3000)──► [ Tier 3: MR Client ]
+                                                                                                                    Meta Quest 3 (Unity 6 OpenXR)
+                                                                                                                    - Color Passthrough Digital Twin
+                                                                                                                    - In-Situ Patient Hologram
+                                                                                                                    - Bed Docking (Headboard/Bedside)
+                                                                                                                    - 2-Point Spatial Alignment
+                                                                                                                    - Wrist Radar Hand Slate HUD
 ```
 
 ---
 
 ## 2. Hardware & Software Stack
 
-### Hardware Components
+### Hardware Fleet
 | Role | Microcontroller / Board | Sensors / Modules | Description |
 | :--- | :--- | :--- | :--- |
-| **Patient Wristband Tag** | Seeed Studio XIAO ESP32-C6 | HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) | Wearable node measuring heart rate, SpO2, and kinematic G-force vectors. Streams BLE GATT notifications. |
-| **Ward Edge Node Gateway** | ESP32-S3 (N16R8 Dev Module) | On-board Wi-Fi + BLE 5.0 | Connects to the wristband via BLE and immediately bridges telemetry packets to MQTT over Wi-Fi. |
-| **Stationary Wall Anchors** | ESP32-WROOM-32E | On-board Wi-Fi + BLE Scanner | Wall-mounted beacons scanning wristband radio attenuation (RSSI) for indoor distance tracking. |
-| **Edge Server Host** | Local PC / Laptop | 2.4 GHz Wi-Fi / Ethernet | Hosts the MQTT broker, REST API, WebSocket server, and MySQL database. |
+| **Patient Wristband Tag** | Seeed Studio XIAO ESP32-C6 | HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) | Wearable node measuring heart rate, SpO2 %, and kinematic G-force vectors. Streams BLE GATT notifications at 5 Hz. |
+| **Ward Edge Gateway** | ESP32-S3 (N16R8 Dev Module) | On-board Wi-Fi + BLE 5.0 | Subscribes to wristband BLE notifications and immediately bridges packets to MQTT over Wi-Fi. |
+| **Stationary Wall Anchors** | ESP32-WROOM-32E | On-board Wi-Fi + BLE Scanner | Wall-mounted nodes scanning wristband RSSI attenuation for 2D indoor positioning. |
+| **Central Edge Server** | Local PC / Laptop | 2.4 GHz Wi-Fi / Ethernet | Hosts MQTT broker, REST API, WebSocket server, trilateration solver, and MySQL database. |
+| **Mixed Reality Headset** | Meta Quest 3 | Color Passthrough + Depth Sensor | Spatial client rendering 3D ward digital twins, in-situ patient vitals HUDs, and wrist radar slates. |
 
-### Software & Technologies
+### Software & Frameworks
+* **MR Client Engine:** Unity 6 (`6000.3.28f1`) Universal Render Pipeline (URP), Meta XR Core SDK, OpenXR
 * **Edge Server Runtime:** Node.js (v18+), Express.js
 * **MQTT Broker:** Aedes (integrated MQTT broker listening on port `1883`)
-* **Real-Time WebSockets:** `ws` package (bi-directional event streaming on port `3000`)
-* **Database:** MySQL 8.0+ (managed via XAMPP) with connection pooling (`mysql2`)
+* **Real-Time Streaming:** `ws` package (bi-directional event streaming on port `3000`)
+* **Relational Database:** MySQL 8.0+ (managed via XAMPP) with connection pooling (`mysql2`)
+* **Time-Series Database:** InfluxDB 2.x for raw PPG absorption waveforms and motion telemetry
 * **Frontend Web Dashboard:** Modern Vanilla JavaScript (MVC Client Architecture), CSS3 variables, HTML5 Canvas
-* **Signal Conditioning:** 1D Extended Kalman Filter (`kalman_filter.js`) for RF multipath jitter suppression
+* **Signal Conditioning & IPS:** 1D Extended Kalman Filter (`kalman_filter.js`), Non-linear Least Squares Trilateration, 4-Anchor Combinatorial Solver, 3-State Kinematic IMU Filter
 * **Embedded Firmware:** Arduino C++ / ESP32 Core with `PubSubClient`, `BLEDevice`, and `SparkFun MAX3010x`
 
 ---
 
-## 3. What Has Been Completed So Far
+## 3. Completed Modules & Implemented Features
 
-* **Universal Firmware Architecture:**
-  * All boards run universal sketches without hardcoded IDs. Device identifiers (`TAG-001`, `anchor-001`, `EDGE-001`) are dynamically assigned by the Edge Server during enrollment.
-  * Low-latency BLE connection parameter locking (15–30 ms connection intervals) preventing radio stalls.
-  * Disabled Wi-Fi modem sleep (`WiFi.setSleep(false)`) and enabled TCP Nagle bypass (`espClient.setNoDelay(true)`) for zero-jitter packet delivery.
-* **Live Telemetry & Diagnostics Lab:**
-  * Real-time scrolling Photoplethysmography (PPG) absorption waveform at 5 Hz.
-  * Live Heart Rate (BPM), Blood Oxygen (SpO2), and kinematic G-Force impact/fall detection.
-  * Dual-channel RSSI Kalman filter comparison canvas (Raw Jitter vs. EKF Smoothed State).
-  * Real-time MQTT packet inspector logging raw payloads and topics.
-* **Zero-Configuration Hardware Discovery Radar:**
-  * Automatic RF spectrum scanner detecting broadcasting unprovisioned nodes.
-  * One-click hardware enrollment with dynamic sequential ID generation (`anchor-001`, `TAG-001`, etc.).
-  * Multi-dimensional fleet filtering toolbar (Online/Offline + Available/In-Use/Unavailable) with live counters.
-* **Interactive Ward Configuration Canvas:**
-  * 2D architectural ward editor with interactive room dimensioning, door positioning, and ensuite bathroom cutouts.
-  * Visual drag-and-drop placement of clinical beds and stationary anchors with MySQL persistence.
-* **Patient Inpatient Directory:**
-  * Admission management, medical profile tracking, bed allocation, and wearable wristband binding.
+### Tier 1: Embedded IoT & Wearable Biometrics
+* **Universal Firmware Architecture:** Device enrollment without hardcoded credentials; dynamically provisioned IDs (`TAG-001`, `anchor-A`, `EDGE-001`).
+* **Low-Latency BLE GATT:** 15–30 ms connection intervals preventing radio congestion; Wi-Fi modem sleep disabled (`WiFi.setSleep(false)`) and TCP Nagle bypass (`espClient.setNoDelay(true)`) for zero-jitter packet delivery.
+* **Biometric & Kinematic Pipeline:** Non-blocking FIFO reading of MAX30102 PPG optical sensors (BPM and SpO2) and MPU-6050 accelerometer G-force vectors.
+
+### Tier 2: Edge Server, IPS Engine & Web Dashboard
+* **Advanced Indoor Positioning (IPS) Engine:**
+  * 1D Extended Kalman Filter (EKF) on raw RSSI to suppress multipath RF jitter.
+  * Multi-anchor least squares trilateration and dedicated 4-anchor quadruplet combinatorial solver.
+  * Slant range compensation and floor-height projection.
+  * Velocity-gated movement capping (~1.4 m/s) preventing non-physical teleports.
+  * 3-state IMU kinematic filter (`STATIONARY`, `MOVING`, `SETTLING`) fusing accelerometer motion with RF tracking.
+  * 1-click landmark empirical anchor calibration ($A$ and $n$ parameter tuning with live side-by-side reference map preview and reset-to-defaults).
+  * Auto-suggest anchor placement engine with 3D Line-Of-Sight (LOS) raycasting, vertical clearance shadow modeling, and obstacle wall mounting.
+* **Interactive Web Management Portal:**
+  * **Ward Configuration Editor:** Architectural room dimensioning, ensuite cutouts, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor management with MySQL persistence.
+  * **2D Live Ward Map:** Scaled 45cm human dot, live motion trajectories, bed docking status, and interactive tag unbinding.
+  * **Device Provisioning Radar:** Automatic RF spectrum scanner detecting unprovisioned nodes with 1-click enrollment.
+  * **Patient Inpatient Directory:** Full admission lifecycle, fall risk scoring, medical history, bed allocation, and wristband tag binding.
+  * **Live Lab & Diagnostics:** Real-time 5 Hz PPG absorption waveform, dual-channel RSSI Kalman filter comparison, and raw MQTT packet inspector.
+* **Clinical Emergency Audit Logging:** Dedicated MySQL emergency log schema, alert service, and InfluxDB time-series integration for clinical incidents.
+
+### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
+* **Color Passthrough Digital Twin:** Real-time 3D ward generation (`WardVisualizer.cs`) matching real-world architectural dimensions, walls, doors, obstacles, and hospital beds.
+* **Dual-Mode Patient In-Situ Hologram (`PatientHologram.cs`):**
+  * **In-Transit Walking Mode:** 0.65m luminous floor occupancy ring, floating eye-level vitals panel smoothly billboarding to face the doctor as they move.
+  * **Bed-Docked Mode:** Automatically detects when a patient enters their bed area; docks to bed headwall or bedside cart with zero jitter; aligns statically along the bed's rotation facing outward into the room without mirroring.
+  * **Interactive Vitals HUD:** Real-time Heart Rate (pulsating ECG rhythm), Blood Oxygen %, Fall Risk score, IMU motion state badge, and dock mode toggle button.
+  * **Manual Repositioning Handle:** Top-left `[✥ Move]` handle allows pinching and dragging the panel vertically/horizontally, hand extension distance adjustment, and `[🔓 Unfix]` release button.
+* **Spatial Room Alignment Tool (`WardAlignmentTool.cs`, `WardSpatialManager.cs`):**
+  * 2-point door frame calibration with physical floor height depth detection via Meta XR Environment Raycast.
+  * 2-point bed calibration (`AlignWardByBedTwoPoints`).
+  * 2-point wall anchor calibration (`AlignWardByWallAnchors`).
+  * Persistent calibration storage via local PlayerPrefs and MySQL synchronization.
+* **Wrist/Palm Hand Slate HUD (`ShiroHandSlate.cs`, `ShiroHandVisualizer.cs`):**
+  * Hand tracking with contour outline and fingertip direct touch interaction.
+  * **Tab 1: IPS Ward Radar & Mini-Map:** Top-down architectural floorplan rendering room boundaries, beds, anchors, doctor position (compass blip), and patient position (cyan dot).
+  * **Tab 2: Room Calibration:** Quick toggle for calibration modes.
+  * **Tab 3: Hardware Fleet:** Real-time RSSI, battery, and node health.
+  * **Tab 4: Settings & Connection:** Reconnect, IP preset switcher (Wi-Fi, Hotspot, Localhost).
 
 ---
 
@@ -93,108 +133,81 @@ Both the HW-605 (MAX30102) and MPU-6050 share the hardware I2C bus:
 
 ---
 
-## 5. Environment Setup & Configuration
+## 5. Quick Startup Procedure
 
-### Prerequisites
-1. **Node.js** (v18.x or newer): [https://nodejs.org/](https://nodejs.org/)
-2. **XAMPP** (with Apache and MySQL): [https://www.apachefriends.org/](https://www.apachefriends.org/)
-3. **Arduino IDE** (v2.x): [https://www.arduino.cc/en/software](https://www.arduino.cc/en/software)
-   * In **File > Preferences > Additional boards manager URLs**, add:  
-     `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
-   * In **Library Manager**, install:
-     * `PubSubClient` (by Nick O'Leary)
-     * `SparkFun MAX3010x Sensor Library` (by SparkFun)
+Detailed step-by-step instructions are documented in [SYSTEM_STARTUP_PROCEDURE.md](file:///d:/RSW/FYP/Code/SYSTEM_STARTUP_PROCEDURE.md).
 
-### Wi-Fi & Network Configuration
-All physical devices and the host laptop must connect to the **same 2.4 GHz Wi-Fi LAN**.
-
-1. Check your host laptop's local IPv4 address:
-   ```powershell
-   ipconfig
-   ```
-   *(e.g., `192.168.1.229`)*
-
-2. Open the firmware files in `firmware/` and update `ssid`, `password`, and `mqtt_server`:
-   * [firmware/shiro_gateway_node/shiro_gateway_node.ino](file:///d:/RSW/FYP/Code/firmware/shiro_gateway_node/shiro_gateway_node.ino)
-   * [firmware/shiro_anchor_node/shiro_anchor_node.ino](file:///d:/RSW/FYP/Code/firmware/shiro_anchor_node/shiro_anchor_node.ino)
-
----
-
-## 6. How to Build & Run
-
-### Step 1: Initialize Database (XAMPP MySQL)
-1. Open **XAMPP Control Panel** and start **MySQL** and **Apache**.
-2. Open your browser and navigate to `http://localhost/phpmyadmin`.
-3. Create a database named `shiro_db` (utf8mb4_general_ci).
-4. Run the schema migrations in `edge_server/database/` or verify connection with:
+1. **Start MySQL Database:** Open XAMPP Control Panel and start MySQL on port `3306`.
+2. **Launch Edge Server:**
    ```powershell
    cd d:\RSW\FYP\Code\edge_server
-   node database/test_db.js
+   npm start
    ```
-
-### Step 2: Start the Edge Server
-1. In the `edge_server` directory, install Node.js dependencies (first time only):
-   ```powershell
-   npm install
-   ```
-2. Launch the Edge Server and MQTT broker:
-   ```powershell
-   node server.js
-   ```
-3. The server will output:
-   ```text
-   [MQTT BROKER] Listening on 0.0.0.0:1883
-   [WEB DASHBOARD] Accessible at http://localhost:3000
-   ```
-
-### Step 3: Flash Embedded Firmware
-Using Arduino IDE:
-1. **Wristband:** Select `XIAO_ESP32C6`, COM port, and upload `firmware/shiro_wristband_vitals/shiro_wristband_vitals.ino`.
-2. **Edge Node Gateway:** Select `ESP32S3 Dev Module`, COM port, Flash Size `16MB`, PSRAM `OPI PSRAM`, and upload `firmware/shiro_gateway_node/shiro_gateway_node.ino`.
-3. **Stationary Anchors:** Select `ESP32 Dev Module`, Partition Scheme **Huge APP (3MB No OTA / 1MB SPIFFS)**, and upload `firmware/shiro_anchor_node/shiro_anchor_node.ino`.
-
-### Step 4: Access Dashboard & Observe Live Streams
-1. Open `http://localhost:3000` in Google Chrome or Microsoft Edge.
-2. Go to **Device Provisioning & Fleet Radar**:
-   * Watch the Discovery Radar detect broadcasting nodes automatically.
-   * Click **➕ Enroll Device** to add them to the fleet.
-3. Switch to **System Health & Live Lab**:
-   * Touch the HW-605 sensor on the wristband: observe real-time PPG pulse waveform, Heart Rate (BPM), and SpO2.
-   * Move the wristband relative to anchors: observe filtered RSSI and estimated distances.
+3. **Power On Hardware Nodes:**
+   * XIAO ESP32-C6 (Wristband) -> Wear on finger/wrist.
+   * ESP32-S3 (Gateway) -> Connects via BLE and forwards to MQTT.
+   * ESP32-WROOM-32E (Anchors A, B, C) -> Scans RSSI and publishes to MQTT.
+4. **Launch Meta Quest 3 Client:**
+   * Open `quest3_client/` in Unity 6.
+   * Connect Quest 3 via Quest Link / Air Link and click Play on `MainMRScene.unity`.
+   * Look at left palm -> Click `[🎯 Room Calibration]` -> Aim laser at door frame corners -> Ward snaps into physical alignment!
 
 ---
 
-## 7. Project Structure
+## 6. Project Structure
 
 ```
 Code/
-├── .gitignore                      # Git exclusion rules
-├── README.md                       # Main project documentation
-├── SYSTEM_STARTUP_PROCEDURE.md     # Detailed step-by-step physical startup procedure
-├── firmware/                       # Embedded Arduino C++ sketches
+├── .gitignore                      # Git exclusion rules (Node, Unity, firmware)
+├── README.md                       # Master project overview & feature guide
+├── SYSTEM_STARTUP_PROCEDURE.md     # Step-by-step operations & troubleshooting guide
+├── firmware/                       # Embedded Arduino C++ firmware
 │   ├── shiro_wristband_vitals/     # XIAO ESP32-C6 PPG + IMU wearable firmware
 │   ├── shiro_gateway_node/         # ESP32-S3 BLE-to-MQTT bridge firmware
-│   └── shiro_anchor_node/          # ESP32 BLE RSSI trilateration scanner firmware
-└── edge_server/                    # Central Node.js edge server & web portal
-    ├── server.js                   # Server entrypoint (HTTP, WebSocket, MQTT)
-    ├── package.json                # Server dependencies & scripts
-    ├── config/                     # Application and calibration configs
-    ├── database/                   # MySQL schemas, migrations, and connection pool
-    ├── controllers/                # Backend API route controllers
-    ├── services/                   # MQTT broker, WebSocket, EKF, and fleet services
-    ├── routes/                     # Express REST route handlers
-    └── public/                     # Single Page Application frontend (HTML/CSS/JS)
-        ├── index.html              # Main dashboard application shell
-        ├── css/                    # Modular stylesheet components & theme
-        ├── js/                     # MVC client controllers & visual canvas engines
-        └── views/                  # Dynamic HTML module templates
+│   └── shiro_anchor_node/          # ESP32 BLE RSSI scanner firmware
+├── edge_server/                    # Central Node.js edge server & web portal
+│   ├── server.js                   # Server entrypoint (HTTP, WebSocket, MQTT)
+│   ├── package.json                # Server dependencies & scripts
+│   ├── config/                     # Application, network, and calibration configs
+│   ├── database/                   # MySQL schemas, migrations, and connection pool
+│   ├── controllers/                # Express controllers (Wards, Patients, Devices)
+│   ├── services/                   # MQTT, WebSocket, IPS EKF, and Alert services
+│   ├── routes/                     # Express REST API routes
+│   └── public/                     # Single Page Application frontend (HTML/CSS/JS)
+│       ├── index.html              # Main dashboard application shell
+│       ├── css/                    # Modular stylesheet components & theme
+│       ├── js/                     # MVC client controllers & canvas rendering
+│       └── views/                  # Dynamic HTML module templates
+└── quest3_client/                  # Unity 6 Meta Quest 3 Mixed Reality Client
+    ├── Assets/
+    │   ├── Scenes/                 # MainMRScene.unity
+    │   ├── Scripts/ShiroMR/        # C# Spatial MR architecture
+    │   │   ├── ShiroMRManager.cs       # Master MR orchestrator & lifecycle
+    │   │   ├── ShiroNetworkManager.cs  # WebSocket & REST network client
+    │   │   ├── WardVisualizer.cs       # 3D digital twin room generator
+    │   │   ├── WardSpatialManager.cs   # Coordinate math, bed docking, alignment
+    │   │   ├── WardAlignmentTool.cs    # 2-point door & bed calibration laser tool
+    │   │   ├── PatientHologram.cs      # Dual-mode in-situ vitals hologram & HUD
+    │   │   ├── ShiroHandSlate.cs       # 4-tab wrist radar & controls HUD
+    │   │   ├── ShiroHandVisualizer.cs  # Hand outline contour tracking
+    │   │   ├── ShiroVRPointer.cs       # Depth raycast laser pointer
+    │   │   └── ShiroDataModels.cs      # Telemetry & JSON data contracts
+    │   ├── Plugins/                # NativeWebSocket networking library
+    │   ├── Resources/              # Runtime UI fonts & default assets
+    │   ├── Settings/               # URP rendering pipelines & volume profiles
+    │   └── XR/                     # OpenXR & Meta XR runtime configurations
+    ├── Packages/                   # Package manifest & lockfiles
+    └── ProjectSettings/            # InputSystem, TagManager, QualitySettings
 ```
 
 ---
 
-## 8. Upcoming Milestones
+## 7. Upcoming Milestones & Roadmap
 
-* [ ] Meta Quest 3 Mixed Reality spatial interface client (Unity OpenXR).
-* [ ] Multi-anchor 2D trilateration positioning solver.
-* [ ] Spatial heatmaps and automated geofenced clinical alarms.
-
+* [ ] **Phase C (MR Emergency Fall Alert & Path Guidance):** High-priority flashing red FOV alert banner with audible chime; 3D emergency strobe beacon over bed; luminous breadcrumb floor path leading clinician to fallen patient.
+* [ ] **Phase D (Untethered Standalone Android APK):** Standalone ARM64 Android build pushed directly to Quest 3 for untethered wireless hospital mobility.
+* [ ] **Phase E (Empirical Evaluation & Thesis Viva Preparation):**
+  * Quantitative localization accuracy benchmarking across 10 physical grid points in `WARD-005`.
+  * End-to-end telemetry and tracking latency profiling (target: $< 250\text{ ms}$).
+  * Frame rate (90 FPS) and thermal stability verification on Meta Quest 3.
+  * Thesis documentation, portfolio updates, and viva examination live demonstration walkthrough video/script.

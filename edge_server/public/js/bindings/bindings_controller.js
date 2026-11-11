@@ -72,27 +72,39 @@
               loadBindingsData();
             });
 
-            // Track wristband heartbeat / telemetry to update live status badges
+            // Track wristband heartbeat / telemetry to update live status badges without flashing
             window.wsClient.on('DEVICE_HEARTBEAT', (msg) => {
               if (!msg || !msg.device_id) return;
               if (msg.device_type === 'WRISTBAND' || msg.device_id.startsWith('TAG-') || msg.device_id.startsWith('wristband-')) {
-                updateWristbandLiveStatusInBindings(msg.device_id, msg.status || 'ONLINE');
+                const status = (msg.is_charging || msg.status === 'CHARGING') ? 'CHARGING' : (msg.status || 'ONLINE');
+                updateWristbandLiveStatusInBindings(msg.device_id, status, null, msg.battery_level);
               }
             });
 
             window.wsClient.on('TELEMETRY', (msg) => {
               const tagId = msg.data?.tag_id || msg.tag_id || 'TAG-001';
-              updateWristbandLiveStatusInBindings(tagId, 'ONLINE');
+              const isChg = msg.data?.charging === true;
+              const status = isChg ? 'CHARGING' : 'ONLINE';
+              const mode = (msg.data?.motion === 'FALL_EMERGENCY') ? 'ACTIVE' : 'POWER_SAVING';
+              updateWristbandLiveStatusInBindings(tagId, status, mode, msg.data?.battery);
             });
           }
 
-          function updateWristbandLiveStatusInBindings(deviceId, status) {
+          function updateWristbandLiveStatusInBindings(deviceId, status, mode = null, battery = null) {
             let changed = false;
             // Update in active bindings
             cachedActiveBindings.forEach(b => {
               if (b.device_id === deviceId) {
                 if (b.device_status !== status) {
                   b.device_status = status;
+                  changed = true;
+                }
+                if (mode && b.telemetry_mode !== mode) {
+                  b.telemetry_mode = mode;
+                  changed = true;
+                }
+                if (battery !== null && battery !== undefined && b.battery_level !== battery) {
+                  b.battery_level = battery;
                   changed = true;
                 }
               }
@@ -105,12 +117,17 @@
                   w.device_status = status;
                   changed = true;
                 }
+                if (battery !== null && battery !== undefined && w.battery_level !== battery) {
+                  w.battery_level = battery;
+                  changed = true;
+                }
               }
             });
 
             // Update selected wristband preview if matched
             if (selectedWristband && selectedWristband.device_id === deviceId) {
               selectedWristband.device_status = status;
+              if (battery !== null && battery !== undefined) selectedWristband.battery_level = battery;
               renderTagPreviewCard(selectedWristband);
             }
 
@@ -358,10 +375,12 @@
             }
 
             menu.innerHTML = items.map(w => {
-              const isOnline = (w.device_status || 'OFFLINE').toUpperCase() === 'ONLINE';
-              const statusBadge = isOnline
-                ? '<span class="badge badge-live" style="font-size: 10px;">● ONLINE</span>'
-                : '<span class="badge badge-neutral" style="font-size: 10px;">○ STANDBY</span>';
+              const statusUpper = (w.device_status || 'OFFLINE').toUpperCase();
+              const statusBadge = statusUpper === 'CHARGING'
+                ? '<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #F59E0B; font-size: 10px; font-weight: 600;">⚡ Charging</span>'
+                : (statusUpper === 'ONLINE'
+                  ? '<span class="badge badge-live" style="font-size: 10px;">● Online</span>'
+                  : '<span class="badge badge-neutral" style="font-size: 10px;">○ Standby</span>');
 
               const batText = w.battery_level !== null && w.battery_level !== undefined ? `${w.battery_level}% Battery` : 'Battery N/A';
 
@@ -427,10 +446,12 @@
             const preview = document.getElementById('binding-tag-preview');
             if (!preview) return;
 
-            const isOnline = (w.device_status || 'OFFLINE').toUpperCase() === 'ONLINE';
-            const statusBadge = isOnline
-              ? '<span class="badge badge-live">● ONLINE</span>'
-              : '<span class="badge badge-neutral">○ STANDBY (READY)</span>';
+            const statusUpper = (w.device_status || 'OFFLINE').toUpperCase();
+            const statusBadge = statusUpper === 'CHARGING'
+              ? '<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #F59E0B; font-size: 11px; font-weight: 600;">⚡ Charging</span>'
+              : (statusUpper === 'ONLINE'
+                ? '<span class="badge badge-live">● Online</span>'
+                : '<span class="badge badge-neutral">○ Standby (Ready)</span>');
 
             const batText = w.battery_level !== null && w.battery_level !== undefined ? `${w.battery_level}% Battery` : 'Battery N/A';
 
@@ -638,10 +659,17 @@
                 ? '<span class="badge badge-warning" style="font-size: 10px;">● MED RISK</span>'
                 : '<span class="badge badge-live" style="font-size: 10px;">● LOW RISK</span>';
 
-            const isOnline = (b.device_status || 'OFFLINE').toUpperCase() === 'ONLINE';
-            const statusBadge = isOnline
-              ? '<span class="badge badge-live">● 5 Hz Active Stream</span>'
-              : '<span class="badge badge-alert">○ Device Offline</span>';
+            const statusUpper = (b.device_status || 'OFFLINE').toUpperCase();
+            let statusBadge = '<span class="badge badge-neutral" style="font-size: 11px;">○ Device Offline</span>';
+            if (statusUpper === 'CHARGING') {
+              statusBadge = '<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #F59E0B; font-size: 11px; font-weight: 600;">⚡ Charging</span>';
+            } else if (statusUpper === 'ONLINE') {
+              if (b.telemetry_mode === 'ACTIVE') {
+                statusBadge = '<span class="badge badge-live" style="font-size: 11px;">● 1 Hz Active Stream</span>';
+              } else {
+                statusBadge = '<span class="badge" style="background:#E0F2FE; color:#0369A1; border:1px solid #0EA5E9; font-size: 11px; font-weight: 600;">● 3-Min Power Saving</span>';
+              }
+            }
 
             const bedText = b.bed_code ? `${b.bed_code}` : 'Unassigned Bed';
             const wardText = b.ward_title || 'Ward';

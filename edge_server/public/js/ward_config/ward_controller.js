@@ -942,8 +942,13 @@
               <option value="270" ${rot === 270 ? 'selected' : ''}>⬅️ 270° (West)</option>
             </select>
           </td>
-          <td style="color: var(--text-secondary); font-size: 12px; font-weight: 600; white-space: nowrap;">
-            ${spanXM.toFixed(2)}m × ${spanYM.toFixed(2)}m
+          <td>
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <span style="font-size: 11px; color: var(--text-muted);" title="Mattress Width">W:</span>
+              <input type="number" step="0.05" min="0.5" max="3.0" class="form-control" style="width: 58px; padding: 4px;" value="${Number(b.width || 0.90).toFixed(2)}" oninput="updateBed(${index}, 'width', this.value)">
+              <span style="font-size: 11px; color: var(--text-muted);" title="Mattress Length">L:</span>
+              <input type="number" step="0.05" min="0.8" max="3.5" class="form-control" style="width: 58px; padding: 4px;" value="${Number(b.length || 2.00).toFixed(2)}" oninput="updateBed(${index}, 'length', this.value)">
+            </div>
           </td>
           <td>
             <select class="form-control" style="padding: 4px 8px; font-size: 11px;" onchange="updateBed(${index}, 'status', this.value)">
@@ -987,6 +992,8 @@
       if (currentWard.beds && currentWard.beds[index]) {
         if (field === 'x' || field === 'y') {
           currentWard.beds[index][field] = Math.max(0, Math.round((parseFloat(value) || 0) * 100) / 100);
+        } else if (field === 'width' || field === 'length') {
+          currentWard.beds[index][field] = Math.max(0.40, Math.round((parseFloat(value) || 1.0) * 100) / 100);
         } else if (field === 'rotation_deg') {
           currentWard.beds[index].rotation_deg = parseInt(value, 10) || 0;
           renderBedsTable();

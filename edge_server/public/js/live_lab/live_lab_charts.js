@@ -344,6 +344,43 @@ function initLiveLabListeners() {
       }
     });
   }
+
+  // Bind Emergency Simulation Test Bench Buttons
+  const btnSimFall = document.getElementById('btn-sim-fall');
+  const btnSimVitals = document.getElementById('btn-sim-vitals');
+  const btnSimGeofence = document.getElementById('btn-sim-geofence');
+  const simPatientSelect = document.getElementById('sim-patient-select');
+
+  async function triggerSimulation(category) {
+    const patientId = simPatientSelect ? simPatientSelect.value : 'P-001';
+    let patientName = 'Tan Ah Kow';
+    if (patientId === 'P-002') patientName = 'Siti Nurhaliza';
+    if (patientId === 'P-003') patientName = 'Kavitha Mohan';
+
+    try {
+      const res = await fetch('/api/alerts/trigger-simulation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category,
+          patient_id: patientId,
+          patient_name: patientName,
+          ward_id: 'WARD-001',
+          bed_id: patientId === 'P-001' ? 'BED-001-01' : (patientId === 'P-002' ? 'BED-001-02' : 'BED-001-03')
+        })
+      });
+      const data = await res.json();
+      if (data.success && typeof showToast === 'function') {
+        showToast(`Triggered ${category.replace('_', ' ')} simulation`, 'warning');
+      }
+    } catch (e) {
+      console.error('[SIMULATION ERROR]', e);
+    }
+  }
+
+  if (btnSimFall) btnSimFall.onclick = () => triggerSimulation('FALL_ACCIDENT');
+  if (btnSimVitals) btnSimVitals.onclick = () => triggerSimulation('CRITICAL_VITALS');
+  if (btnSimGeofence) btnSimGeofence.onclick = () => triggerSimulation('GEOFENCE_BREACH');
 }
 
 // Global exposure

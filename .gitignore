@@ -53,3 +53,29 @@ edge_server/public/uploads/patients/*.jpg
 edge_server/public/uploads/patients/*.jpeg
 !edge_server/public/uploads/patients/default_avatar.svg
 !edge_server/public/uploads/patients/preset_*.svg
+
+# =============================================================================
+# Unity (Meta Quest 3 MR Client)
+# =============================================================================
+quest3_client/[Ll]ibrary/
+quest3_client/[Tt]emp/
+quest3_client/[Oo]bj/
+quest3_client/[Bb]uild/
+quest3_client/[Bb]uilds/
+quest3_client/[Ll]ogs/
+quest3_client/[Uu]ser[Ss]ettings/
+quest3_client/[Mm]emoryCaptures/
+quest3_client/*.csproj
+quest3_client/*.unityproj
+quest3_client/*.sln
+quest3_client/*.slnx
+quest3_client/*.suo
+quest3_client/*.user
+quest3_client/*.userprefs
+quest3_client/*.pidb
+quest3_client/*.booproj
+quest3_client/*.svd
+quest3_client/*.pdb
+quest3_client/*.opendb
+quest3_client/*.VC.db
+quest3_client/Assets/_Recovery/

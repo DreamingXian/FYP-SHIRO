@@ -7,6 +7,7 @@ const { KalmanFilter1D, calculateDistance, getCalibration, setAnchorCalibration,
 const { broadcastToClients } = require('./websocket_service');
 const deviceService = require('./device_service');
 const calibrationService = require('./calibration_service');
+const timeSeriesService = require('./time_series_service');
 
 // Zero-latency in-memory lookup caches
 let anchorToWardMap = new Map(); // Key: MAC or DeviceId -> { ward_id, anchor_id, device_id, x, y, z }
@@ -709,6 +710,16 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
       calibration: getCalibration(),
       timestamp: now
     });
+
+    // Log spatial trajectory to InfluxDB (Table 4.10)
+    timeSeriesService.logTrajectory({
+      patientId: canonicalTagId,
+      wristbandMac: cleanMac || '',
+      posX: smoothX,
+      posY: smoothY,
+      confidence: (motionStateText === 'STATIONARY') ? 0.99 : 0.88,
+      zone: wardId || 'WARD-001'
+    });
   }
 }
 
@@ -720,7 +731,7 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
 setInterval(() => {
   const now = Date.now();
   for (const [tagId, pos] of tagSmoothedPositions.entries()) {
-    if (pos.status === 'ONLINE' && (now - pos.last_seen > OFFLINE_TIMEOUT_MS)) {
+    if ((pos.status === 'ONLINE' || pos.status === 'CHARGING') && (now - pos.last_seen > OFFLINE_TIMEOUT_MS)) {
       pos.status = 'OFFLINE';
       pos.confidence = 'LAST_KNOWN';
 
