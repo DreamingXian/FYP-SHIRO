@@ -1,7 +1,7 @@
 # SHIRO: Spatial Health Interface & Real-Time Observer
 ## Master System Startup Procedure & Hardware/Software Operations Guide
 
-> **Document Version:** 2.0.0  
+> **Document Version:** 2.1.0  
 > **Last Updated:** November 2026  
 > **Project:** Final Year Project (RSWG7) - MR-Patient Connect (SHIRO)  
 > **Maintainer:** Tan Shou Xian  
@@ -11,35 +11,39 @@
 
 ## 1. System Architecture & Topology Overview
 
-SHIRO is an end-to-end edge-computed clinical IoT telemetry and Mixed Reality platform. All data flows across three integrated tiers:
+SHIRO uses a streamlined dual-role anchor architecture where **standalone gateway hardware is eliminated**. The stationary wall anchors perform both indoor localization multilateration (measuring raw BLE RSSI attenuation) and wireless telemetry gateway duties (unpacking BPM, SpO2 %, battery %, motion state, and fall detection events):
 
 ```
 [ Tier 1: Patient Wearable ]
-  Seeed Studio XIAO ESP32-C6 + HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU)
+  Seeed Studio XIAO ESP32-C6 + HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) + Battery Divider
          │
-         ├──(BLE 5.0 GATT Notifications @ 5 Hz)──► [ Tier 1.5: Gateway Node ]
-         │                                          ESP32-S3-N16R8 (USB CDC)
-         │                                                 │
-         │                                                 ├──(Wi-Fi MQTT TCP:1883)──┐
-         │                                                                            ▼
-         └──(BLE Advertising Beacons @ 10 Hz)────► [ Tier 1.5: Stationary Anchors ]  [ Tier 2: Edge Server ]
-                                                   3x ESP32-WROOM-32E (A, B, C)      Host PC / Laptop
-                                                           │                          - Aedes MQTT Broker (:1883)
-                                                           └──(Wi-Fi MQTT TCP:1883)──►- HTTP REST Server (:3000)
-                                                                                      - WebSocket Server (:3000)
-                                                                                      - 1D Extended Kalman Filter (EKF)
-                                                                                      - Multi-Anchor Trilateration Engine
-                                                                                      - MySQL Database (XAMPP :3306)
-                                                                                      - InfluxDB Time-Series Engine
-                                                                                      - Web Management Dashboard
-                                                                                              │
-                                                                                              ├──(WebSocket JSON:3000)──► [ Tier 3: MR Client ]
-                                                                                                                          Meta Quest 3 (Unity 6 OpenXR)
-                                                                                                                          - Passthrough Digital Twin
-                                                                                                                          - Patient In-Situ Hologram
-                                                                                                                          - Bed Headboard / Bedside Dock
-                                                                                                                          - 2-Point Spatial Alignment
-                                                                                                                          - Wrist Radar Hand Slate HUD
+         └──(BLE 5.0 High-Rate Advertising Beacons @ 5–10 Hz)
+             │  [Contains: RSSI Beacons + Embedded Biometric & Kinematic Payload]
+             ▼
+[ Tier 1.5: Dual-Role Stationary Wall Anchors (Hybrid Anchor & Gateway) ]
+  3x ESP32-WROOM-32E (Universal Firmware - Auto-Provisioned via Edge Server)
+         │  - Measures raw RSSI attenuation for 2D/3D multilateration
+         │  - Unpacks BPM, SpO2 %, Battery %, G-force, Motion state, and Fall alerts
+         │
+         └──(Wi-Fi MQTT TCP:1883)──► [ Tier 2: Central Edge Server ]
+                                      Host PC / Laptop
+                                      - Embedded Aedes MQTT Broker (:1883)
+                                      - HTTP REST API Server (:3000)
+                                      - WebSocket Real-Time Event Server (:3000)
+                                      - 1D Extended Kalman Filter (EKF) Signal Conditioning
+                                      - Multi-Anchor Non-Linear Trilateration Engine
+                                      - 4-Anchor Quadruplet Combinatorial Solver
+                                      - MySQL Relational Database (XAMPP :3306)
+                                      - InfluxDB Time-Series Telemetry Engine
+                                      - Web Operations Management Dashboard
+                                              │
+                                              └──(WebSocket JSON:3000)──► [ Tier 3: MR Client ]
+                                                                          Meta Quest 3 (Unity 6 OpenXR)
+                                                                          - Color Passthrough Digital Twin
+                                                                          - In-Situ Walking Patient Hologram
+                                                                          - Bed Docking (Headboard/Bedside)
+                                                                          - 2-Point Door/Bed Spatial Calibration
+                                                                          - Wrist Radar Hand Slate HUD
 ```
 
 ---
@@ -47,13 +51,13 @@ SHIRO is an end-to-end edge-computed clinical IoT telemetry and Mixed Reality pl
 ## 2. Pre-Requisite Network & Environment Setup
 
 ### 2.1 Wi-Fi Network Requirements
-* All wireless nodes (Gateway, Anchors, Laptop Edge Server, and Meta Quest 3) **must be connected to the exact same 2.4 GHz Local Area Network (LAN)** or laptop Wi-Fi hotspot.
-* **Network SSID:** `REDACTED_SSID`
+* All wireless nodes (Anchors, Laptop Edge Server, and Meta Quest 3) **must be connected to the exact same 2.4 GHz Local Area Network (LAN)** or laptop Wi-Fi hotspot.
+* **Network SSID:** `REDACTED_SSID` (or your active hotspot)
 * **Network Password:** `REDACTED`
 * *Security Note:* Ensure Client Isolation / AP Isolation is **DISABLED** on your Wi-Fi router so devices can communicate directly over local IP sockets.
 
 ### 2.2 Finding the Laptop Edge Server IP Address
-The ESP32 nodes and Meta Quest 3 must know the exact local IP address of your laptop to connect to the MQTT broker and WebSocket server.
+The ESP32 anchor nodes and Meta Quest 3 must know the exact local IP address of your laptop to connect to the MQTT broker and WebSocket server.
 1. On your Windows laptop, open PowerShell or Command Prompt.
 2. Run:
    ```powershell
@@ -61,7 +65,6 @@ The ESP32 nodes and Meta Quest 3 must know the exact local IP address of your la
    ```
 3. Look for **Wireless LAN adapter Wi-Fi** --> **IPv4 Address** (e.g., `192.168.1.229`).
 4. If your router assigns a new IP address via DHCP, you must update:
-   - `mqtt_server` in `firmware/shiro_gateway_node/shiro_gateway_node.ino`
    - `mqtt_server` in `firmware/shiro_anchor_node/shiro_anchor_node.ino`
    - `serverIp` in Unity Inspector (`ShiroMRManager`) or via the Quest 3 Hand Slate Connection menu.
 
@@ -113,7 +116,7 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
    [HTTP DASHBOARD] Accessible at:
      -> Localhost:  http://localhost:3000
      -> Network IP: http://192.168.1.229:3000
-   [MQTT BROKER]  tcp://192.168.1.229:1883 (ESP32 Gateway)
+   [MQTT BROKER]  tcp://192.168.1.229:1883 (ESP32 Anchors)
    [WEBSOCKET]    ws://192.168.1.229:3000 (Web & Quest 3 HMD)
    ======================================================
    ```
@@ -127,7 +130,7 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 
 ---
 
-## 4. Tier 1: Embedded Hardware Setup & Arduino IDE Programming Guide
+## 4. Tier 1: Embedded Hardware Setup & Firmware Programming Guide
 
 ### 4.1 Arduino IDE Global Environment Configuration
 1. Open **Arduino IDE** (v2.x recommended).
@@ -145,16 +148,17 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 ### 4.2 Board 1: Wristband Tag (Seeed Studio XIAO ESP32-C6)
 
 * **Physical Hardware:** Seeed Studio XIAO ESP32-C6 Microcontroller
-* **Sensors Attached:** HW-605 (MAX30102 PPG Optical Sensor) + MPU-6050 (6-DOF IMU)
+* **Sensors Attached:** HW-605 (MAX30102 PPG Optical Sensor) + MPU-6050 (6-DOF IMU) + 100k/100k battery divider on `D0`
 * **Firmware Location:** `firmware/shiro_wristband_vitals/shiro_wristband_vitals.ino`
 
 #### Hardware Wiring Diagram:
-| Sensor Pin | XIAO ESP32-C6 Pin | Function |
+| Sensor Pin / Signal | XIAO ESP32-C6 Pin | Function |
 | :--- | :--- | :--- |
 | **VCC / VIN** | **3.3V** | 3.3V Regulated Power |
 | **GND** | **GND** | Ground |
 | **SDA** | **D4** (GPIO 21) | I2C Data Line |
 | **SCL** | **D5** (GPIO 22) | I2C Clock Line |
+| **BAT+ (via 100k/100k divider)** | **D0** (GPIO 0) | Analog Battery Voltage Monitor |
 
 *Both sensors share the same hardware I2C bus lines.*
 
@@ -167,66 +171,66 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 
 ---
 
-### 4.3 Board 2: Edge Node Gateway (ESP32-S3-N16R8)
-
-* **Physical Hardware:** ESP32-S3-N16R8 Dev Module
-* **Role:** Transparent BLE-to-MQTT bridge. Subscribes to wristband BLE GATT notifications at 5 Hz and forwards packets to the laptop MQTT broker over Wi-Fi.
-* **Firmware Location:** `firmware/shiro_gateway_node/shiro_gateway_node.ino`
-
-#### Configuration Check:
-Open `shiro_gateway_node.ino` and verify:
-```cpp
-const char* ssid        = "REDACTED_SSID";
-const char* password    = "REDACTED";
-const char* mqtt_server = "192.168.1.229"; // Your laptop IP
-const int   mqtt_port   = 1883;
-```
-
-#### Arduino IDE Settings:
-1. Connect ESP32-S3 via USB-C (ensure you connect to the `USB` port).
-2. Select **Tools --> Board --> esp32 --> "ESP32S3 Dev Module"**.
-3. Select **Tools --> Flash Size --> "16MB (128Mb)"**.
-4. Select **Tools --> PSRAM --> "OPI PSRAM"**.
-5. Select **Tools --> USB CDC On Boot --> "Enabled"**.
-6. Select **Tools --> Port** (COM port for ESP32-S3).
-7. Click **Upload** (`Ctrl + U`).
-
----
-
-### 4.4 Boards 3, 4, 5: Stationary Anchor Nodes (ESP32-WROOM-32E)
+### 4.3 Board 2: Dual-Role Stationary Wall Anchors (ESP32-WROOM-32E)
 
 * **Physical Hardware:** ESP32-WROOM-32E Development Boards (3+ units for 2D trilateration)
-* **Role:** Continuous BLE RSSI scanners. Measures raw signal attenuation from the wristband and streams RSSI vectors to the Edge Server over Wi-Fi/MQTT.
+* **Dual Role:** Continuously scans BLE advertising beacons from wristbands, measures raw RSSI for IPS multilateration, unpacks embedded vitals (BPM, SpO2, battery, motion, fall alerts), and streams unified JSON packets to MQTT over Wi-Fi.
 * **Firmware Location:** `firmware/shiro_anchor_node/shiro_anchor_node.ino`
 
-#### Setting Anchor Identity:
-Open `shiro_anchor_node.ino` before uploading to each respective board:
-* **Anchor A:** `#define ANCHOR_ID "anchor-A"`
-* **Anchor B:** `#define ANCHOR_ID "anchor-B"`
-* **Anchor C:** `#define ANCHOR_ID "anchor-C"`
+#### Universal Firmware Notice:
+> [!NOTE]
+> `shiro_anchor_node.ino` uses **Universal Firmware Architecture**. You flash the exact same compiled sketch to ALL anchor boards! Do NOT hardcode IDs. The Central Edge Server automatically identifies and provisions each anchor by its hardware MAC address during discovery radar enrollment.
+
+#### Configuration Check:
+Open `shiro_anchor_node.ino` and verify Wi-Fi and MQTT connection settings:
+```cpp
+const char* ssid        = "REDACTED_SSID";  // Your Wi-Fi SSID
+const char* password    = "REDACTED";          // Your Wi-Fi Password
+const char* mqtt_server = "192.168.1.229";      // Your Laptop IP
+const int   mqtt_port   = 1883;
+```
 
 #### Mandatory Partition Scheme Setting:
 > [!IMPORTANT]
 > The anchor firmware compiles both Bluetooth and Wi-Fi/MQTT stacks (~1.63 MB binary). The default partition (1.3 MB) will trigger a compiler error. You **MUST** change the partition scheme:
 
-1. Select **Tools --> Board --> esp32 --> "ESP32 Dev Module"**.
-2. Select **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**.
-3. Select **Tools --> Upload Speed --> "921600"**.
-4. Select **Tools --> Port** (physical USB serial port, e.g., `COM10+`).
-5. Click **Upload** (`Ctrl + U`). *(If `Connecting........_____`, press and hold the physical **BOOT** button for 1 second).*
+1. Connect ESP32-WROOM-32E via USB cable.
+2. Select **Tools --> Board --> esp32 --> "ESP32 Dev Module"**.
+3. Select **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**.
+4. Select **Tools --> Upload Speed --> "921600"**.
+5. Select **Tools --> Port** (physical USB serial port, e.g., `COM10+`).
+6. Click **Upload** (`Ctrl + U`). *(If `Connecting........_____`, press and hold the physical **BOOT** button for 1 second).*
 
 ---
 
-## 5. Tier 3: Meta Quest 3 Mixed Reality (MR) Spatial Client
+## 5. Anchor Power Supply Deployment Plan (Central 12V DC Bus)
+
+For deploying anchors across a room without running multiple individual wall plugs:
+
+### 5.1 Power Architecture:
+* **Central Source:** 12V 2A DC Wall Adapter.
+* **Bus Distribution:** 2-core thin wire (22/24 AWG) routed along room perimeter walls.
+* **Local Regulation:** Mini-360 or LM2596 step-down buck converter at each anchor node, calibrated to **5.0V output**.
+* **Board Connection:** Connect the buck converter's `5.0V` output to the **`5V` (or `V5`)** pin on the ESP32-WROOM-32E, and ground to **`GND`**.
+
+### 5.2 Mandatory Calibration Rule Before Connecting Boards:
+1. Turn on the 12V central power supply.
+2. Use a digital multimeter to measure output voltage across `OUT+` and `OUT-` on each buck converter.
+3. Turn the brass adjustment screw until the multimeter reads **exactly 5.0V**.
+4. Only connect the ESP32 board **after** verifying the 5.0V reading to avoid overvoltage damage.
+
+---
+
+## 6. Tier 3: Meta Quest 3 Mixed Reality (MR) Spatial Client
 
 The Quest 3 client delivers the spatial hospital digital twin, in-situ floating vitals HUD, and room calibration tools directly overlaid in color Passthrough.
 
-### 5.1 Project Location & Dependencies
+### 6.1 Project Location & Dependencies
 * **Project Folder:** `quest3_client/` (or `D:\RSW\FYP\VR\Shiro_Quest3_MR`)
 * **Engine Version:** Unity 6 (`6000.3.28f1`) Universal Render Pipeline (URP)
 * **Key Packages:** Meta XR Core SDK, Meta XR Building Blocks, `NativeWebSocket`, Unity New Input System.
 
-### 5.2 Opening & Configuring the Project
+### 6.2 Opening & Configuring the Project
 1. Open **Unity Hub** and click **Add** -> Select `quest3_client/` (or `D:\RSW\FYP\VR\Shiro_Quest3_MR`).
 2. Open the project with Unity `6000.3.28f1`.
 3. In the Project window, open `Assets/Scenes/MainMRScene.unity`.
@@ -236,7 +240,7 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
    * **Target Ward ID:** `WARD-005` (or your active ward code).
    * **Auto Connect on Start:** Enabled.
 
-### 5.3 Running the Client (Two Methods)
+### 6.3 Running the Client (Two Methods)
 
 #### Method A: Instant Play via Meta Quest Link / Air Link (Fastest for Testing)
 1. Power on Meta Quest 3 and connect to your PC via USB-C cable or 5 GHz Wi-Fi (Air Link).
@@ -252,7 +256,7 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 
 ---
 
-### 5.4 Spatial Room Calibration Procedure
+### 6.4 Spatial Room Calibration Procedure
 
 To align the digital twin ward with your physical room:
 
@@ -281,7 +285,7 @@ To align the digital twin ward with your physical room:
 
 ---
 
-### 5.5 In-Situ Patient Hologram & Bed Docking Controls
+### 6.5 In-Situ Patient Hologram & Bed Docking Controls
 
 When the patient wearing the wristband is detected by the IPS engine:
 1. **In-Transit Walking Mode:**
@@ -301,7 +305,7 @@ When the patient wearing the wristband is detected by the IPS engine:
 
 ---
 
-### 5.6 Wrist Hand Slate HUD
+### 6.6 Wrist Hand Slate HUD
 
 Look at your left palm/wrist to summon the 4-tab clinical slate:
 * **Tab 1: IPS Ward Radar & Mini-Map:** Top-down architectural floorplan showing room boundaries, beds, anchors, doctor position (green compass blip), and patient position (cyan dot).
@@ -311,7 +315,7 @@ Look at your left palm/wrist to summon the 4-tab clinical slate:
 
 ---
 
-## 6. End-to-End Daily Startup Routine
+## 7. End-to-End Daily Startup Routine
 
 Follow this numbered checklist for demonstrations, laboratory testing, and clinical trials:
 
@@ -325,17 +329,21 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
   Open Terminal -> cd d:\RSW\FYP\Code\edge_server -> npm start
   Verify console outputs: [HTTP DASHBOARD], [MQTT BROKER], [WEBSOCKET] Ready.
 
-[Step 3: Power On Hardware Nodes]
-  Power Seeed Studio XIAO ESP32-C6 (Wristband) -> Place finger on sensor.
-  Power ESP32-S3 (Gateway) -> Confirm Web Dashboard begins receiving packets at 5 Hz.
-  Power ESP32-WROOM-32E (Anchors A, B, C) -> Confirm RSSI populates on Live Map.
+[Step 3: Power On Wristband Tag]
+  Power Seeed Studio XIAO ESP32-C6 (Power bank or USB).
+  Place finger firmly on the optical sensor.
 
-[Step 4: Launch Meta Quest 3 MR Client]
+[Step 4: Power On Stationary Wall Anchors]
+  Power on Anchors (A, B, C).
+  Observe the Web Dashboard: Anchors automatically connect via Wi-Fi/MQTT and begin scanning.
+  Live Map displays raw and filtered RSSI with live estimated distances and vitals.
+
+[Step 5: Launch Meta Quest 3 MR Client]
   Put on Meta Quest 3 -> Start Quest Link.
   In Unity, hit Play on 'MainMRScene'.
   Observe WebSocket connected message in VR.
 
-[Step 5: Calibrate Room]
+[Step 6: Calibrate Room]
   Turn left palm up -> Click [🎯 Room Calibration].
   Aim laser pointer at door frame corners -> Lock Point 1 & Point 2.
   Verify virtual hospital beds overlay the real physical furniture perfectly.
@@ -343,15 +351,15 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 
 ---
 
-## 7. Troubleshooting & Recovery Matrix
+## 8. Troubleshooting & Recovery Matrix
 
 | Symptom / Error | Root Cause | Immediate Resolution |
 | :--- | :--- | :--- |
-| `rc=-4` or `rc=-2` in Gateway / Anchor Serial Monitor | Board cannot reach Laptop MQTT broker. | 1. Check laptop IP via `ipconfig` and ensure `mqtt_server` in `.ino` matches.<br>2. Ensure Windows Firewall allows incoming TCP port `1883`.<br>3. Verify `npm start` is running. |
+| `rc=-4` or `rc=-2` in Anchor Serial Monitor | Board cannot reach Laptop MQTT broker. | 1. Check laptop IP via `ipconfig` and ensure `mqtt_server` in `.ino` matches.<br>2. Ensure Windows Firewall allows incoming TCP port `1883`.<br>3. Verify `npm start` is running. |
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | Fixed in v2.0: Single persistent connection per headset serial (`QUEST3-001`) with heartbeats. Ensure only one Unity instance is playing. |
 | Virtual room overlay appears underground or tilted | Calibration point snapped to virtual floor mesh instead of physical floor. | Fixed in v2.0: Depth raycasting now queries `EnvironmentRaycastManager` to detect true physical floor height before transforming coordinates. |
-| Bed vitals panel is mirrored / backwards | Canvas local rotation flipped $180^\circ$ relative to bed anchor. | Fixed in v2.0: `GetBedHeadboardRotation` now matches `wardOrigin.rotation * Quaternion.Euler(0, bed.rotation_deg, 0)`. The Canvas front face ($ local -Z$) points outward down the mattress into the room. |
+| Bed vitals panel is mirrored / backwards | Canvas local rotation flipped $180^\circ$ relative to bed anchor. | Fixed in v2.0: `GetBedHeadboardRotation` now matches `wardOrigin.rotation * Quaternion.Euler(0, bed.rotation_deg, 0)`. The Canvas front face (local $-Z$) points outward down the mattress into the room. |
 | Laser pointer blocked by 3D room overlay | Raycast hit testing virtual wall/bed colliders before physical space. | Virtual room geometry colliders are bypassed during calibration mode; raycast queries physical depth sensor mesh directly. |
 | Heart rate reads 0 or stays on `Reading...` | Finger placement too loose or sensor FIFO saturated. | Rest finger gently but firmly over the optical lens of the HW-605. Ensure IR readings exceed 50,000 in Serial Monitor / Dashboard. |
