@@ -1,6 +1,7 @@
 // =============================================================================
 // SHIRO Edge Server Configuration
 // =============================================================================
+require('./load_env');
 const os = require('os');
 const path = require('path');
 
@@ -35,7 +36,8 @@ module.exports = {
 
   // InfluxDB v2 Time-Series Database Configuration (Chapter 4, Table 4.10)
   INFLUX_URL: process.env.INFLUX_URL || 'http://127.0.0.1:8086',
-  INFLUX_TOKEN: process.env.INFLUX_TOKEN || 'REDACTED',
+  // Secret: set INFLUX_TOKEN in edge_server/.env. Empty disables time-series logging.
+  INFLUX_TOKEN: process.env.INFLUX_TOKEN || '',
   INFLUX_ORG: process.env.INFLUX_ORG || 'shiro_org',
   INFLUX_BUCKET: process.env.INFLUX_BUCKET || 'shiro_telemetry'
 };

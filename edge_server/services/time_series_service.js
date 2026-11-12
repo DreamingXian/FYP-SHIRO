@@ -10,6 +10,17 @@ const token = config.INFLUX_TOKEN;
 const org = config.INFLUX_ORG;
 const bucket = config.INFLUX_BUCKET;
 
+// Time-series logging needs an API token (INFLUX_TOKEN in edge_server/.env).
+// Without one, writes are skipped and history queries return no points.
+const enabled = Boolean(token);
+if (!enabled) {
+  console.warn('[INFLUXDB] INFLUX_TOKEN is not set. Time-series logging and vitals history are disabled.');
+}
+
+function isEnabled() {
+  return enabled;
+}
+
 // Write Buffer for high-frequency batched streaming
 let writeBuffer = [];
 let flushTimer = null;
@@ -67,6 +78,7 @@ async function flushBuffer() {
 }
 
 function queuePoint(line) {
+  if (!enabled) return;
   writeBuffer.push(line);
   if (!flushTimer) {
     flushTimer = setTimeout(async () => {
@@ -120,6 +132,7 @@ function logFallVector({ wristbandMac, minG = 0.35, impactG = 3.42, alertLevel =
  */
 function queryVitalsHistory(patientId, range = '-24h', wristbandMac = null, deviceId = null) {
   return new Promise((resolve) => {
+    if (!enabled) return resolve([]);
     let idFilter = `r.patient_id == "${patientId}"`;
     if (wristbandMac) idFilter += ` or r.wristband_mac == "${wristbandMac}"`;
     if (deviceId && deviceId !== patientId) idFilter += ` or r.patient_id == "${deviceId}"`;
@@ -202,6 +215,7 @@ module.exports = {
   logTrajectory,
   logFallVector,
   queryVitalsHistory,
-  flushBuffer
+  flushBuffer,
+  isEnabled
 };
 
