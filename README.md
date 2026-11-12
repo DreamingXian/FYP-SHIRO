@@ -71,7 +71,7 @@ Unified packets are published directly over Wi-Fi to the central Edge Server's e
 
 ### Software & Frameworks
 * **MR Client Engine:** Unity 6 (`6000.3.28f1`) Universal Render Pipeline (URP), Meta XR Core SDK, OpenXR
-* **Edge Server Runtime:** Node.js (v18+), Express.js
+* **Edge Server Runtime:** Node.js (v20.12+), built-in `http` module
 * **MQTT Broker:** Aedes (integrated MQTT broker listening on port `1883`)
 * **Real-Time Streaming:** `ws` package (bi-directional event streaming on port `3000`)
 * **Relational Database:** MySQL 8.0+ (managed via XAMPP) with connection pooling (`mysql2`)
@@ -152,6 +152,7 @@ The HW-605 (MAX30102) and MPU-6050 share the hardware I2C bus, with battery sens
 
 Detailed step-by-step instructions are documented in [SYSTEM_STARTUP_PROCEDURE.md](file:///d:/RSW/FYP/Code/SYSTEM_STARTUP_PROCEDURE.md).
 
+0. **First-time configuration:** Copy `edge_server/.env.example` to `edge_server/.env`, and `firmware/shiro_anchor_node/secrets.example.h` to `secrets.h`, then fill in your own values. Both files are git-ignored; credentials are never stored in this repository.
 1. **Start MySQL Database:** Open XAMPP Control Panel and start MySQL on port `3306`.
 2. **Launch Edge Server:**
    ```powershell
@@ -177,11 +178,13 @@ Code/
 ├── SYSTEM_STARTUP_PROCEDURE.md     # Step-by-step operations & troubleshooting guide
 ├── firmware/                       # Embedded Arduino C++ firmware
 │   ├── shiro_wristband_vitals/     # XIAO ESP32-C6 PPG + IMU wearable firmware
-│   ├── shiro_anchor_node/          # ESP32 dual-role hybrid anchor & vitals gateway
-│   └── shiro_gateway_node/         # [Archived / Deprecated standalone gateway sketch]
+│   └── shiro_anchor_node/          # ESP32 dual-role hybrid anchor & vitals gateway
+│       └── secrets.example.h       # Template for git-ignored secrets.h (Wi-Fi / MQTT settings)
 ├── edge_server/                    # Central Node.js edge server & web portal
 │   ├── server.js                   # Server entrypoint (HTTP, WebSocket, MQTT)
 │   ├── package.json                # Server dependencies & scripts
+│   ├── .env.example                # Template for git-ignored .env (ports, MySQL, InfluxDB token)
+│   ├── test/                       # Automated tests (`npm test`)
 │   ├── config/                     # Application, network, and calibration configs
 │   ├── database/                   # MySQL schemas, migrations, and connection pool
 │   ├── controllers/                # Express controllers (Wards, Patients, Devices)

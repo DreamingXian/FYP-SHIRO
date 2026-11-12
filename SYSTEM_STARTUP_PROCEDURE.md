@@ -52,8 +52,7 @@ SHIRO uses a streamlined dual-role anchor architecture where **standalone gatewa
 
 ### 2.1 Wi-Fi Network Requirements
 * All wireless nodes (Anchors, Laptop Edge Server, and Meta Quest 3) **must be connected to the exact same 2.4 GHz Local Area Network (LAN)** or laptop Wi-Fi hotspot.
-* **Network SSID:** `REDACTED_SSID` (or your active hotspot)
-* **Network Password:** `REDACTED`
+* **Network SSID and password:** your own 2.4 GHz network or hotspot. These are never written in this repository; the anchors read them from `firmware/shiro_anchor_node/secrets.h` (see Section 4.3).
 * *Security Note:* Ensure Client Isolation / AP Isolation is **DISABLED** on your Wi-Fi router so devices can communicate directly over local IP sockets.
 
 ### 2.2 Finding the Laptop Edge Server IP Address
@@ -65,7 +64,7 @@ The ESP32 anchor nodes and Meta Quest 3 must know the exact local IP address of 
    ```
 3. Look for **Wireless LAN adapter Wi-Fi** --> **IPv4 Address** (e.g., `192.168.1.229`).
 4. If your router assigns a new IP address via DHCP, you must update:
-   - `mqtt_server` in `firmware/shiro_anchor_node/shiro_anchor_node.ino`
+   - `SHIRO_MQTT_SERVER` in `firmware/shiro_anchor_node/secrets.h` (then re-flash the anchors)
    - `serverIp` in Unity Inspector (`ShiroMRManager`) or via the Quest 3 Hand Slate Connection menu.
 
 ---
@@ -76,8 +75,14 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 
 ### 3.1 Software Prerequisites
 * **XAMPP** (Installed at `C:\xampp`) with **MySQL** and **Apache** modules.
-* **Node.js** (v18.x, v20.x, or v24.x).
-* Dependencies installed in `edge_server/` (`aedes`, `ws`, `mysql2`, `express`, `cors`).
+* **Node.js** v20.12 or newer (v24.x recommended).
+* Dependencies installed in `edge_server/` with `npm install` (`aedes`, `ws`, `mysql2`).
+* **Server configuration file** `edge_server/.env` (first-time setup only):
+  1. Copy `edge_server/.env.example` to `edge_server/.env`.
+  2. Set `INFLUX_TOKEN` to an API token from the InfluxDB UI (`http://localhost:8086` --> Load Data --> API Tokens). Leave it empty to run without time-series logging.
+  3. Adjust the MySQL settings only if yours differ from the XAMPP defaults.
+
+  `.env` is git-ignored. Never commit it or paste its contents anywhere.
 
 ### 3.2 Starting the MySQL Database (XAMPP)
 1. Open the Windows Start Menu, search for **XAMPP Control Panel**, and launch it.
@@ -181,14 +186,19 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 > [!NOTE]
 > `shiro_anchor_node.ino` uses **Universal Firmware Architecture**. You flash the exact same compiled sketch to ALL anchor boards! Do NOT hardcode IDs. The Central Edge Server automatically identifies and provisions each anchor by its hardware MAC address during discovery radar enrollment.
 
-#### Configuration Check:
-Open `shiro_anchor_node.ino` and verify Wi-Fi and MQTT connection settings:
-```cpp
-const char* ssid        = "REDACTED_SSID";  // Your Wi-Fi SSID
-const char* password    = "REDACTED";          // Your Wi-Fi Password
-const char* mqtt_server = "192.168.1.229";      // Your Laptop IP
-const int   mqtt_port   = 1883;
-```
+#### Configuration (first-time setup, and whenever the network or laptop IP changes):
+Wi-Fi and MQTT settings are kept out of the sketch, in a git-ignored file:
+1. In `firmware/shiro_anchor_node/`, copy `secrets.example.h` to `secrets.h`.
+2. Open `secrets.h` (it appears as a tab in Arduino IDE) and fill in your values:
+   ```cpp
+   #define SHIRO_WIFI_SSID     "YOUR_WIFI_SSID"
+   #define SHIRO_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+   #define SHIRO_MQTT_SERVER   "192.168.1.100"   // Your laptop IPv4 address
+   #define SHIRO_MQTT_PORT     1883
+   ```
+3. Re-flash every anchor after changing this file.
+
+If `secrets.h` is missing, the sketch stops compiling with a message telling you to create it.
 
 #### Mandatory Partition Scheme Setting:
 > [!IMPORTANT]
@@ -321,7 +331,7 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 
 ```
 [Step 1: Network Check]
-  Ensure host laptop is on Wi-Fi 'REDACTED_SSID' (or Hotspot).
+  Ensure host laptop is on the same Wi-Fi network (or hotspot) as the anchors.
   Run 'ipconfig' and note your IPv4 address (e.g. 192.168.1.229).
 
 [Step 2: Start MySQL & Edge Server]
@@ -355,7 +365,7 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 
 | Symptom / Error | Root Cause | Immediate Resolution |
 | :--- | :--- | :--- |
-| `rc=-4` or `rc=-2` in Anchor Serial Monitor | Board cannot reach Laptop MQTT broker. | 1. Check laptop IP via `ipconfig` and ensure `mqtt_server` in `.ino` matches.<br>2. Ensure Windows Firewall allows incoming TCP port `1883`.<br>3. Verify `npm start` is running. |
+| `rc=-4` or `rc=-2` in Anchor Serial Monitor | Board cannot reach Laptop MQTT broker. | 1. Check laptop IP via `ipconfig` and ensure `SHIRO_MQTT_SERVER` in `secrets.h` matches.<br>2. Ensure Windows Firewall allows incoming TCP port `1883`.<br>3. Verify `npm start` is running. |
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | Fixed in v2.0: Single persistent connection per headset serial (`QUEST3-001`) with heartbeats. Ensure only one Unity instance is playing. |
