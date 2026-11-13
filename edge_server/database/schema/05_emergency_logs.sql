@@ -1,9 +1,7 @@
 -- =============================================================================
--- SHIRO Central Hospital Database Initialization Script
--- Module: Emergency Incident & Fall Audit Logs (Table 4.13)
+-- SHIRO Edge Server - Schema 05: Emergency Incident and Fall Audit Log (Table 4.13)
+-- Requires the patients table.
 -- =============================================================================
-
-USE `shiro_db`;
 
 CREATE TABLE IF NOT EXISTS `emergency_incident_logs` (
     `incident_id` VARCHAR(50) NOT NULL,
@@ -33,4 +31,3 @@ CREATE TABLE IF NOT EXISTS `emergency_incident_logs` (
     CONSTRAINT `fk_incident_patient` FOREIGN KEY (`patient_id`) 
         REFERENCES `patients`(`patient_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-

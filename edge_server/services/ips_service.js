@@ -8,6 +8,7 @@ const { broadcastToClients } = require('./websocket_service');
 const deviceService = require('./device_service');
 const calibrationService = require('./calibration_service');
 const timeSeriesService = require('./time_series_service');
+const bindingCache = require('./binding_cache');
 const { getMedian, solveWeightedTrilateration, refinePositionWithinRoom, computeWeightedCentroid } = require('./ips/geometry');
 
 // Zero-latency in-memory lookup caches
@@ -602,7 +603,7 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
 
     // Log spatial trajectory to InfluxDB (Table 4.10)
     timeSeriesService.logTrajectory({
-      patientId: canonicalTagId,
+      patientId: bindingCache.getPatientIdForDevice(canonicalTagId) || 'UNASSIGNED',
       wristbandMac: cleanMac || '',
       posX: smoothX,
       posY: smoothY,
@@ -617,7 +618,9 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
  * Runs every 2 seconds. If a tag has not received any packet for > OFFLINE_TIMEOUT_MS,
  * marks its status as OFFLINE and broadcasts the last known position to the client!
  */
-setInterval(() => {
+let offlineTimer = null;
+
+function runOfflineCheck() {
   const now = Date.now();
   for (const [tagId, pos] of tagSmoothedPositions.entries()) {
     if ((pos.status === 'ONLINE' || pos.status === 'CHARGING') && (now - pos.last_seen > OFFLINE_TIMEOUT_MS)) {
@@ -638,7 +641,24 @@ setInterval(() => {
       });
     }
   }
-}, 2000);
+}
+
+/**
+ * Starts the 2-second offline watchdog. Called once from server.js at start-up,
+ * so that loading this module has no side effects.
+ */
+function startOfflineWatchdog(intervalMs = 2000) {
+  if (offlineTimer) return offlineTimer;
+  offlineTimer = setInterval(runOfflineCheck, intervalMs);
+  return offlineTimer;
+}
+
+function stopOfflineWatchdog() {
+  if (offlineTimer) {
+    clearInterval(offlineTimer);
+    offlineTimer = null;
+  }
+}
 
 /**
  * Retrieve the latest known position for a specific tag
@@ -706,5 +726,7 @@ module.exports = {
   solveWeightedTrilateration,
   getTagPosition,
   getWardTagPositions,
-  purgeTag
+  purgeTag,
+  startOfflineWatchdog,
+  stopOfflineWatchdog
 };

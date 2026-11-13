@@ -1,15 +1,17 @@
 // =============================================================================
 // Database Verification Script: Tests MySQL Connection & Inspects Tables
 // =============================================================================
-const { testAndInitDatabase, getPool } = require('./db');
+const { initDatabase, getPool } = require('./db');
 
 async function main() {
   console.log('========================================================');
   console.log('  SHIRO MySQL Database Initialization & Verification');
   console.log('========================================================\n');
 
-  const ok = await testAndInitDatabase();
-  if (!ok) {
+  try {
+    await initDatabase();
+  } catch (err) {
+    console.error('[DATABASE ERROR]', err.message);
     console.log('\n[X] Initialization aborted. Please start MySQL in XAMPP Control Panel and try again.');
     process.exit(1);
   }

@@ -5,6 +5,7 @@
 
 const { getPool } = require('../database/db');
 const { broadcastToClients } = require('./websocket_service');
+const bindingCache = require('./binding_cache');
 
 /**
  * Calculates patient age from Date of Birth.
@@ -200,6 +201,7 @@ async function bindPatientWristband(patientId, deviceId, boundBy = 'DOC-8821') {
     );
 
     await conn.commit();
+    await bindingCache.refresh();
 
     // 7. Broadcast over WebSocket
     broadcastToClients({
@@ -265,6 +267,7 @@ async function unbindPatientWristband(identifier) {
     await conn.query(`UPDATE devices SET availability_status = 'AVAILABLE' WHERE device_id = ?`, [b.device_id]);
 
     await conn.commit();
+    await bindingCache.refresh();
 
     // 4. Broadcast over WebSocket
     broadcastToClients({

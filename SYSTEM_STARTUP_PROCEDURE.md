@@ -109,10 +109,7 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
      SHIRO Edge Server & Clinical IoT Gateway (Booting...)
    ======================================================
    [DATABASE] Connected to MySQL server successfully.
-   [DATABASE] Verified Ward Configuration schema and seed data in MySQL.
-   [DATABASE] Verified Inpatient Registry schema and benchmark patients in MySQL.
-   [DATABASE] Verified Hardware Device Registry schema and benchmark fleet in MySQL.
-   [DATABASE] Verified Emergency Incident Audit Log schema in MySQL.
+   [DATABASE] Schema verified in "shiro_db".
    [IPS ENGINE] Cached assigned anchors across wards.
    [MQTT BROKER] Listening on 0.0.0.0:1883
    ======================================================
@@ -125,6 +122,11 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
    [WEBSOCKET]    ws://192.168.1.229:3000 (Web & Quest 3 HMD)
    ======================================================
    ```
+
+   Notes on database start-up:
+   * Missing tables are created automatically. Existing data is never modified by a restart.
+   * Sample wards and patients are loaded only into a completely empty database. To load them by hand, run `npm run db:seed`.
+   * If MySQL is not running, the server stops with `[FATAL STARTUP ERROR] Could not connect to MySQL ...` and exit code 1. Start MySQL in XAMPP and run `npm start` again.
 
 3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`:
    * **Ward Configuration Editor:** Architectural room dimensioning, obstacle cutouts, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and 3D ray-cast anchor suggestion.
@@ -372,4 +374,5 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Virtual room overlay appears underground or tilted | Calibration point snapped to virtual floor mesh instead of physical floor. | Fixed in v2.0: Depth raycasting now queries `EnvironmentRaycastManager` to detect true physical floor height before transforming coordinates. |
 | Bed vitals panel is mirrored / backwards | Canvas local rotation flipped $180^\circ$ relative to bed anchor. | Fixed in v2.0: `GetBedHeadboardRotation` now matches `wardOrigin.rotation * Quaternion.Euler(0, bed.rotation_deg, 0)`. The Canvas front face (local $-Z$) points outward down the mattress into the room. |
 | Laser pointer blocked by 3D room overlay | Raycast hit testing virtual wall/bed colliders before physical space. | Virtual room geometry colliders are bypassed during calibration mode; raycast queries physical depth sensor mesh directly. |
+| `[FATAL STARTUP ERROR] Could not connect to MySQL` on `npm start` | MySQL service is not running, or the settings in `edge_server/.env` are wrong. | 1. Start MySQL in XAMPP Control Panel.<br>2. Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` in `.env`.<br>3. Run `npm start` again. |
 | Heart rate reads 0 or stays on `Reading...` | Finger placement too loose or sensor FIFO saturated. | Rest finger gently but firmly over the optical lens of the HW-605. Ensure IR readings exceed 50,000 in Serial Monitor / Dashboard. |

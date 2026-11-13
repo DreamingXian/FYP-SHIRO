@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test \"test/unit/**/*.test.js\""
+    "test": "node --test \"test/unit/**/*.test.js\"",
+    "test:integration": "node --test --test-concurrency=1 --test-force-exit \"test/integration/**/*.test.js\"",
+    "db:seed": "node database/seed.js"
   },
   "engines": {
     "node": ">=20.12.0"

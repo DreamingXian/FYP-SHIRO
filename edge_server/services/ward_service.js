@@ -357,7 +357,8 @@ async function deleteWard(wardId) {
  */
 async function resetDefaultWard() {
   const pool = getPool();
-  const sqlPath = path.join(__dirname, '..', 'database', 'init_ward_config.sql');
+  // Deliberate restore of the sample ward layout (overwrites edits to WARD-001..003)
+  const sqlPath = path.join(__dirname, '..', 'database', 'seed', '01_wards.sql');
   const sql = fs.readFileSync(sqlPath, 'utf8');
   await pool.query(sql);
   return getWardConfig('WARD-001');

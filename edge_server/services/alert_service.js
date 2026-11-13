@@ -6,6 +6,7 @@
 const { getPool } = require('../database/db');
 const { broadcastToClients } = require('./websocket_service');
 const ipsService = require('./ips_service');
+const { nextIncidentId } = require('./alerts/incident_id');
 
 // Debounce map to avoid flooding repeated alert packets for the same tag within 15 seconds
 const recentAlertsDebounce = new Map();
@@ -19,23 +20,12 @@ const activeFallSessions = new Map();
 const vitalAnomalyStreaks = new Map();
 
 /**
- * Generate sequential clinical incident ID: INC-YYYYMMDD-XXXX
- */
-function generateIncidentId() {
-  const d = new Date();
-  const dateStr = d.getFullYear().toString() +
-    String(d.getMonth() + 1).padStart(2, '0') +
-    String(d.getDate()).padStart(2, '0');
-  const randomCode = Math.floor(1000 + Math.random() * 9000);
-  return `INC-${dateStr}-${randomCode}`;
-}
-
-/**
  * Record a new Emergency Incident in MySQL and broadcast over WebSockets
  */
 async function recordIncident(incidentData) {
   const pool = getPool();
-  const incidentId = incidentData.incident_id || generateIncidentId();
+  const idWasSupplied = Boolean(incidentData.incident_id);
+  let incidentId = incidentData.incident_id || await nextIncidentId();
 
   let patientId = incidentData.patient_id || null;
   let patientName = incidentData.patient_name || null;
@@ -114,21 +104,32 @@ async function recordIncident(incidentData) {
     }
   }
 
-  // 3. Persist to MySQL emergency_incident_logs
-  try {
-    await pool.query(`
-      INSERT INTO emergency_incident_logs 
-      (incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id, incident_category,
-       pos_x, pos_y, kinematic_impact_force, post_impact_stillness, heart_rate, spo2, 
-       alert_message, resolution_status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
-    `, [
-      incidentId, patientId, patientName, wristbandMac, wardId, bedId, category,
-      posX, posY, impactG, stillness, bpm, spo2, alertMessage
-    ]);
-    console.log(`[ALERT PERSISTED] Incident ${incidentId} logged in MySQL for ${patientName} (${category}).`);
-  } catch (dbErr) {
-    console.error('[ALERT DATABASE ERROR] Failed to save incident log:', dbErr.message);
+  // 3. Persist to MySQL emergency_incident_logs.
+  // A duplicate ID (for example after another process wrote the same number) gets a fresh one.
+  let persisted = false;
+  const MAX_ID_ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= MAX_ID_ATTEMPTS && !persisted; attempt++) {
+    try {
+      await pool.query(`
+        INSERT INTO emergency_incident_logs 
+        (incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id, incident_category,
+         pos_x, pos_y, kinematic_impact_force, post_impact_stillness, heart_rate, spo2, 
+         alert_message, resolution_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+      `, [
+        incidentId, patientId, patientName, wristbandMac, wardId, bedId, category,
+        posX, posY, impactG, stillness, bpm, spo2, alertMessage
+      ]);
+      persisted = true;
+      console.log(`[ALERT PERSISTED] Incident ${incidentId} logged in MySQL for ${patientName} (${category}).`);
+    } catch (dbErr) {
+      if (dbErr.code === 'ER_DUP_ENTRY' && !idWasSupplied && attempt < MAX_ID_ATTEMPTS) {
+        incidentId = await nextIncidentId();
+        continue;
+      }
+      console.error('[ALERT DATABASE ERROR] Failed to save incident log:', dbErr.message);
+      break;
+    }
   }
 
   const incidentPayload = {
@@ -148,7 +149,8 @@ async function recordIncident(incidentData) {
     heart_rate: bpm,
     spo2: spo2,
     alert_message: alertMessage,
-    resolution_status: 'PENDING'
+    resolution_status: 'PENDING',
+    persisted // false when the audit record could not be written; the alert is still raised
   };
 
   // 4. Push Real-Time Broadcast to Web Dashboard & Quest 3 MR
