@@ -30,7 +30,9 @@ A detected fall prints one line about 2 seconds after the impact:
 
 Copy the three numbers into the table. After a detected fall, wait 50 seconds before the next repetition: the wristband holds the alert for 45 seconds and detects nothing new during that time.
 
-On the dashboard, each detected fall must produce exactly one pop-up, and the impact shown must match the Serial Monitor.
+On the dashboard, each detected fall must produce exactly one pop-up. The pop-up shows the same three numbers as **Free-fall Min**, **Impact Force** and **Post-impact Motion**, so the tests can be done on battery, without the USB cable. Check once on USB that the pop-up and the Serial Monitor agree, and note it here: ______
+
+If a pop-up was closed before the numbers were written down, every incident with its three values is listed at `http://localhost:3000/api/alerts/history` (`freefall_min_g`, `kinematic_impact_force`, `post_impact_stillness`).
 
 ## Part A: events that should be detected
 

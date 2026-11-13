@@ -73,6 +73,8 @@ async function applySchema() {
   await migrateAnchorCalibration();
   const { migrate: migrateIncidentSimulation } = require('./migrate_incident_simulation');
   await migrateIncidentSimulation();
+  const { migrate: migrateIncidentFreefall } = require('./migrate_incident_freefall');
+  await migrateIncidentFreefall();
 }
 
 /**

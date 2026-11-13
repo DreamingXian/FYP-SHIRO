@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS `emergency_incident_logs` (
     `pos_y` FLOAT NULL,
     `kinematic_impact_force` FLOAT NULL,
     `post_impact_stillness` FLOAT NULL,
+    `freefall_min_g` FLOAT NULL,
     `heart_rate` INT NULL,
     `spo2` FLOAT NULL,
     `alert_message` TEXT NULL,

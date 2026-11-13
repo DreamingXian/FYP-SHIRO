@@ -39,12 +39,13 @@ function describeLocation(wardId, bedId, posX, posY) {
   return parts.length > 0 ? parts.join(', ') : 'location unknown';
 }
 
-function buildAlertMessage(category, { impactG, stillness, bpm, spo2, wardId, bedId, posX, posY }) {
+function buildAlertMessage(category, { impactG, stillness, freefallMinG, bpm, spo2, wardId, bedId, posX, posY }) {
   const where = describeLocation(wardId, bedId, posX, posY);
   if (category === 'FALL_ACCIDENT') {
+    const freefall = freefallMinG !== null ? `free-fall minimum ${freefallMinG} g` : 'free-fall minimum not reported';
     const impact = impactG !== null ? `impact ${impactG} g` : 'impact not reported';
     const still = stillness !== null ? `post-impact motion ${stillness} g` : 'post-impact motion not reported';
-    return `CRITICAL FALL DETECTED: ${impact}, ${still}; ${where}.`;
+    return `CRITICAL FALL DETECTED: ${freefall}, ${impact}, ${still}; ${where}.`;
   }
   if (category === 'CRITICAL_VITALS') {
     const hr = bpm !== null ? `${bpm} BPM` : 'not available';
@@ -137,7 +138,7 @@ async function recordIncident(incidentData) {
   const spo2 = numberOrNull(incidentData.spo2);
 
   let alertMessage = incidentData.alert_message ||
-    buildAlertMessage(category, { impactG, stillness, bpm, spo2, wardId, bedId, posX, posY });
+    buildAlertMessage(category, { impactG, stillness, freefallMinG, bpm, spo2, wardId, bedId, posX, posY });
   if (isSimulated && !alertMessage.startsWith('[SIMULATION]')) {
     alertMessage = `[SIMULATION] ${alertMessage}`;
   }
@@ -151,12 +152,12 @@ async function recordIncident(incidentData) {
       await pool.query(`
         INSERT INTO emergency_incident_logs
         (incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id, incident_category,
-         pos_x, pos_y, kinematic_impact_force, post_impact_stillness, heart_rate, spo2,
+         pos_x, pos_y, kinematic_impact_force, post_impact_stillness, freefall_min_g, heart_rate, spo2,
          alert_message, is_simulated, resolution_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
       `, [
         incidentId, patientId, patientName, wristbandMac, wardId, bedId, category,
-        posX, posY, impactG, stillness, bpm, spo2, alertMessage, isSimulated ? 1 : 0
+        posX, posY, impactG, stillness, freefallMinG, bpm, spo2, alertMessage, isSimulated ? 1 : 0
       ]);
       persisted = true;
       console.log(`[ALERT PERSISTED] Incident ${incidentId} logged in MySQL for ${patientName} (${category}${isSimulated ? ', simulated' : ''}).`);

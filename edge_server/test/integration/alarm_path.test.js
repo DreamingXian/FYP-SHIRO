@@ -65,6 +65,9 @@ describe('alarm path', () => {
     const [row] = await incidentsFor(mac);
     assert.ok(Math.abs(row.kinematic_impact_force - 4.2) < 0.001);
     assert.ok(Math.abs(row.post_impact_stillness - 0.07) < 0.001);
+    assert.ok(Math.abs(row.freefall_min_g - 0.15) < 0.001);
+    assert.equal(incident.freefall_min_g, 0.15, 'the live alert carries the free-fall minimum for the pop-up');
+    assert.match(row.alert_message, /free-fall minimum 0\.15 g/);
     assert.equal(row.heart_rate, 104);
     assert.equal(Number(row.spo2), 95);
     assert.equal(row.is_simulated, 0);
@@ -79,7 +82,7 @@ describe('alarm path', () => {
 
     const [row] = await incidentsFor(mac);
     for (const column of ['patient_id', 'ward_id', 'bed_id', 'pos_x', 'pos_y',
-      'kinematic_impact_force', 'post_impact_stillness', 'heart_rate', 'spo2']) {
+      'kinematic_impact_force', 'post_impact_stillness', 'freefall_min_g', 'heart_rate', 'spo2']) {
       assert.equal(row[column], null, `${column} must be NULL when unknown`);
     }
     assert.match(row.patient_name, /Unassigned Wristband/);
@@ -168,5 +171,18 @@ describe('alarm path', () => {
     const [[afterRestart]] = await pool.query('SELECT COUNT(*) AS n, SUM(is_simulated) AS simulated FROM emergency_incident_logs');
     assert.equal(Number(afterRestart.n), Number(before.n), 'no incident may be lost by the migration');
     assert.equal(Number(afterRestart.simulated), 0, 'existing incidents default to "not simulated"');
+  });
+
+  test('a database from before this change gains the freefall_min_g column and keeps its rows', async () => {
+    const [[before]] = await pool.query('SELECT COUNT(*) AS n FROM emergency_incident_logs');
+    await pool.query('ALTER TABLE emergency_incident_logs DROP COLUMN freefall_min_g');
+
+    pool = await restart();
+
+    const [columns] = await pool.query("SHOW COLUMNS FROM emergency_incident_logs LIKE 'freefall_min_g'");
+    assert.equal(columns.length, 1);
+    const [[afterRestart]] = await pool.query('SELECT COUNT(*) AS n, COUNT(freefall_min_g) AS withValue FROM emergency_incident_logs');
+    assert.equal(Number(afterRestart.n), Number(before.n), 'no incident may be lost by the migration');
+    assert.equal(Number(afterRestart.withValue), 0, 'old incidents have no free-fall value: it stays unknown');
   });
 });

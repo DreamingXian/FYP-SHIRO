@@ -143,11 +143,23 @@ class EmergencyAlertManager {
               </div>
             </div>
 
-            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; gap: 24px;">
+            <!-- Fall measurements reported by the wristband (shown for fall incidents only) -->
+            <div id="em-fall-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; flex-wrap: wrap; gap: 8px 24px;">
+              <div>
+                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Free-fall Min:</span>
+                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-freefall">--</span>
+              </div>
               <div>
                 <span style="font-size: 11px; font-weight: 700; color: #64748B;">Impact Force:</span>
                 <span style="font-size: 13px; font-weight: 800; color: #DC2626; margin-left: 4px;" id="em-impact">--</span>
               </div>
+              <div>
+                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Post-impact Motion:</span>
+                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-stillness">--</span>
+              </div>
+            </div>
+
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; flex-wrap: wrap; gap: 8px 24px;">
               <div>
                 <span style="font-size: 11px; font-weight: 700; color: #64748B;">Heart Rate:</span>
                 <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-bpm">-- BPM</span>
@@ -328,9 +340,13 @@ class EmergencyAlertManager {
     document.getElementById('em-coords').innerText = (known(incident.pos_x) && known(incident.pos_y))
       ? `Grid Location: (${Number(incident.pos_x).toFixed(2)}m, ${Number(incident.pos_y).toFixed(2)}m)`
       : 'Grid Location: unknown';
-    document.getElementById('em-impact').innerText = known(incident.kinematic_impact_force)
-      ? `${Number(incident.kinematic_impact_force).toFixed(2)}g`
-      : 'not reported';
+    // The three values of the wristband's fall check, exactly as it measured them
+    const gValue = (v) => known(v) ? `${Number(v).toFixed(2)}g` : 'not reported';
+    document.getElementById('em-fall-row').style.display =
+      incident.incident_category === 'FALL_ACCIDENT' ? 'flex' : 'none';
+    document.getElementById('em-freefall').innerText = gValue(incident.freefall_min_g);
+    document.getElementById('em-impact').innerText = gValue(incident.kinematic_impact_force);
+    document.getElementById('em-stillness').innerText = gValue(incident.post_impact_stillness);
     document.getElementById('em-bpm').innerText = known(incident.heart_rate) ? `${incident.heart_rate} BPM` : '-- BPM';
     document.getElementById('em-spo2').innerText = known(incident.spo2) ? `${incident.spo2}%` : '--%';
     document.getElementById('em-alert-msg').innerText = incident.alert_message || 'Clinical safety event detected.';

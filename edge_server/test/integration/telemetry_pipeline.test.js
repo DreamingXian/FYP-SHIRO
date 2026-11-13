@@ -171,6 +171,12 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
     assert.equal(rows.length, 1);
     assert.ok(Math.abs(rows[0].kinematic_impact_force - 4.37) < 0.001);
     assert.ok(Math.abs(rows[0].post_impact_stillness - 0.06) < 0.001);
+    assert.ok(Math.abs(rows[0].freefall_min_g - 0.12) < 0.001);
+    // The pop-up reads these three values from the live alert
+    const [alert] = alertsFor(tag);
+    assert.equal(alert.incident.freefall_min_g, 0.12);
+    assert.equal(alert.incident.kinematic_impact_force, 4.37);
+    assert.equal(alert.incident.post_impact_stillness, 0.06);
     assert.equal(rows[0].heart_rate, null, 'no pulse reading was available: stored as NULL');
     assert.equal(rows[0].ward_id, null);
     assert.equal(rows[0].is_simulated, 0);
