@@ -307,15 +307,22 @@ function initLiveLabListeners() {
       if (ppgHistory.length > maxDataPoints) ppgHistory.shift();
       drawPPG();
 
-      // G-Force & Fall status
-      if (valG) valG.innerHTML = `${d.g.toFixed(2)} <span class="metric-unit">g</span>`;
+      // G-Force & Fall status. No g value means the accelerometer is not delivering data.
+      const hasG = typeof d.g === 'number' && Number.isFinite(d.g);
+      if (valG) valG.innerHTML = hasG ? `${d.g.toFixed(2)} <span class="metric-unit">g</span>` : `-- <span class="metric-unit">g</span>`;
       if (gMeter) {
-        const meterPct = Math.min(100, Math.max(0, (d.g / 3.0) * 100));
+        const meterPct = hasG ? Math.min(100, Math.max(0, (d.g / 3.0) * 100)) : 0;
         gMeter.style.width = `${meterPct}%`;
       }
 
       if (gBadge) {
-        if (d.g < 0.5) {
+        if (d.imu_fault || !hasG) {
+          gBadge.innerText = '⚠ SENSOR FAULT (accelerometer)';
+          gBadge.className = 'badge badge-alert';
+        } else if (d.fall) {
+          gBadge.innerText = '🚨 FALL CONFIRMED BY WRISTBAND';
+          gBadge.className = 'badge badge-alert';
+        } else if (d.g < 0.5) {
           gBadge.innerText = '● FREE-FALL DETECTED';
           gBadge.className = 'badge badge-alert';
         } else if (d.g > 2.5) {
@@ -370,8 +377,9 @@ function initLiveLabListeners() {
         })
       });
       const data = await res.json();
-      if (data.success && typeof showToast === 'function') {
-        showToast(`Triggered ${category.replace('_', ' ')} simulation`, 'warning');
+      if (typeof showToast === 'function') {
+        if (data.success) showToast(`Triggered ${category.replace('_', ' ')} simulation`, 'warning');
+        else showToast(data.error || 'The simulation could not be triggered.', 'error');
       }
     } catch (e) {
       console.error('[SIMULATION ERROR]', e);

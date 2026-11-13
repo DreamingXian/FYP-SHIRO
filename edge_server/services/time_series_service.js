@@ -102,15 +102,28 @@ function queuePoint(line) {
  * 1. Log Patient Physiological Vitals (patient_vitals measurement)
  * Table 4.10: heart_rate (Integer, BPM), spo2_percentage (Float, %), ppg_signal_quality (Float, 0.0-1.0)
  */
-function logVitals({ patientId, wristbandMac, bpm, spo2, quality = 0.95, mode = 'ACTIVE_STREAM' }) {
-  if (!bpm && !spo2) return;
+function buildVitalsLine({ patientId, wristbandMac, bpm, spo2, quality = 0.95, mode = 'ACTIVE_STREAM' }) {
+  // A field is written only when it was measured: an unknown heart rate or
+  // SpO2 is left out of the point instead of being stored as 0.
+  const fields = [];
+  const hr = Number(bpm);
+  const ox = Number(spo2);
+  if (Number.isFinite(hr) && hr > 0) fields.push(`heart_rate=${Math.round(hr)}i`);
+  if (Number.isFinite(ox) && ox > 0) fields.push(`spo2_percentage=${ox.toFixed(1)}`);
+  if (fields.length === 0) return null;
+
+  const q = Number(quality);
+  if (Number.isFinite(q)) fields.push(`ppg_signal_quality=${q.toFixed(2)}`);
+
   const pId = patientId || 'UNASSIGNED';
   const mac = wristbandMac || 'UNKNOWN_MAC';
-  const q = parseFloat(quality).toFixed(2);
   const m = mode || 'ACTIVE_STREAM';
+  return `patient_vitals,patient_id=${pId},wristband_mac=${mac},sampling_mode=${m} ${fields.join(',')}`;
+}
 
-  const line = `patient_vitals,patient_id=${pId},wristband_mac=${mac},sampling_mode=${m} heart_rate=${parseInt(bpm, 10)}i,spo2_percentage=${parseFloat(spo2).toFixed(1)},ppg_signal_quality=${q}`;
-  queuePoint(line);
+function logVitals(point) {
+  const line = buildVitalsLine(point || {});
+  if (line) queuePoint(line);
 }
 
 /**
@@ -129,12 +142,28 @@ function logTrajectory({ patientId, wristbandMac, posX, posY, confidence = 0.92,
 
 /**
  * 3. Log Kinematic Fall Vector (kinematic_fall_vectors measurement)
- * Table 4.10: accel_freefall_min_g (Float, g), accel_impact_max_g (Float, g)
+ * Table 4.10: accel_freefall_min_g, accel_impact_max_g, post_impact_motion_g (Float, g)
+ * Only measured values are written. With nothing measured, no point is stored.
  */
-function logFallVector({ wristbandMac, minG = 0.35, impactG = 3.42, alertLevel = 'CRITICAL' }) {
+function buildFallVectorLine({ wristbandMac, minG = null, impactG = null, stillG = null, alertLevel = 'CRITICAL' }) {
+  const fields = [];
+  const add = (name, value) => {
+    if (value === null || value === undefined || value === '') return;
+    const n = Number(value);
+    if (Number.isFinite(n)) fields.push(`${name}=${n.toFixed(2)}`);
+  };
+  add('accel_freefall_min_g', minG);
+  add('accel_impact_max_g', impactG);
+  add('post_impact_motion_g', stillG);
+  if (fields.length === 0) return null;
+
   const mac = wristbandMac || 'UNKNOWN_MAC';
-  const line = `kinematic_fall_vectors,wristband_mac=${mac},alert_level=${alertLevel} accel_freefall_min_g=${parseFloat(minG).toFixed(2)},accel_impact_max_g=${parseFloat(impactG).toFixed(2)}`;
-  queuePoint(line);
+  return `kinematic_fall_vectors,wristband_mac=${mac},alert_level=${alertLevel} ${fields.join(',')}`;
+}
+
+function logFallVector(point) {
+  const line = buildFallVectorLine(point || {});
+  if (line) queuePoint(line);
 }
 
 /**
@@ -152,6 +181,40 @@ function buildVitalsHistoryQuery(patientId, range = '-24h') {
         |> sort(columns: ["_time"], desc: false)
         |> limit(n: 500)
     `;
+}
+
+/**
+ * Parses the CSV answer of the vitals history query into points.
+ * A field that was not stored for a point comes back as null.
+ */
+function parseVitalsCsv(csvData) {
+  const points = [];
+  const lines = String(csvData || '').trim().split(/\r?\n/);
+  let header = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const parts = line.split(',');
+    if (parts.includes('_time') && (parts.includes('heart_rate') || parts.includes('spo2_percentage'))) {
+      header = parts;
+      continue;
+    }
+
+    if (header.length > 0 && parts.length === header.length) {
+      const timeIdx = header.indexOf('_time');
+      const hrIdx = header.indexOf('heart_rate');
+      const spo2Idx = header.indexOf('spo2_percentage');
+
+      points.push({
+        time: parts[timeIdx],
+        heart_rate: hrIdx !== -1 && parts[hrIdx] ? Math.round(parseFloat(parts[hrIdx])) : null,
+        spo2: spo2Idx !== -1 && parts[spo2Idx] ? Math.round(parseFloat(parts[spo2Idx]) * 10) / 10 : null
+      });
+    }
+  }
+  return points;
 }
 
 /**
@@ -181,35 +244,7 @@ function queryVitalsHistory(patientId, range = '-24h') {
           return resolve([]);
         }
 
-        // Parse CSV into structured points array
-        const points = [];
-        const lines = csvData.trim().split('\n');
-        let header = [];
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line || line.startsWith('#')) continue;
-
-          const parts = line.split(',');
-          if (parts.includes('_time') && parts.includes('heart_rate')) {
-            header = parts;
-            continue;
-          }
-
-          if (header.length > 0 && parts.length === header.length) {
-            const timeIdx = header.indexOf('_time');
-            const hrIdx = header.indexOf('heart_rate');
-            const spo2Idx = header.indexOf('spo2_percentage');
-
-            if (timeIdx !== -1) {
-              points.push({
-                time: parts[timeIdx],
-                heart_rate: hrIdx !== -1 && parts[hrIdx] ? Math.round(parseFloat(parts[hrIdx])) : null,
-                spo2: spo2Idx !== -1 && parts[spo2Idx] ? Math.round(parseFloat(parts[spo2Idx]) * 10) / 10 : null
-              });
-            }
-          }
-        }
+        const points = parseVitalsCsv(csvData);
 
         resolve(points);
       });
@@ -233,6 +268,9 @@ module.exports = {
   flushBuffer,
   isEnabled,
   buildVitalsHistoryQuery,
+  buildVitalsLine,
+  buildFallVectorLine,
+  parseVitalsCsv,
   nextTimestampMs
 };
 

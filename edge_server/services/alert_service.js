@@ -2,25 +2,64 @@
 // SHIRO Hospital Edge Server - Clinical Safety & Emergency Alert Service
 // Module: On-Chip Kinematic Fall Alerts, Abnormal Vitals & Incident Audits
 // Documentation Reference: Chapter 4 (Section 4.2.2, Section 4.7, Table 4.13)
+//
+// Rule for this module: a value that was not measured is stored as NULL.
+// The audit log must never contain a number the system made up.
 // =============================================================================
 const { getPool } = require('../database/db');
 const { broadcastToClients } = require('./websocket_service');
 const ipsService = require('./ips_service');
+const timeSeriesService = require('./time_series_service');
 const { nextIncidentId } = require('./alerts/incident_id');
+const { createFallTracker } = require('./alerts/fall_tracker');
+const { createVitalsEvaluator } = require('./alerts/vitals_evaluator');
 
-// Debounce map to avoid flooding repeated alert packets for the same tag within 15 seconds
-const recentAlertsDebounce = new Map();
+// One open fall session per wristband: see alerts/fall_tracker.js
+const fallTracker = createFallTracker();
+// Vitals verification state per wristband: see alerts/vitals_evaluator.js
+const vitalsEvaluator = createVitalsEvaluator();
 
-// Active fall emergency sessions to prevent repeated incidents during the 1 Hz active hold
-// Key: tagKey -> { incident_id, acknowledged: boolean, startTime, lastSeenFall }
-const activeFallSessions = new Map();
+// Recorded as the acknowledging person until clinician login exists.
+const UNVERIFIED_CLINICIAN = 'Unverified dashboard user';
 
-// Multi-cycle streak tracker for abnormal vitals (persisting over discontinuous 3-minute cycles)
-// Key: tagId/MAC -> { count, lastBpm, lastSpo2, firstSeen, lastSeen }
-const vitalAnomalyStreaks = new Map();
+function numberOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function round2(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function describeLocation(wardId, bedId, posX, posY) {
+  const parts = [];
+  if (wardId) parts.push(bedId ? `${wardId}, ${bedId}` : wardId);
+  if (posX !== null && posY !== null) parts.push(`position (${posX} m, ${posY} m)`);
+  return parts.length > 0 ? parts.join(', ') : 'location unknown';
+}
+
+function buildAlertMessage(category, { impactG, stillness, bpm, spo2, wardId, bedId, posX, posY }) {
+  const where = describeLocation(wardId, bedId, posX, posY);
+  if (category === 'FALL_ACCIDENT') {
+    const impact = impactG !== null ? `impact ${impactG} g` : 'impact not reported';
+    const still = stillness !== null ? `post-impact motion ${stillness} g` : 'post-impact motion not reported';
+    return `CRITICAL FALL DETECTED: ${impact}, ${still}; ${where}.`;
+  }
+  if (category === 'CRITICAL_VITALS') {
+    const hr = bpm !== null ? `${bpm} BPM` : 'not available';
+    const ox = spo2 !== null ? `${spo2}%` : 'not available';
+    return `PHYSIOLOGICAL ANOMALY: Heart rate ${hr}, SpO2 ${ox}; ${where}. Immediate clinical check required.`;
+  }
+  if (category === 'GEOFENCE_BREACH') {
+    return `GEOFENCE BOUNDARY BREACH: Patient outside the authorised boundary; ${where}.`;
+  }
+  return `Clinical safety event; ${where}.`;
+}
 
 /**
- * Record a new Emergency Incident in MySQL and broadcast over WebSockets
+ * Record a new Emergency Incident in MySQL and broadcast over WebSockets.
+ * Unknown values are stored and broadcast as null.
  */
 async function recordIncident(incidentData) {
   const pool = getPool();
@@ -33,6 +72,7 @@ async function recordIncident(incidentData) {
   let bedId = incidentData.bed_id || null;
   const wristbandMac = incidentData.wristband_mac || null;
   const deviceId = incidentData.device_id || null;
+  const isSimulated = incidentData.is_simulated === true;
 
   // 1. Resolve Patient details from active wristband binding if not explicitly passed
   if (!patientId && (wristbandMac || deviceId)) {
@@ -42,7 +82,7 @@ async function recordIncident(incidentData) {
         FROM patient_bindings pb
         JOIN patients p ON pb.patient_id = p.patient_id
         JOIN devices d ON pb.device_id = d.device_id
-        WHERE pb.status = 'ACTIVE' 
+        WHERE pb.status = 'ACTIVE'
           AND (d.mac_address = ? OR d.device_id = ?)
         LIMIT 1
       `, [wristbandMac, deviceId]);
@@ -50,58 +90,56 @@ async function recordIncident(incidentData) {
       if (rows.length > 0) {
         patientId = rows[0].patient_id;
         patientName = rows[0].full_name;
-        wardId = rows[0].assigned_ward_id;
-        bedId = rows[0].assigned_bed_id;
+        wardId = wardId || rows[0].assigned_ward_id;
+        bedId = bedId || rows[0].assigned_bed_id;
       }
     } catch (err) {
       console.warn('[ALERT SERVICE] Could not resolve patient from binding:', err.message);
     }
   }
 
-  // Fallback labels for test / unprovisioned tags
+  // A label, not a guess: it says exactly what is and is not known
   if (!patientName) {
-    patientName = patientId ? `Patient (${patientId})` : `Unassigned Wristband (${deviceId || wristbandMac || 'TAG'})`;
+    patientName = patientId ? `Patient (${patientId})` : `Unassigned Wristband (${deviceId || wristbandMac || 'unknown'})`;
   }
-  if (!wardId) {
+
+  // The ward of an unbound wristband is the ward the device is assigned to, when there is one
+  if (!wardId && (deviceId || wristbandMac)) {
     try {
       const [devRows] = await pool.query('SELECT assigned_ward_id FROM devices WHERE device_id = ? OR mac_address = ? LIMIT 1', [deviceId, wristbandMac]);
       if (devRows.length > 0 && devRows[0].assigned_ward_id) {
         wardId = devRows[0].assigned_ward_id;
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn('[ALERT SERVICE] Could not resolve ward from device:', err.message);
+    }
   }
-  if (!wardId) wardId = 'WARD-005';
-  if (!bedId) bedId = 'Bed 1';
 
-  // 2. Resolve latest spatial (X, Y) coordinates from IPS Service if not provided
-  let posX = incidentData.pos_x !== undefined ? incidentData.pos_x : null;
-  let posY = incidentData.pos_y !== undefined ? incidentData.pos_y : null;
+  // 2. Resolve the latest (X, Y) position from the IPS service if not provided
+  let posX = numberOrNull(incidentData.pos_x);
+  let posY = numberOrNull(incidentData.pos_y);
   if ((posX === null || posY === null) && (deviceId || patientId)) {
     const liveTag = ipsService.getTagPosition(deviceId || patientId);
-    if (liveTag && liveTag.x !== undefined) {
-      posX = Math.round(liveTag.x * 100) / 100;
-      posY = Math.round(liveTag.y * 100) / 100;
+    if (liveTag && Number.isFinite(liveTag.x) && Number.isFinite(liveTag.y)) {
+      posX = round2(liveTag.x);
+      posY = round2(liveTag.y);
     } else {
-      posX = 2.40;
-      posY = 1.80;
+      posX = null;
+      posY = null;
     }
   }
 
   const category = incidentData.incident_category || 'FALL_ACCIDENT';
-  const impactG = incidentData.kinematic_impact_force !== undefined ? incidentData.kinematic_impact_force : 3.42;
-  const stillness = incidentData.post_impact_stillness !== undefined ? incidentData.post_impact_stillness : 0.08;
-  const bpm = incidentData.heart_rate !== undefined ? incidentData.heart_rate : 88;
-  const spo2 = incidentData.spo2 !== undefined ? incidentData.spo2 : 97.0;
+  const impactG = numberOrNull(incidentData.kinematic_impact_force);
+  const stillness = numberOrNull(incidentData.post_impact_stillness);
+  const freefallMinG = numberOrNull(incidentData.freefall_min_g);
+  const bpm = numberOrNull(incidentData.heart_rate);
+  const spo2 = numberOrNull(incidentData.spo2);
 
-  let alertMessage = incidentData.alert_message || '';
-  if (!alertMessage) {
-    if (category === 'FALL_ACCIDENT') {
-      alertMessage = `CRITICAL FALL DETECTED: Sudden impact spike (${impactG}g) followed by incapacitation stillness (${stillness}g) near Bed ${bedId}.`;
-    } else if (category === 'CRITICAL_VITALS') {
-      alertMessage = `PHYSIOLOGICAL ANOMALY: Abnormal vitals detected (Heart Rate: ${bpm} BPM, SpO2: ${spo2}%). Immediate clinical check required.`;
-    } else if (category === 'GEOFENCE_BREACH') {
-      alertMessage = `GEOFENCE BOUNDARY BREACH: Patient navigated outside authorized clinical boundary at (${posX}m, ${posY}m).`;
-    }
+  let alertMessage = incidentData.alert_message ||
+    buildAlertMessage(category, { impactG, stillness, bpm, spo2, wardId, bedId, posX, posY });
+  if (isSimulated && !alertMessage.startsWith('[SIMULATION]')) {
+    alertMessage = `[SIMULATION] ${alertMessage}`;
   }
 
   // 3. Persist to MySQL emergency_incident_logs.
@@ -111,17 +149,17 @@ async function recordIncident(incidentData) {
   for (let attempt = 1; attempt <= MAX_ID_ATTEMPTS && !persisted; attempt++) {
     try {
       await pool.query(`
-        INSERT INTO emergency_incident_logs 
+        INSERT INTO emergency_incident_logs
         (incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id, incident_category,
-         pos_x, pos_y, kinematic_impact_force, post_impact_stillness, heart_rate, spo2, 
-         alert_message, resolution_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+         pos_x, pos_y, kinematic_impact_force, post_impact_stillness, heart_rate, spo2,
+         alert_message, is_simulated, resolution_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
       `, [
         incidentId, patientId, patientName, wristbandMac, wardId, bedId, category,
-        posX, posY, impactG, stillness, bpm, spo2, alertMessage
+        posX, posY, impactG, stillness, bpm, spo2, alertMessage, isSimulated ? 1 : 0
       ]);
       persisted = true;
-      console.log(`[ALERT PERSISTED] Incident ${incidentId} logged in MySQL for ${patientName} (${category}).`);
+      console.log(`[ALERT PERSISTED] Incident ${incidentId} logged in MySQL for ${patientName} (${category}${isSimulated ? ', simulated' : ''}).`);
     } catch (dbErr) {
       if (dbErr.code === 'ER_DUP_ENTRY' && !idWasSupplied && attempt < MAX_ID_ATTEMPTS) {
         incidentId = await nextIncidentId();
@@ -146,9 +184,11 @@ async function recordIncident(incidentData) {
     pos_y: posY,
     kinematic_impact_force: impactG,
     post_impact_stillness: stillness,
+    freefall_min_g: freefallMinG,
     heart_rate: bpm,
     spo2: spo2,
     alert_message: alertMessage,
+    is_simulated: isSimulated,
     resolution_status: 'PENDING',
     persisted // false when the audit record could not be written; the alert is still raised
   };
@@ -164,154 +204,67 @@ async function recordIncident(incidentData) {
 }
 
 /**
- * Evaluates live telemetry stream and triggers alerts if kinematic or physiological thresholds are violated
+ * Evaluates one normalised telemetry reading (see services/telemetry/normalize.js)
+ * and raises an incident when a fall is flagged or the vitals rules are met.
+ * Returns the incident that was raised, or null.
  */
-async function evaluateTelemetry(parsed, detectedTag, tagMac) {
-  const now = Date.now();
-  const debounceKey = `${detectedTag || tagMac}`;
-  const lastAlertTime = recentAlertsDebounce.get(debounceKey) || 0;
+async function evaluateTelemetry(telemetry, detectedTag, tagMac) {
+  if (!telemetry) return null;
+  const key = String(detectedTag || tagMac || 'UNKNOWN').toUpperCase();
 
-  // Don't generate multiple alarms for the same tag within 12 seconds
-  if (now - lastAlertTime < 12000) {
-    return;
-  }
+  // Check 1: fall confirmed by the wristband (Algorithm 3: free-fall, impact, stillness).
+  // Never delayed by the vitals quiet period.
+  if (telemetry.fall) {
+    // Registered synchronously, before any database work: the packets of the
+    // other anchors that arrive in the same instant find the session open.
+    const { isNew, session } = fallTracker.observe(key, telemetry.fallSeq);
+    if (!isNew) return null;
 
-  // Check 1: Kinematic Fall Detection (Algorithm 3 On-Chip State Machine)
-  // ONLY trigger on confirmed FALL_EMERGENCY (Freefall + Impact > 2.5g + Incapacitation Stillness < 0.2g)
-  const isFallEmergency = (parsed.motion === 'FALL_EMERGENCY');
-  if (isFallEmergency) {
-    const existingSession = activeFallSessions.get(debounceKey);
-    if (existingSession) {
-      existingSession.lastSeenFall = now;
-      // If already acknowledged by clinician or incident already actively raised, DO NOT duplicate!
-      return;
-    }
+    const impact = telemetry.impactG !== null ? `${telemetry.impactG} g` : 'not reported';
+    console.warn(`[EMERGENCY DETECTED] On-chip fall alarm from ${detectedTag} (${tagMac}), fall #${telemetry.fallSeq ?? 'n/a'}, impact ${impact}`);
 
-    const impactG = parsed.g !== undefined && parseFloat(parsed.g) >= 2.0 ? parseFloat(parsed.g) : 3.15;
-    console.warn(`[EMERGENCY DETECTED] On-chip fall alarm confirmed from ${detectedTag} (${tagMac})! Impact: ${impactG}g`);
-
-    // Log fall vector to InfluxDB (Table 4.10)
-    try {
-      const timeSeriesService = require('./time_series_service');
-      timeSeriesService.logFallVector({
-        wristbandMac: tagMac,
-        minG: 0.35,
-        impactG: impactG,
-        alertLevel: 'CRITICAL'
-      });
-    } catch (e) { }
+    // Fall vector to InfluxDB (Table 4.10): only values the wristband measured
+    timeSeriesService.logFallVector({
+      wristbandMac: tagMac,
+      minG: telemetry.freefallG,
+      impactG: telemetry.impactG,
+      stillG: telemetry.stillG,
+      alertLevel: 'CRITICAL'
+    });
 
     const incident = await recordIncident({
       device_id: detectedTag,
       wristband_mac: tagMac,
       incident_category: 'FALL_ACCIDENT',
-      kinematic_impact_force: impactG,
-      post_impact_stillness: 0.08,
-      heart_rate: parsed.bpm || 80,
-      spo2: parsed.spo2 || 98
+      kinematic_impact_force: telemetry.impactG,
+      post_impact_stillness: telemetry.stillG,
+      freefall_min_g: telemetry.freefallG,
+      heart_rate: telemetry.bpm,
+      spo2: telemetry.spo2
     });
-
-    activeFallSessions.set(debounceKey, {
-      incident_id: incident.incident_id,
-      acknowledged: false,
-      startTime: now,
-      lastSeenFall: now
-    });
-    return;
-  } else {
-    // If tag was in a fall session and motion returned to normal for > 15 seconds, clear the session
-    const existingSession = activeFallSessions.get(debounceKey);
-    if (existingSession && (now - existingSession.lastSeenFall > 15000)) {
-      activeFallSessions.delete(debounceKey);
-      console.log(`[FALL SESSION CLEARED] Tag ${debounceKey} returned to normal activity.`);
-    }
+    session.incidentId = incident.incident_id;
+    fallTracker.sweep();
+    return incident;
   }
 
-  // Check 2: Physiological Anomaly Evaluation (Clinical Multi-Cycle Streak Algorithm)
-  // Handles discontinuous 3-minute passive bursts and active streams to prevent single-sample false alarms
-  if (parsed.bpm > 0) {
-    const bpm = parseInt(parsed.bpm, 10);
-    const spo2 = parseFloat(parsed.spo2);
+  // Check 2: abnormal vitals. Only readings taken with skin contact are judged.
+  if (!telemetry.touch) return null;
+  const decision = vitalsEvaluator.evaluate(key, { bpm: telemetry.bpm, spo2: telemetry.spo2 });
+  if (!decision) return null;
 
-    // Tier 1: Extreme Life-Threatening Anomaly -> Immediate 1st-cycle Emergency Alarm
-    let isExtreme = false;
-    let extremeReason = '';
-    if (bpm > 160) {
-      isExtreme = true;
-      extremeReason = `Critical Tachycardia crisis (${bpm} BPM > 160)`;
-    } else if (bpm < 40 && bpm > 0) {
-      isExtreme = true;
-      extremeReason = `Severe Bradycardia collapse (${bpm} BPM < 40)`;
-    } else if (spo2 > 50 && spo2 < 85) {
-      isExtreme = true;
-      extremeReason = `Severe Acute Desaturation (${spo2}% < 85%)`;
-    }
+  const label = decision.severity === 'EXTREME' ? 'CRITICAL PHYSIOLOGICAL EMERGENCY' : 'SUSTAINED PHYSIOLOGICAL ANOMALY';
+  console.warn(`[VITALS ALERT] ${label}: ${decision.reason} on ${detectedTag}`);
 
-    if (isExtreme) {
-      vitalAnomalyStreaks.delete(debounceKey);
-      recentAlertsDebounce.set(debounceKey, now);
-      console.warn(`[CRITICAL VITALS EMERGENCY] ${extremeReason} on ${detectedTag}`);
-      await recordIncident({
-        device_id: detectedTag,
-        wristband_mac: tagMac,
-        incident_category: 'CRITICAL_VITALS',
-        heart_rate: bpm,
-        spo2: spo2,
-        alert_message: `CRITICAL PHYSIOLOGICAL EMERGENCY: ${extremeReason} on patient ${detectedTag}. Immediate bedside intervention required.`
-      });
-      return;
-    }
-
-    // Tier 2: Moderate Anomaly -> Requires 2 consecutive cycles (streak >= 2) within 10 minutes to verify
-    let isModerate = false;
-    let modReason = '';
-    if (bpm > 120) {
-      isModerate = true;
-      modReason = `Sustained Tachycardia (${bpm} BPM > 120)`;
-    } else if (bpm < 50 && bpm > 0) {
-      isModerate = true;
-      modReason = `Sustained Bradycardia (${bpm} BPM < 50)`;
-    } else if (spo2 > 50 && spo2 < 90) {
-      isModerate = true;
-      modReason = `Persistent Hypoxia (SpO2 ${spo2}% < 90%)`;
-    }
-
-    if (isModerate) {
-      const streak = vitalAnomalyStreaks.get(debounceKey) || { count: 0, lastSeen: 0 };
-      // If previous anomalous reading was within 10 minutes (covering discontinuous 3-min cycles)
-      if (now - streak.lastSeen < 600000 && streak.lastSeen > 0) {
-        streak.count++;
-      } else {
-        streak.count = 1;
-      }
-      streak.lastSeen = now;
-      streak.reason = modReason;
-      vitalAnomalyStreaks.set(debounceKey, streak);
-
-      console.log(`[VITALS ANOMALY STREAK] ${detectedTag} (${tagMac}): Verification Streak ${streak.count}/2 [${modReason}]`);
-
-      // Trigger clinical alert once sustained over 2 consecutive measurement cycles
-      if (streak.count >= 2) {
-        vitalAnomalyStreaks.delete(debounceKey);
-        recentAlertsDebounce.set(debounceKey, now);
-        console.warn(`[SUSTAINED VITALS ALERT] Confirmed over consecutive cycles: ${modReason} on ${detectedTag}`);
-        await recordIncident({
-          device_id: detectedTag,
-          wristband_mac: tagMac,
-          incident_category: 'CRITICAL_VITALS',
-          heart_rate: bpm,
-          spo2: spo2,
-          alert_message: `SUSTAINED PHYSIOLOGICAL ANOMALY: Verified over 2 consecutive cycles - ${modReason} on patient ${detectedTag}.`
-        });
-      }
-    } else if (bpm >= 55 && bpm <= 100 && spo2 >= 94) {
-      // Normal reading confirmed: clear anomaly streak counter
-      if (vitalAnomalyStreaks.has(debounceKey)) {
-        vitalAnomalyStreaks.delete(debounceKey);
-        console.log(`[VITALS STREAK RESET] ${detectedTag} returned to normal baseline (HR: ${bpm}, SpO2: ${spo2}%).`);
-      }
-    }
-  }
+  return recordIncident({
+    device_id: detectedTag,
+    wristband_mac: tagMac,
+    incident_category: 'CRITICAL_VITALS',
+    heart_rate: decision.bpm,
+    spo2: decision.spo2,
+    alert_message: decision.severity === 'EXTREME'
+      ? `${label}: ${decision.reason} on ${detectedTag}. Immediate bedside intervention required.`
+      : `${label}: ${decision.reason} on ${detectedTag}.`
+  });
 }
 
 /**
@@ -319,8 +272,8 @@ async function evaluateTelemetry(parsed, detectedTag, tagMac) {
  */
 async function acknowledgeIncident(incidentId, clinicianId, notes) {
   const pool = getPool();
-  const clinician = clinicianId || 'DOC-8821 (Dr. Tan)';
-  const incidentNotes = notes || 'Acknowledged by bedside attending clinician.';
+  const clinician = clinicianId || UNVERIFIED_CLINICIAN;
+  const incidentNotes = notes || 'Acknowledged from the web dashboard.';
 
   try {
     await pool.query(`
@@ -335,13 +288,9 @@ async function acknowledgeIncident(incidentId, clinicianId, notes) {
 
     console.log(`[ALERT ACKNOWLEDGED] Incident ${incidentId} acknowledged by ${clinician}.`);
 
-    // Mark active fall session acknowledged so repeated alarms do not fire during active stream hold
-    for (const [tagKey, session] of activeFallSessions.entries()) {
-      if (session.incident_id === incidentId) {
-        session.acknowledged = true;
-        console.log(`[ALERT SERVICE] Marked active fall session acknowledged for ${tagKey}.`);
-      }
-    }
+    // The wristband keeps repeating its fall flag for a while: the open session stays
+    // in place so those packets do not raise the same fall again.
+    fallTracker.markAcknowledged(incidentId);
 
     broadcastToClients({
       type: 'EMERGENCY_ACKNOWLEDGED',
@@ -396,6 +345,7 @@ async function getIncidentHistory(limit = 50) {
 }
 
 module.exports = {
+  UNVERIFIED_CLINICIAN,
   recordIncident,
   evaluateTelemetry,
   acknowledgeIncident,

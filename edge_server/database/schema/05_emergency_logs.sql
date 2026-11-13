@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS `emergency_incident_logs` (
     `heart_rate` INT NULL,
     `spo2` FLOAT NULL,
     `alert_message` TEXT NULL,
+    `is_simulated` TINYINT(1) NOT NULL DEFAULT 0,
     `acknowledgment_time` TIMESTAMP NULL,
     `response_latency_seconds` FLOAT NULL,
     `attending_clinician` VARCHAR(64) NULL,

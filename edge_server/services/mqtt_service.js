@@ -10,9 +10,22 @@ const ipsService = require('./ips_service');
 const alertService = require('./alert_service');
 const timeSeriesService = require('./time_series_service');
 const bindingCache = require('./binding_cache');
+const { normalizeTelemetry } = require('./telemetry/normalize');
 
 let aedesInstance = null;
 let tcpServer = null;
+
+// Wristbands whose packet the anchors cannot decode: warn once a minute per tag
+const UNSUPPORTED_WARNING_INTERVAL_MS = 60000;
+const lastUnsupportedWarning = new Map();
+
+function warnUnsupportedPacket(tagMac) {
+  const key = tagMac || 'UNKNOWN';
+  const now = Date.now();
+  if (now - (lastUnsupportedWarning.get(key) || 0) < UNSUPPORTED_WARNING_INTERVAL_MS) return;
+  lastUnsupportedWarning.set(key, now);
+  console.warn(`[PROTOCOL] Wristband ${key} sends a packet version this system does not support. Position is tracked, vitals and fall alerts are NOT. Reflash the wristband.`);
+}
 
 // Dynamic Kalman filter registry per Anchor ID
 const anchorFilters = {};
@@ -102,8 +115,12 @@ async function startMqttBroker(port = 1883) {
           const enrolledTag = tagMac ? deviceService.findEnrolledDeviceByMac(tagMac) : null;
           const detectedTag = enrolledTag ? enrolledTag.device_id : (parsed.tag || parsed.tag_id || tagMac || 'TAG-001');
 
-          const isCharging = (parsed.charging === true || parsed.charging === 'true');
-          const batLevel = parsed.battery !== undefined ? parseInt(parsed.battery, 10) : (parsed.bat !== undefined ? parseInt(parsed.bat, 10) : null);
+          // One validated view of the packet: unknown values are null, never invented
+          const telemetry = normalizeTelemetry(parsed);
+          if (telemetry.protocolVersion === 0) warnUnsupportedPacket(tagMac);
+
+          const isCharging = telemetry.charging;
+          const batLevel = telemetry.battery;
 
           deviceService.recordActiveDeviceTraffic(detectedTag, 'WRISTBAND', {
             mac: tagMac,
@@ -125,46 +142,53 @@ async function startMqttBroker(port = 1883) {
             timestamp: Date.now()
           });
 
-          // Feed IMU kinematics into IPS 4-State Motion Filter
-          if (parsed.g !== undefined) {
-            ipsService.recordKinematics(detectedTag, parseFloat(parsed.g), Date.now(), parsed.motion || null);
-          }
+          if (telemetry.hasTelemetry) {
+            // Feed IMU kinematics into IPS 4-State Motion Filter (only real accelerometer values)
+            if (telemetry.g !== null) {
+              ipsService.recordKinematics(detectedTag, telemetry.g, Date.now(), telemetry.motion);
+            }
 
-          // Evaluate Fall Anomaly & Critical Vitals Alarm Pipeline
-          alertService.evaluateTelemetry(parsed, detectedTag, tagMac);
+            // Evaluate Fall Anomaly & Critical Vitals Alarm Pipeline.
+            // A failure here must be visible and must not stop telemetry processing.
+            alertService.evaluateTelemetry(telemetry, detectedTag, tagMac).catch((err) => {
+              console.error(`[ALERT PIPELINE ERROR] ${detectedTag}: ${err.message}`);
+            });
 
-          // Broadcast live vitals for Patient Monitors, Live Map & VR Headsets!
-          if (parsed.bpm !== undefined || parsed.spo2 !== undefined || parsed.battery !== undefined) {
-            const isActiveMode = (parsed.active === true || parsed.active === 'true' || parsed.motion === 'FALL_EMERGENCY');
-
+            // Broadcast live vitals for Patient Monitors, Live Map & VR Headsets.
+            // bpm / spo2 of 0 mean "no valid reading". g and motion are left out
+            // when the accelerometer has failed.
             broadcastToClients({
               type: 'TELEMETRY',
               topic: topic,
               data: {
                 tag_id: detectedTag,
                 tag_mac: tagMac,
-                bpm: parsed.bpm || 0,
-                spo2: parsed.spo2 || 0,
-                g: parsed.g !== undefined ? parseFloat(parsed.g) : 1.0,
-                motion: parsed.motion || 'STATIONARY',
-                touch: parsed.touch !== undefined ? parseInt(parsed.touch, 10) : 0,
-                active: isActiveMode,
+                bpm: telemetry.bpm ?? 0,
+                spo2: telemetry.spo2 ?? 0,
+                g: telemetry.g ?? undefined,
+                motion: telemetry.motion ?? undefined,
+                touch: telemetry.touch ? 1 : 0,
+                active: telemetry.active,
                 battery: batLevel,
                 charging: isCharging,
+                fall: telemetry.fall,
+                imu_fault: telemetry.imuFault,
+                ppg_fault: telemetry.ppgFault,
+                protocol_version: telemetry.protocolVersion,
                 detected_by_anchor: anchorId
               },
               timestamp: new Date().toLocaleTimeString()
             });
 
-            // Log time-series telemetry to InfluxDB (Table 4.10)
-            if ((parsed.bpm && parsed.bpm > 0) || (parsed.spo2 && parsed.spo2 > 0)) {
+            // Log time-series telemetry to InfluxDB (Table 4.10): measured values only
+            if (telemetry.bpm !== null || telemetry.spo2 !== null) {
               timeSeriesService.logVitals({
                 patientId: bindingCache.getPatientIdForDevice(detectedTag) || 'UNASSIGNED',
                 wristbandMac: tagMac,
-                bpm: parsed.bpm || 0,
-                spo2: parsed.spo2 || 0,
-                quality: parsed.touch ? 0.95 : 0.40,
-                mode: isActiveMode ? 'ACTIVE_STREAM' : 'PASSIVE_3MIN'
+                bpm: telemetry.bpm,
+                spo2: telemetry.spo2,
+                quality: telemetry.touch ? 0.95 : 0.40,
+                mode: telemetry.active ? 'ACTIVE_STREAM' : 'PASSIVE_3MIN'
               });
             }
           }

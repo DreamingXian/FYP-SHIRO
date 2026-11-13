@@ -36,3 +36,41 @@ describe('vitals history query', () => {
     assert.doesNotMatch(flux, / or r\.patient_id/);
   });
 });
+
+describe('vitals points', () => {
+  test('an unknown value is left out, never written as 0', () => {
+    const line = timeSeries.buildVitalsLine({ patientId: 'P-007', wristbandMac: 'AA:BB', bpm: 72, spo2: null });
+    assert.match(line, /heart_rate=72i/);
+    assert.doesNotMatch(line, /spo2_percentage/);
+  });
+
+  test('no measured value means no point at all', () => {
+    assert.equal(timeSeries.buildVitalsLine({ patientId: 'P-007', bpm: null, spo2: null }), null);
+    assert.equal(timeSeries.buildVitalsLine({ patientId: 'P-007', bpm: 0, spo2: 0 }), null);
+  });
+});
+
+describe('fall vector points', () => {
+  test('only measured values are written', () => {
+    const line = timeSeries.buildFallVectorLine({ wristbandMac: 'AA:BB', minG: 0, impactG: 4.371, stillG: null });
+    assert.match(line, /accel_freefall_min_g=0\.00/);
+    assert.match(line, /accel_impact_max_g=4\.37/);
+    assert.doesNotMatch(line, /post_impact_motion_g/);
+  });
+
+  test('a fall with no measurements stores no point (no invented defaults)', () => {
+    assert.equal(timeSeries.buildFallVectorLine({ wristbandMac: 'AA:BB' }), null);
+  });
+});
+
+describe('vitals history parsing', () => {
+  test('a point without heart rate comes back with heart_rate null', () => {
+    const csv = [',result,table,_time,spo2_percentage', ',_result,0,2026-11-13T08:00:00Z,97.5'].join('\r\n');
+    assert.deepEqual(timeSeries.parseVitalsCsv(csv), [{ time: '2026-11-13T08:00:00Z', heart_rate: null, spo2: 97.5 }]);
+  });
+
+  test('empty answers give no points', () => {
+    assert.deepEqual(timeSeries.parseVitalsCsv(''), []);
+    assert.deepEqual(timeSeries.parseVitalsCsv(null), []);
+  });
+});
