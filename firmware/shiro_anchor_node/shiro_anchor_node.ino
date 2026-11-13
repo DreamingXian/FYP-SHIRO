@@ -21,10 +21,18 @@
 // =============================================================================
 // 1. Wi-Fi & MQTT Server Configuration
 // =============================================================================
-const char* ssid        = "REDACTED_SSID";  // Your 2.4GHz Wi-Fi SSID
-const char* password    = "REDACTED";          // Your Wi-Fi Password
-const char* mqtt_server = "192.168.100.21";      // Your Asus TUF Laptop IP
-const int   mqtt_port   = 1883;
+// Site settings live in secrets.h (git-ignored). Copy secrets.example.h to
+// secrets.h in this sketch folder and fill in your own values.
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#error "secrets.h not found: copy secrets.example.h to secrets.h and fill in your Wi-Fi and MQTT settings"
+#endif
+
+const char* ssid        = SHIRO_WIFI_SSID;
+const char* password    = SHIRO_WIFI_PASSWORD;
+const char* mqtt_server = SHIRO_MQTT_SERVER;
+const int   mqtt_port   = SHIRO_MQTT_PORT;
 
 // Shared MQTT Topic for all anchors
 const char* mqtt_topic  = "shiro/ward-A1/anchor/telemetry";

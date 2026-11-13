@@ -1,6 +1,7 @@
 // =============================================================================
 // SHIRO Hospital Edge Server - MySQL Database Connection Pool
 // =============================================================================
+require('../config/load_env');
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');

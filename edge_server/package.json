@@ -2,10 +2,13 @@
   "name": "edge_server",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test \"test/unit/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20.12.0"
   },
   "keywords": [],
   "author": "",
