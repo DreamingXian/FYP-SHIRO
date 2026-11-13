@@ -37,7 +37,7 @@ function sendLineProtocol(lines) {
     const req = http.request({
       host: influxUrl.hostname,
       port: influxUrl.port || 8086,
-      path: `/api/v2/write?org=${encodeURIComponent(org)}&bucket=${encodeURIComponent(bucket)}&precision=s`,
+      path: `/api/v2/write?org=${encodeURIComponent(org)}&bucket=${encodeURIComponent(bucket)}&precision=ms`,
       method: 'POST',
       headers: {
         'Authorization': `Token ${token}`,
@@ -77,9 +77,19 @@ async function flushBuffer() {
   await sendLineProtocol(batch);
 }
 
+// Every point carries its own millisecond timestamp. Without one, InfluxDB
+// stamps a whole batch with the same time and keeps only the last point of
+// each series. The counter also keeps two points in the same millisecond apart.
+let lastTimestampMs = 0;
+
+function nextTimestampMs() {
+  lastTimestampMs = Math.max(Date.now(), lastTimestampMs + 1);
+  return lastTimestampMs;
+}
+
 function queuePoint(line) {
   if (!enabled) return;
-  writeBuffer.push(line);
+  writeBuffer.push(`${line} ${nextTimestampMs()}`);
   if (!flushTimer) {
     flushTimer = setTimeout(async () => {
       flushTimer = null;
@@ -128,24 +138,29 @@ function logFallVector({ wristbandMac, minG = 0.35, impactG = 3.42, alertLevel =
 }
 
 /**
- * 4. Query Historical Vitals via Flux (Table 4.10: 30-Day Vitals Retention)
+ * Builds the Flux query for one patient's vitals history.
+ * Matches on patient_id only: a wristband that is later given to another
+ * patient must never bring the previous patient's readings with it.
  */
-function queryVitalsHistory(patientId, range = '-24h', wristbandMac = null, deviceId = null) {
-  return new Promise((resolve) => {
-    if (!enabled) return resolve([]);
-    let idFilter = `r.patient_id == "${patientId}"`;
-    if (wristbandMac) idFilter += ` or r.wristband_mac == "${wristbandMac}"`;
-    if (deviceId && deviceId !== patientId) idFilter += ` or r.patient_id == "${deviceId}"`;
-
-    const flux = `
+function buildVitalsHistoryQuery(patientId, range = '-24h') {
+  return `
       from(bucket: "${bucket}")
         |> range(start: ${range})
-        |> filter(fn: (r) => r._measurement == "patient_vitals" and (${idFilter}))
+        |> filter(fn: (r) => r._measurement == "patient_vitals" and r.patient_id == "${patientId}")
         |> filter(fn: (r) => r._field == "heart_rate" or r._field == "spo2_percentage")
         |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
         |> sort(columns: ["_time"], desc: false)
         |> limit(n: 500)
     `;
+}
+
+/**
+ * 4. Query Historical Vitals via Flux (Table 4.10: 30-Day Vitals Retention)
+ */
+function queryVitalsHistory(patientId, range = '-24h') {
+  return new Promise((resolve) => {
+    if (!enabled) return resolve([]);
+    const flux = buildVitalsHistoryQuery(patientId, range);
 
     const req = http.request({
       host: influxUrl.hostname,
@@ -216,6 +231,8 @@ module.exports = {
   logFallVector,
   queryVitalsHistory,
   flushBuffer,
-  isEnabled
+  isEnabled,
+  buildVitalsHistoryQuery,
+  nextTimestampMs
 };
 

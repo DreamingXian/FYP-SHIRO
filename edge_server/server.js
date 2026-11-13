@@ -3,11 +3,13 @@
 // =============================================================================
 const http = require('http');
 const config = require('./config/app_config');
-const { testAndInitDatabase } = require('./database/db');
+const { initDatabase } = require('./database/db');
 const { handleRequest } = require('./routes/index');
 const { startMqttBroker } = require('./services/mqtt_service');
 const { initWebSocketServer } = require('./services/websocket_service');
 const ipsService = require('./services/ips_service');
+const deviceService = require('./services/device_service');
+const bindingCache = require('./services/binding_cache');
 
 async function bootstrap() {
   console.log('\n======================================================');
@@ -16,8 +18,14 @@ async function bootstrap() {
 
   // 1. Connect and initialize MySQL Database schema & seed data
   console.log('[DATABASE] Connecting to MySQL Database...');
-  await testAndInitDatabase();
+  await initDatabase(); // throws when MySQL is unreachable: the server must not run without its database
   await ipsService.reloadWardAnchorsCache();
+  await deviceService.syncEnrolledDevicesCache();
+  await bindingCache.refresh();
+
+  // Background watchdogs (device freshness, tag offline detection)
+  deviceService.startFreshnessWatchdog();
+  ipsService.startOfflineWatchdog();
 
   // 2. Start Aedes MQTT Broker on TCP 1883
   await startMqttBroker(config.MQTT_PORT);
@@ -55,6 +63,7 @@ async function bootstrap() {
 }
 
 bootstrap().catch((err) => {
-  console.error('[FATAL STARTUP ERROR]', err);
+  console.error('[FATAL STARTUP ERROR]', err.message);
+  if (process.env.SHIRO_DEBUG) console.error(err);
   process.exit(1);
 });

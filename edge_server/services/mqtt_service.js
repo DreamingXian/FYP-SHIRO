@@ -9,6 +9,7 @@ const deviceService = require('./device_service');
 const ipsService = require('./ips_service');
 const alertService = require('./alert_service');
 const timeSeriesService = require('./time_series_service');
+const bindingCache = require('./binding_cache');
 
 let aedesInstance = null;
 let tcpServer = null;
@@ -158,7 +159,7 @@ async function startMqttBroker(port = 1883) {
             // Log time-series telemetry to InfluxDB (Table 4.10)
             if ((parsed.bpm && parsed.bpm > 0) || (parsed.spo2 && parsed.spo2 > 0)) {
               timeSeriesService.logVitals({
-                patientId: enrolledTag?.bound_patient_id || detectedTag,
+                patientId: bindingCache.getPatientIdForDevice(detectedTag) || 'UNASSIGNED',
                 wristbandMac: tagMac,
                 bpm: parsed.bpm || 0,
                 spo2: parsed.spo2 || 0,

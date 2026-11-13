@@ -299,6 +299,11 @@ async function deleteDevice(deviceId) {
     throw new Error(`Device "${deviceId}" not found.`);
   }
   await syncEnrolledDevicesCache();
+  try {
+    await require('./binding_cache').refresh();
+  } catch (err) {
+    console.warn('[DEVICE SERVICE] Binding cache refresh failed:', err.message);
+  }
 
   // Automatically purge deleted device from real-time IPS localization memory
   try {
@@ -527,7 +532,9 @@ async function updateDeviceStatus(deviceId, status) {
 // Live Freshness Watchdog (Runs every 2 seconds)
 // Immediately detects power loss / unplugging of hardware
 // =============================================================================
-setInterval(async () => {
+let freshnessTimer = null;
+
+async function runFreshnessCheck() {
   const now = Date.now();
   const pool = getPool();
 
@@ -562,9 +569,24 @@ setInterval(async () => {
       });
     }
   } catch (_) { }
-}, 2000);
+}
 
-setTimeout(syncEnrolledDevicesCache, 1000);
+/**
+ * Starts the 2-second freshness watchdog. Called once from server.js at start-up,
+ * so that loading this module has no side effects.
+ */
+function startFreshnessWatchdog(intervalMs = 2000) {
+  if (freshnessTimer) return freshnessTimer;
+  freshnessTimer = setInterval(runFreshnessCheck, intervalMs);
+  return freshnessTimer;
+}
+
+function stopFreshnessWatchdog() {
+  if (freshnessTimer) {
+    clearInterval(freshnessTimer);
+    freshnessTimer = null;
+  }
+}
 
 module.exports = {
   recordDiscoveredDevice,
@@ -579,6 +601,8 @@ module.exports = {
   updateDeviceStatus,
   handleDeviceDisconnect,
   findEnrolledDeviceByMac,
-  syncEnrolledDevicesCache
+  syncEnrolledDevicesCache,
+  startFreshnessWatchdog,
+  stopFreshnessWatchdog
 };
 

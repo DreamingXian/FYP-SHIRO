@@ -1,5 +1,6 @@
 -- =============================================================================
--- SHIRO Edge Server - Patient-to-Wristband Bindings Schema
+-- SHIRO Edge Server - Schema 04: Patient-to-Wristband Bindings
+-- Requires the patients and devices tables.
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS `patient_bindings` (
@@ -16,4 +17,3 @@ CREATE TABLE IF NOT EXISTS `patient_bindings` (
   CONSTRAINT `fk_binding_patient` FOREIGN KEY (`patient_id`) REFERENCES `patients` (`patient_id`) ON DELETE CASCADE,
   CONSTRAINT `fk_binding_device` FOREIGN KEY (`device_id`) REFERENCES `devices` (`device_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-

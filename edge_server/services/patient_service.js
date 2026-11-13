@@ -6,6 +6,7 @@ const { getPool } = require('../database/db');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config/app_config');
+const bindingCache = require('./binding_cache');
 
 /**
  * Calculates real-time age in years from date of birth.
@@ -472,6 +473,7 @@ async function dischargePatient(patientId) {
     );
 
     await conn.commit();
+    await bindingCache.refresh();
     return {
       success: true,
       message: `Patient ${patient.full_name} (${patientId}) discharged. Bed released to AVAILABLE.`
@@ -519,6 +521,7 @@ async function deletePatient(patientId) {
     await conn.query(`DELETE FROM patients WHERE patient_id = ?`, [patientId]);
 
     await conn.commit();
+    await bindingCache.refresh();
     return {
       success: true,
       message: `Patient ${patient.full_name} (${patientId}) permanently deleted.`

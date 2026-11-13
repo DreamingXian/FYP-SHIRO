@@ -90,7 +90,8 @@ async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
         console.warn('[PATIENT VITALS ROUTE] Could not resolve binding:', dbErr.message);
       }
 
-      const vitals = await timeSeriesService.queryVitalsHistory(patientId, range, wristbandMac, deviceId);
+      // History is matched on the patient ID only; the binding is returned for display.
+      const vitals = await timeSeriesService.queryVitalsHistory(patientId, range);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ 
         success: true, 

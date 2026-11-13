@@ -1,9 +1,7 @@
 -- =============================================================================
--- SHIRO Central Hospital Database Initialization Script
--- Module: Hardware Device Registry (Wristbands, Anchors, Headsets)
+-- SHIRO Edge Server - Schema 03: Hardware Device Registry
+-- Wristbands, anchors and headsets. No seed data: devices are discovered live.
 -- =============================================================================
-
-USE `shiro_db`;
 
 -- 1. Create Devices Table
 CREATE TABLE IF NOT EXISTS `devices` (
@@ -25,6 +23,3 @@ CREATE TABLE IF NOT EXISTS `devices` (
     CONSTRAINT `fk_device_ward` FOREIGN KEY (`assigned_ward_id`) 
         REFERENCES `ward_rooms`(`ward_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- (No mock seed data: hardware nodes are discovered live via MQTT / BLE radar)
-
