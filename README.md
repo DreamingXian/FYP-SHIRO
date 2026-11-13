@@ -167,6 +167,15 @@ Detailed step-by-step instructions are documented in [SYSTEM_STARTUP_PROCEDURE.m
    * Connect Quest 3 via Quest Link / Air Link and click Play on `MainMRScene.unity`.
    * Look at left palm -> Click `[🎯 Room Calibration]` -> Aim laser at door frame corners -> Ward snaps into physical alignment!
 
+### Automated Tests
+
+Run from `edge_server/`:
+
+| Command | What it runs | Needs |
+| :--- | :--- | :--- |
+| `npm test` | Unit tests (filters, positioning maths, incident IDs, binding cache) | Nothing |
+| `npm run test:integration` | Database start-up, restart safety, bindings, incident log | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
+
 ---
 
 ## 6. Project Structure
@@ -186,7 +195,7 @@ Code/
 │   ├── .env.example                # Template for git-ignored .env (ports, MySQL, InfluxDB token)
 │   ├── test/                       # Automated tests (`npm test`)
 │   ├── config/                     # Application, network, and calibration configs
-│   ├── database/                   # MySQL schemas, migrations, and connection pool
+│   ├── database/                   # Connection pool, schema/ (tables), seed/ (sample data), migrations
 │   ├── controllers/                # Express controllers (Wards, Patients, Devices)
 │   ├── services/                   # MQTT, WebSocket, IPS EKF, and Alert services
 │   ├── routes/                     # Express REST API routes
