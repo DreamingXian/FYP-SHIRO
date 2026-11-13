@@ -88,7 +88,8 @@ Unified packets are published directly over Wi-Fi to the central Edge Server's e
 * **Universal Anchor Firmware (`shiro_anchor_node.ino`):** Identical firmware flashed to all anchor boards without hardcoded IDs. Device identifiers (`anchor-A`, `anchor-B`, `anchor-C`) and calibration parameters are dynamically mapped and provisioned by the Central Edge Server during enrollment.
 * **Dual-Role Anchor Pipeline:** Anchors continuously capture BLE manufacturer packets from wristbands, record raw RSSI for IPS multilateration, decode physiological vitals (BPM, SpO2, battery, touch), and publish unified JSON telemetry over Wi-Fi/MQTT (`shiro/ward-A1/anchor/telemetry`).
 * **Connectionless Broadcast Telemetry:** Eliminated point-to-point BLE GATT connection bottlenecks. The wristband broadcasts high-rate advertising beacons heard by all anchors in radio range simultaneously.
-* **On-Chip Triple-Phase Fall Detection:** Wristband runs an embedded kinematic fall state machine (Freefall $\rightarrow$ Impact $\rightarrow$ Stillness check) on the MPU-6050 before transmitting an immediate `EMERGENCY_FALL` alert.
+* **On-Chip Triple-Phase Fall Detection:** Wristband runs an embedded kinematic fall state machine (free-fall below 0.5 g for at least 150 ms $\rightarrow$ impact above 2.5 g within 500 ms $\rightarrow$ stillness for 2 s) on the MPU-6050 (±8 g range). A confirmed fall is broadcast with a fall counter and its measured impact, free-fall minimum and post-impact motion.
+* **Versioned Telemetry Packet:** The wristband broadcasts a 15-byte packet (version 2) defined once in [docs/protocol.md](docs/protocol.md). A failed accelerometer or pulse sensor is reported by a fault flag; missing values are never replaced by defaults.
 * **Battery Sensing & Adaptive Power:** 100k/100k voltage divider on pin `D0` with battery percentage calculation and non-blocking optical sensor FIFO sampling.
 
 ### Tier 2: Edge Server, IPS Engine & Web Dashboard
@@ -173,8 +174,16 @@ Run from `edge_server/`:
 
 | Command | What it runs | Needs |
 | :--- | :--- | :--- |
-| `npm test` | Unit tests (filters, positioning maths, incident IDs, binding cache) | Nothing |
-| `npm run test:integration` | Database start-up, restart safety, bindings, incident log | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
+| `npm test` | Unit tests (filters, positioning maths, incident IDs, binding cache, alarm thresholds, fall de-duplication, telemetry validation, firmware/server contract) | Nothing |
+| `npm run test:integration` | Database start-up, restart safety, bindings, incident log, alarm path, and the full MQTT-to-dashboard pipeline with a real server on spare ports | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
+
+Firmware logic (fall state machine, telemetry packet, vitals smoothing) is tested on the PC, without a board:
+
+| Command | What it runs | Needs |
+| :--- | :--- | :--- |
+| `firmware\tests\run_host_tests.bat` | Compiles the same header files the firmware uses and replays synthetic 50 Hz acceleration traces (falls, short dips, claps, arm swings, sitting down) | Visual Studio C++ tools, or any `g++` (see the top of `host_tests.cpp`) |
+
+The wristband also runs a short self-test of the fall state machine at every power-on and prints `[SELF-TEST] Fall detector: PASS` on the Serial Monitor. Hardware bench tests are recorded in [docs/test_records/](docs/test_records/).
 
 ---
 
@@ -184,9 +193,14 @@ Run from `edge_server/`:
 Code/
 ├── .gitignore                      # Git exclusion rules (Node, Unity, firmware)
 ├── README.md                       # Master project overview & feature guide
+├── docs/                           # protocol.md (telemetry definition), test_records/
 ├── SYSTEM_STARTUP_PROCEDURE.md     # Step-by-step operations & troubleshooting guide
 ├── firmware/                       # Embedded Arduino C++ firmware
 │   ├── shiro_wristband_vitals/     # XIAO ESP32-C6 PPG + IMU wearable firmware
+│   │   ├── fall_detector.h         # Fall state machine (Algorithm 3) and its self-test
+│   │   ├── shiro_packet.h          # Telemetry packet v2 (identical copy in shiro_anchor_node)
+│   │   └── vitals_filter.h         # Accepted vitals range and beat smoothing
+│   ├── tests/                      # PC tests for the firmware logic (run_host_tests.bat)
 │   └── shiro_anchor_node/          # ESP32 dual-role hybrid anchor & vitals gateway
 │       └── secrets.example.h       # Template for git-ignored secrets.h (Wi-Fi / MQTT settings)
 ├── edge_server/                    # Central Node.js edge server & web portal
