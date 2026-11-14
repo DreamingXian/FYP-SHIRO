@@ -3,15 +3,42 @@
 // REST API Handlers for Inpatient Directory, Admissions & Bed Sync
 // =============================================================================
 const patientService = require('../services/patient_service');
+const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
+const { requireId, optionalId, optionalOneOf, optionalText } = require('../utils/validate');
 
-function sendJson(res, statusCode, data) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(data));
-}
+const PATIENT_STATUS_FILTERS = ['ALL', 'ADMITTED', 'DISCHARGED'];
+const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
+const FALL_RISK_SCORES = ['LOW', 'MEDIUM', 'HIGH'];
+const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
-function sendError(res, statusCode, message) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify({ success: false, error: message }));
+// A patient photo is always a file this server stores in public/uploads/patients.
+const PHOTO_URL_PATTERN = /^[/]uploads[/]patients[/][A-Za-z0-9][A-Za-z0-9_.-]{0,99}[.](png|jpg|jpeg|webp|svg)$/;
+
+/**
+ * Checks the type, length and allowed values of the patient fields that are
+ * present. Which fields are required, and the NRIC and phone rules, are decided
+ * by the patient service.
+ */
+function checkPatientFields(payload) {
+  optionalId(payload.patient_id, 'patient_id');
+  optionalId(payload.assigned_ward_id, 'assigned_ward_id');
+  optionalId(payload.assigned_bed_id, 'assigned_bed_id');
+  optionalText(payload.full_name, 'full_name', 128);
+  optionalText(payload.nric_passport, 'nric_passport', 32);
+  optionalText(payload.phone_number, 'phone_number', 32);
+  optionalText(payload.medical_history, 'medical_history', 5000);
+  optionalOneOf(payload.gender, GENDERS, 'gender');
+  optionalOneOf(payload.fall_risk_score, FALL_RISK_SCORES, 'fall_risk_score');
+
+  const dob = optionalText(payload.dob, 'dob', 10);
+  if (dob !== null && (!DATE_PATTERN.test(dob) || Number.isNaN(Date.parse(dob)))) {
+    throw new HttpError(400, 'dob must be a date in the form YYYY-MM-DD.');
+  }
+
+  const photoUrl = optionalText(payload.photo_url, 'photo_url', 255);
+  if (photoUrl !== null && (!PHOTO_URL_PATTERN.test(photoUrl) || photoUrl.includes('..'))) {
+    throw new HttpError(400, 'photo_url must be a photo stored by this server. Upload the photo first.');
+  }
 }
 
 /**
@@ -19,12 +46,11 @@ function sendError(res, statusCode, message) {
  */
 async function listPatients(req, res, parsedUrl) {
   try {
-    const status = parsedUrl.searchParams.get('status') || 'ALL';
+    const status = optionalOneOf(parsedUrl.searchParams.get('status'), PATIENT_STATUS_FILTERS, 'status', 'ALL');
     const patients = await patientService.getAllPatients(status);
     sendJson(res, 200, { success: true, count: patients.length, patients });
   } catch (err) {
-    console.error('[PATIENT API ERROR] listPatients:', err);
-    sendError(res, 500, err.message || 'Failed to list patients');
+    sendFailure(res, err, 'listPatients');
   }
 }
 
@@ -33,18 +59,12 @@ async function listPatients(req, res, parsedUrl) {
  */
 async function getPatient(req, res, parsedUrl) {
   try {
-    const id = parsedUrl.searchParams.get('id');
-    if (!id) {
-      return sendError(res, 400, 'Missing required query parameter "id"');
-    }
+    const id = requireId(parsedUrl.searchParams.get('id'), 'id');
     const patient = await patientService.getPatientById(id);
-    if (!patient) {
-      return sendError(res, 404, `Patient "${id}" not found`);
-    }
+    if (!patient) throw new HttpError(404, `Patient "${id}" not found`);
     sendJson(res, 200, { success: true, patient });
   } catch (err) {
-    console.error('[PATIENT API ERROR] getPatient:', err);
-    sendError(res, 500, err.message || 'Failed to fetch patient');
+    sendFailure(res, err, 'getPatient');
   }
 }
 
@@ -56,8 +76,7 @@ async function getNextId(req, res) {
     const nextId = await patientService.getNextPatientId();
     sendJson(res, 200, { success: true, nextId });
   } catch (err) {
-    console.error('[PATIENT API ERROR] getNextId:', err);
-    sendError(res, 500, err.message || 'Failed to generate next patient ID');
+    sendFailure(res, err, 'getNextId');
   }
 }
 
@@ -66,12 +85,11 @@ async function getNextId(req, res) {
  */
 async function getAvailableBeds(req, res, parsedUrl) {
   try {
-    const wardId = parsedUrl.searchParams.get('ward_id') || null;
+    const wardId = optionalId(parsedUrl.searchParams.get('ward_id'), 'ward_id');
     const data = await patientService.getAvailableBeds(wardId);
     sendJson(res, 200, { success: true, ...data });
   } catch (err) {
-    console.error('[PATIENT API ERROR] getAvailableBeds:', err);
-    sendError(res, 500, err.message || 'Failed to fetch available beds');
+    sendFailure(res, err, 'getAvailableBeds');
   }
 }
 
@@ -80,22 +98,16 @@ async function getAvailableBeds(req, res, parsedUrl) {
  */
 async function admitPatient(req, res, body) {
   try {
-    let payload;
-    try {
-      payload = typeof body === 'string' ? JSON.parse(body) : body;
-    } catch {
-      return sendError(res, 400, 'Invalid JSON request payload');
-    }
-
+    const payload = parseJsonBody(body);
     if (!payload.full_name || !payload.nric_passport || !payload.dob || !payload.phone_number) {
-      return sendError(res, 400, 'Missing required patient fields (Full Name, NRIC, DOB, Phone).');
+      throw new HttpError(400, 'Missing required patient fields (Full Name, NRIC, DOB, Phone).');
     }
+    checkPatientFields(payload);
 
     const result = await patientService.admitPatient(payload);
     sendJson(res, 201, result);
   } catch (err) {
-    console.error('[PATIENT API ERROR] admitPatient:', err);
-    sendError(res, 400, err.message || 'Patient admission failed');
+    sendFailure(res, err, 'admitPatient');
   }
 }
 
@@ -104,23 +116,14 @@ async function admitPatient(req, res, body) {
  */
 async function updatePatient(req, res, body, parsedUrl) {
   try {
-    let payload;
-    try {
-      payload = typeof body === 'string' ? JSON.parse(body) : body;
-    } catch {
-      return sendError(res, 400, 'Invalid JSON request payload');
-    }
-
-    const patientId = payload.patient_id || parsedUrl.searchParams.get('id');
-    if (!patientId) {
-      return sendError(res, 400, 'Missing required patient_id');
-    }
+    const payload = parseJsonBody(body);
+    const patientId = requireId(payload.patient_id || parsedUrl.searchParams.get('id'), 'patient_id');
+    checkPatientFields(payload);
 
     const result = await patientService.updatePatient(patientId, payload);
     sendJson(res, 200, result);
   } catch (err) {
-    console.error('[PATIENT API ERROR] updatePatient:', err);
-    sendError(res, 400, err.message || 'Failed to update patient record');
+    sendFailure(res, err, 'updatePatient');
   }
 }
 
@@ -129,21 +132,12 @@ async function updatePatient(req, res, body, parsedUrl) {
  */
 async function dischargePatient(req, res, body, parsedUrl) {
   try {
-    let payload = {};
-    if (body && body.trim() !== '') {
-      try { payload = JSON.parse(body); } catch (_) {}
-    }
-
-    const patientId = payload.patient_id || parsedUrl.searchParams.get('id');
-    if (!patientId) {
-      return sendError(res, 400, 'Missing required patient_id for discharge');
-    }
-
+    const payload = parseJsonBody(body);
+    const patientId = requireId(payload.patient_id || parsedUrl.searchParams.get('id'), 'patient_id');
     const result = await patientService.dischargePatient(patientId);
     sendJson(res, 200, result);
   } catch (err) {
-    console.error('[PATIENT API ERROR] dischargePatient:', err);
-    sendError(res, 400, err.message || 'Failed to discharge patient');
+    sendFailure(res, err, 'dischargePatient');
   }
 }
 
@@ -152,23 +146,15 @@ async function dischargePatient(req, res, body, parsedUrl) {
  */
 async function assignBed(req, res, body) {
   try {
-    let payload;
-    try {
-      payload = typeof body === 'string' ? JSON.parse(body) : body;
-    } catch {
-      return sendError(res, 400, 'Invalid JSON request payload');
-    }
+    const payload = parseJsonBody(body);
+    const patientId = requireId(payload.patient_id, 'patient_id');
+    const wardId = requireId(payload.ward_id, 'ward_id');
+    const bedId = requireId(payload.bed_id, 'bed_id');
 
-    const { patient_id, ward_id, bed_id } = payload;
-    if (!patient_id || !ward_id || !bed_id) {
-      return sendError(res, 400, 'Missing required fields: patient_id, ward_id, bed_id');
-    }
-
-    const result = await patientService.assignBed(patient_id, ward_id, bed_id);
+    const result = await patientService.assignBed(patientId, wardId, bedId);
     sendJson(res, 200, result);
   } catch (err) {
-    console.error('[PATIENT API ERROR] assignBed:', err);
-    sendError(res, 400, err.message || 'Failed to assign bed');
+    sendFailure(res, err, 'assignBed');
   }
 }
 
@@ -177,21 +163,12 @@ async function assignBed(req, res, body) {
  */
 async function deletePatient(req, res, body, parsedUrl) {
   try {
-    let payload = {};
-    if (body && body.trim() !== '') {
-      try { payload = JSON.parse(body); } catch (_) {}
-    }
-
-    const patientId = payload.patient_id || parsedUrl.searchParams.get('id');
-    if (!patientId) {
-      return sendError(res, 400, 'Missing required patient_id for deletion');
-    }
-
+    const payload = parseJsonBody(body);
+    const patientId = requireId(payload.patient_id || parsedUrl.searchParams.get('id'), 'patient_id');
     const result = await patientService.deletePatient(patientId);
     sendJson(res, 200, result);
   } catch (err) {
-    console.error('[PATIENT API ERROR] deletePatient:', err);
-    sendError(res, 400, err.message || 'Failed to delete patient record');
+    sendFailure(res, err, 'deletePatient');
   }
 }
 
@@ -200,23 +177,16 @@ async function deletePatient(req, res, body, parsedUrl) {
  */
 async function uploadPhoto(req, res, body) {
   try {
-    let payload;
-    try {
-      payload = typeof body === 'string' ? JSON.parse(body) : body;
-    } catch {
-      return sendError(res, 400, 'Invalid JSON request payload');
+    const payload = parseJsonBody(body);
+    const patientId = requireId(payload.patient_id, 'patient_id');
+    if (typeof payload.image_data !== 'string' || payload.image_data === '') {
+      throw new HttpError(400, 'image_data is required.');
     }
 
-    if (!payload.image_data) {
-      return sendError(res, 400, 'Missing image_data base64 string');
-    }
-
-    const patientId = payload.patient_id || 'TEMP';
     const photoUrl = await patientService.savePhotoUpload(payload.image_data, patientId);
     sendJson(res, 200, { success: true, photo_url: photoUrl });
   } catch (err) {
-    console.error('[PATIENT API ERROR] uploadPhoto:', err);
-    sendError(res, 400, err.message || 'Photo upload failed');
+    sendFailure(res, err, 'uploadPhoto');
   }
 }
 

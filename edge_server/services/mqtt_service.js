@@ -11,6 +11,7 @@ const alertService = require('./alert_service');
 const timeSeriesService = require('./time_series_service');
 const bindingCache = require('./binding_cache');
 const { normalizeTelemetry } = require('./telemetry/normalize');
+const { checkAnchorMessage, checkDiscoveryMessage, MAX_PAYLOAD_BYTES } = require('./telemetry/anchor_message');
 
 let aedesInstance = null;
 let tcpServer = null;
@@ -25,6 +26,21 @@ function warnUnsupportedPacket(tagMac) {
   if (now - (lastUnsupportedWarning.get(key) || 0) < UNSUPPORTED_WARNING_INTERVAL_MS) return;
   lastUnsupportedWarning.set(key, now);
   console.warn(`[PROTOCOL] Wristband ${key} sends a packet version this system does not support. Position is tracked, vitals and fall alerts are NOT. Reflash the wristband.`);
+}
+
+// Messages that are refused: one warning per client and reason every 10 seconds,
+// so a faulty or hostile device cannot flood the log.
+const REFUSED_WARNING_INTERVAL_MS = 10000;
+const lastRefusedWarning = new Map();
+
+function warnRefusedMessage(client, topic, reason) {
+  const clientId = client && typeof client.id === 'string' ? client.id.slice(0, 60) : 'unknown';
+  const key = `${clientId}|${reason}`;
+  const now = Date.now();
+  if (now - (lastRefusedWarning.get(key) || 0) < REFUSED_WARNING_INTERVAL_MS) return;
+  if (lastRefusedWarning.size > 500) lastRefusedWarning.clear();
+  lastRefusedWarning.set(key, now);
+  console.warn(`[MQTT] Message from "${clientId}" on "${String(topic).slice(0, 80)}" ignored: ${reason}.`);
 }
 
 // Dynamic Kalman filter registry per Anchor ID
@@ -53,9 +69,13 @@ async function startMqttBroker(port = 1883) {
     if (client.id.includes('Anchor')) {
       const hexMatch = client.id.match(/([0-9A-Fa-f]{12})$/);
       const mac = hexMatch ? hexMatch[1].match(/.{1,2}/g).join(':').toUpperCase() : null;
-      const enrolled = mac ? deviceService.findEnrolledDeviceByMac(mac) : null;
-      const anchorId = enrolled ? enrolled.device_id : (mac || 'anchor-001');
-      deviceService.recordActiveDeviceTraffic(anchorId, 'ANCHOR', { mac, clientId: client.id, ip, model: 'ESP32-WROOM-32E', rssi: null });
+      // An anchor is known by its MAC address. Without one in the client ID,
+      // it appears with its first telemetry message instead.
+      if (mac) {
+        const enrolled = deviceService.findEnrolledDeviceByMac(mac);
+        const anchorId = enrolled ? enrolled.device_id : mac;
+        deviceService.recordActiveDeviceTraffic(anchorId, 'ANCHOR', { mac, clientId: client.id, ip, model: 'ESP32-WROOM-32E', rssi: null });
+      }
     }
   });
 
@@ -75,27 +95,41 @@ async function startMqttBroker(port = 1883) {
     if (!client) return; // Ignore internal broker messages
 
     const topic = packet.topic;
+    if (packet.payload.length > MAX_PAYLOAD_BYTES) {
+      warnRefusedMessage(client, topic, `payload larger than ${MAX_PAYLOAD_BYTES} bytes`);
+      return;
+    }
     const messageStr = packet.payload.toString();
 
     try {
       const parsed = JSON.parse(messageStr);
 
-      // Check if packet is a device discovery announcement
-      if (topic.includes('discovery') || parsed.type === 'DISCOVERY' || parsed.type === 'ANNOUNCE') {
-        deviceService.recordDiscoveredDevice(parsed);
+      // Device announcement (discovery topic)
+      if (topic.includes('discovery') || (parsed && (parsed.type === 'DISCOVERY' || parsed.type === 'ANNOUNCE'))) {
+        const announcement = checkDiscoveryMessage(parsed);
+        if (announcement) deviceService.recordDiscoveredDevice(announcement);
+        else warnRefusedMessage(client, topic, 'announcement without a valid MAC address');
         return;
       }
 
-      // 1. Check if packet originates from stationary BLE anchor beacon
-      if (topic.includes('anchor') || parsed.anchor || parsed.anchor_mac) {
-        const rawRssi = parseFloat(parsed.rssi || 0);
-        const ip = client?.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
-        const isStandby = (rawRssi === 0 || parsed.status === 'STANDBY');
-        const anchorMac = (parsed.anchor_mac || parsed.mac) ? (parsed.anchor_mac || parsed.mac).toUpperCase() : null;
+      // Everything else must be an anchor message as defined in docs/protocol.md.
+      // It is checked before any value is looked up, stored or shown.
+      const message = checkAnchorMessage(parsed);
+      if (!message.ok) {
+        warnRefusedMessage(client, topic, message.reason);
+        return;
+      }
+      if (message.tagMacInvalid) warnRefusedMessage(client, topic, 'tag_mac is not a MAC address, so the wristband part was skipped');
 
-        // Auto-resolve enrolled device ID from physical MAC address
-        const enrolledAnchor = anchorMac ? deviceService.findEnrolledDeviceByMac(anchorMac) : null;
-        const anchorId = enrolledAnchor ? enrolledAnchor.device_id : (parsed.anchor || anchorMac || 'anchor-001');
+      {
+        const rawRssi = message.rssi;
+        const ip = client?.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
+        const isStandby = message.standby;
+        const anchorMac = message.anchorMac;
+
+        // An enrolled anchor is known by its device ID, any other by its MAC address
+        const enrolledAnchor = deviceService.findEnrolledDeviceByMac(anchorMac);
+        const anchorId = enrolledAnchor ? enrolledAnchor.device_id : anchorMac;
 
         // Update anchor activity in device manager with its real MAC address
         deviceService.recordActiveDeviceTraffic(anchorId, 'ANCHOR', {
@@ -108,12 +142,10 @@ async function startMqttBroker(port = 1883) {
         });
 
         // If anchor detected a wristband tag, update that tag's presence with its real MAC, RSSI, and live vitals
-        if (!isStandby && (parsed.tag_mac || parsed.tag || parsed.tag_id)) {
-          const tagMac = (parsed.tag_mac || parsed.mac_tag || (parsed.mac && parsed.mac !== anchorMac ? parsed.mac : null)) 
-            ? (parsed.tag_mac || parsed.mac_tag || parsed.mac).toUpperCase() 
-            : null;
-          const enrolledTag = tagMac ? deviceService.findEnrolledDeviceByMac(tagMac) : null;
-          const detectedTag = enrolledTag ? enrolledTag.device_id : (parsed.tag || parsed.tag_id || tagMac || 'TAG-001');
+        if (!isStandby && message.tagMac) {
+          const tagMac = message.tagMac;
+          const enrolledTag = deviceService.findEnrolledDeviceByMac(tagMac);
+          const detectedTag = enrolledTag ? enrolledTag.device_id : tagMac;
 
           // One validated view of the packet: unknown values are null, never invented
           const telemetry = normalizeTelemetry(parsed);
@@ -195,7 +227,7 @@ async function startMqttBroker(port = 1883) {
         }
 
         // Only compute distance and broadcast chart if a valid RF signal is present (not standby 0)
-        if (!isStandby && !isNaN(rawRssi)) {
+        if (!isStandby) {
           const filter = getAnchorFilter(anchorId);
           const filteredRssi = filter.update(rawRssi);
           const rawDist = calculateDistance(rawRssi);
@@ -214,25 +246,10 @@ async function startMqttBroker(port = 1883) {
             timestamp: new Date().toLocaleTimeString()
           });
         }
-      } 
-      // 2. Generic direct telemetry fallback
-      else if (parsed.bpm !== undefined || parsed.battery !== undefined || parsed.g !== undefined) {
-        broadcastToClients({
-          type: 'TELEMETRY',
-          topic: topic,
-          data: parsed,
-          timestamp: new Date().toLocaleTimeString()
-        });
       }
     } catch (e) {
-      console.warn(`[MQTT PARSE WARNING] Malformed or truncated packet on "${topic}": ${messageStr.slice(0, 120)}... (${e.message})`);
-      // Fallback for non-JSON raw strings
-      broadcastToClients({
-        type: 'RAW',
-        topic: topic,
-        data: messageStr,
-        timestamp: new Date().toLocaleTimeString()
-      });
+      // Not JSON, or a fault while handling it. Nothing of the message is passed on.
+      warnRefusedMessage(client, topic, e instanceof SyntaxError ? 'not valid JSON' : `could not be processed (${e.message})`);
     }
   });
 

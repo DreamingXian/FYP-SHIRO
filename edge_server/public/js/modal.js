@@ -39,6 +39,7 @@ function showModal({
 
   titleEl.innerText = title;
   if (customHtml) {
+    // customHtml is built by the caller, which escapes every value with escapeHtml()
     bodyEl.innerHTML = customHtml;
   } else {
     bodyEl.innerText = message || '';
@@ -122,7 +123,13 @@ function showToast(message, type = 'success', duration = 3000) {
   const toast = document.createElement('div');
   toast.className = `toast-pill toast-${type}`;
   const icon = type === 'success' ? '✅' : (type === 'danger' ? '❌' : (type === 'warning' ? '⚠️' : 'ℹ️'));
-  toast.innerHTML = `<span style="font-size:16px;">${icon}</span><span>${message}</span>`;
+  // The message often holds names or server answers: always shown as text
+  const iconSpan = document.createElement('span');
+  iconSpan.style.fontSize = '16px';
+  iconSpan.textContent = icon;
+  const textSpan = document.createElement('span');
+  textSpan.textContent = message;
+  toast.append(iconSpan, textSpan);
   container.appendChild(toast);
 
   requestAnimationFrame(() => toast.classList.add('show'));

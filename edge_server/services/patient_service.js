@@ -5,7 +5,10 @@
 const { getPool } = require('../database/db');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../config/app_config');
+const { HttpError } = require('../utils/http');
+const { isId } = require('../utils/validate');
 const bindingCache = require('./binding_cache');
 
 /**
@@ -610,24 +613,56 @@ async function assignBed(patientId, wardId, bedId) {
 /**
  * Saves a base64 encoded photo to disk in public/uploads/patients/
  */
-async function savePhotoUpload(base64Data, patientId) {
-  const matches = base64Data.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+const PHOTO_MAX_BYTES = 3 * 1024 * 1024; // the dashboard offers files up to 3 MB
+const PHOTO_DATA_URI = /^data:image\/[a-zA-Z0-9.+-]+;base64,([A-Za-z0-9+/]+={0,2})$/;
+
+/**
+ * Recognises PNG, JPEG and WebP by the first bytes of the file. The type a
+ * client declares is not trusted. Returns the file extension, or null.
+ */
+function detectImageType(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
+  const startsWith = (bytes, offset = 0) => bytes.every((b, i) => buffer[offset + i] === b);
+  if (startsWith([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) return 'png';
+  if (startsWith([0xFF, 0xD8, 0xFF])) return 'jpg';
+  if (startsWith([0x52, 0x49, 0x46, 0x46]) && startsWith([0x57, 0x45, 0x42, 0x50], 8)) return 'webp'; // RIFF....WEBP
+  return null;
+}
+
+/**
+ * Stores an uploaded patient photo and returns its URL.
+ * - Accepts PNG, JPEG and WebP only, recognised by the content of the file.
+ * - At most 3 MB.
+ * - The file name is built here from the checked patient ID, the time and a
+ *   random part. Nothing from the client is used as a path.
+ */
+async function savePhotoUpload(base64Data, patientId, uploadDir = path.join(config.PUBLIC_DIR, 'uploads', 'patients')) {
+  if (!isId(patientId)) {
+    throw new HttpError(400, 'A valid patient ID is required to store a photo.');
+  }
+  const matches = typeof base64Data === 'string' ? base64Data.match(PHOTO_DATA_URI) : null;
   if (!matches) {
-    throw new Error('Invalid image data format. Expected base64 image data URI.');
+    throw new HttpError(400, 'Invalid image data. Expected a base64 image data URI.');
   }
 
-  const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
-  const buffer = Buffer.from(matches[2], 'base64');
-
-  const filename = `${patientId}_${Date.now()}.${ext}`;
-  const uploadDir = path.join(config.PUBLIC_DIR, 'uploads', 'patients');
-
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+  const buffer = Buffer.from(matches[1], 'base64');
+  if (buffer.length > PHOTO_MAX_BYTES) {
+    throw new HttpError(413, 'The photo is too large. The limit is 3 MB.');
+  }
+  const ext = detectImageType(buffer);
+  if (ext === null) {
+    throw new HttpError(415, 'Only PNG, JPEG and WebP photos are accepted.');
   }
 
-  const filePath = path.join(uploadDir, filename);
-  fs.writeFileSync(filePath, buffer);
+  const root = path.resolve(uploadDir);
+  const filename = `${patientId}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  const filePath = path.resolve(root, filename);
+  if (!filePath.startsWith(root + path.sep)) {
+    throw new HttpError(400, 'The photo could not be stored.');
+  }
+
+  await fs.promises.mkdir(root, { recursive: true });
+  await fs.promises.writeFile(filePath, buffer, { flag: 'wx' });
 
   return `/uploads/patients/${filename}`;
 }
@@ -643,6 +678,8 @@ module.exports = {
   deletePatient,
   assignBed,
   savePhotoUpload,
+  detectImageType,
+  PHOTO_MAX_BYTES,
   calculateAge
 };
 

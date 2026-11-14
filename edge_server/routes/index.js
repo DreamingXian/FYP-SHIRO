@@ -9,6 +9,7 @@ const { handlePatientRoutes } = require('./patient_routes');
 const { handleDeviceRoutes } = require('./device_routes');
 const { handleBindingRoutes } = require('./binding_routes');
 const { handleAlertRoutes } = require('./alert_routes');
+const { HttpError, JSON_BODY_LIMIT, PHOTO_BODY_LIMIT, sendError, sendFailure, readBody, isCrossSiteRequest } = require('../utils/http');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -18,88 +19,123 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon'
 };
 
-async function handleRequest(req, res) {
-  // 1. Enable Global CORS & Development No-Cache headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
+const PUBLIC_ROOT = path.resolve(config.PUBLIC_DIR);
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
+const API_ROUTERS = [
+  ['/api/ward', handleWardRoutes],
+  ['/api/patients', handlePatientRoutes],
+  ['/api/devices', handleDeviceRoutes],
+  ['/api/bindings', handleBindingRoutes],
+  ['/api/alerts', handleAlertRoutes]
+];
+
+/**
+ * Turns the path of a request into a file inside public/.
+ * Returns null when the path is malformed or would leave that folder.
+ */
+function resolvePublicFile(pathname) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    return null;
+  }
+  if (decoded.includes('\0')) return null;
+  const relative = decoded === '/' ? 'index.html' : decoded.replace(/^[/\\]+/, '');
+  const filePath = path.resolve(PUBLIC_ROOT, relative);
+  if (filePath !== PUBLIC_ROOT && !filePath.startsWith(PUBLIC_ROOT + path.sep)) return null;
+  return filePath;
+}
+
+function serveStaticFile(req, res, pathname) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8', Allow: 'GET, HEAD' });
+    res.end('405 Method Not Allowed');
     return;
   }
 
-  const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const pathname = parsedUrl.pathname;
-
-  // Buffer request body if POST
-  let body = '';
-  if (req.method === 'POST') {
-    await new Promise((resolve) => {
-      req.on('data', chunk => { body += chunk; });
-      req.on('end', resolve);
-    });
+  const filePath = resolvePublicFile(pathname);
+  if (filePath === null) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('400 Bad Request');
+    return;
   }
-
-  // 2. Dispatch to Module API Routers
-  if (pathname.startsWith('/api/ward')) {
-    const handled = await handleWardRoutes(pathname, req, res, parsedUrl, body);
-    if (handled) return;
-  }
-
-  if (pathname.startsWith('/api/patients')) {
-    const handled = await handlePatientRoutes(pathname, req, res, parsedUrl, body);
-    if (handled) return;
-  }
-
-  if (pathname.startsWith('/api/devices')) {
-    const handled = await handleDeviceRoutes(pathname, req, res, parsedUrl, body);
-    if (handled) return;
-  }
-
-  if (pathname.startsWith('/api/bindings')) {
-    const handled = await handleBindingRoutes(pathname, req, res, parsedUrl, body);
-    if (handled) return;
-  }
-
-  if (pathname.startsWith('/api/alerts')) {
-    const handled = await handleAlertRoutes(pathname, req, res, parsedUrl, body);
-    if (handled) return;
-  }
-
-  // 3. Fallback: Static Files & HTML Partials Serving from /public
-  let relativePath = pathname === '/' ? 'index.html' : pathname;
-  // Prevent directory traversal attacks
-  const safePath = path.normalize(relativePath).replace(/^(\.\.[\/\\])+/, '');
-  const filePath = path.join(config.PUBLIC_DIR, safePath);
 
   const ext = path.extname(filePath).toLowerCase();
   const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
   fs.readFile(filePath, (err, content) => {
     if (err) {
-      if (err.code === 'ENOENT') {
+      if (err.code === 'ENOENT' || err.code === 'EISDIR' || err.code === 'ENOTDIR') {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(`404 Not Found: ${pathname}`);
+        res.end('404 Not Found');
       } else {
+        console.error(`[STATIC FILE ERROR] ${pathname}:`, err.message);
         res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end(`Server Error: ${err.code}`);
+        res.end('500 Server Error');
       }
     } else {
       res.writeHead(200, { 'Content-Type': contentType });
-      res.end(content);
+      res.end(req.method === 'HEAD' ? undefined : content);
     }
   });
 }
 
-module.exports = {
-  handleRequest
-};
+async function handleRequest(req, res) {
+  // Headers of every response. No cross-origin access is granted: the dashboard
+  // is served from this server, and the headset is not bound by browser rules.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
 
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(req.url, 'http://localhost');
+  } catch {
+    sendError(res, 400, 'The request address is not valid.');
+    return;
+  }
+  const pathname = parsedUrl.pathname;
+
+  if (!pathname.startsWith('/api/')) {
+    serveStaticFile(req, res, pathname);
+    return;
+  }
+
+  try {
+    const changesData = req.method !== 'GET' && req.method !== 'HEAD';
+    if (changesData && isCrossSiteRequest(req)) {
+      throw new HttpError(403, 'Requests from other websites are not accepted.');
+    }
+
+    let body = '';
+    if (req.method === 'POST' || req.method === 'DELETE') {
+      const limit = pathname === '/api/patients/upload-photo' ? PHOTO_BODY_LIMIT : JSON_BODY_LIMIT;
+      body = await readBody(req, limit);
+    }
+
+    for (const [prefix, handler] of API_ROUTERS) {
+      if (pathname === prefix || pathname.startsWith(prefix + '/')) {
+        const handled = await handler(pathname, req, res, parsedUrl, body);
+        if (handled) return;
+      }
+    }
+
+    sendError(res, 404, 'This API address does not exist.');
+  } catch (err) {
+    sendFailure(res, err, `${req.method} ${pathname}`);
+  }
+}
+
+module.exports = {
+  handleRequest,
+  resolvePublicFile
+};

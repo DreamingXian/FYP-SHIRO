@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test \"test/unit/**/*.test.js\"",
+    "test": "node --require ./test/unit/no_database.js --test \"test/unit/**/*.test.js\"",
     "test:integration": "node --test --test-concurrency=1 --test-force-exit \"test/integration/**/*.test.js\"",
     "db:seed": "node database/seed.js"
   },

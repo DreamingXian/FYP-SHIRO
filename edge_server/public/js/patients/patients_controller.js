@@ -189,8 +189,9 @@ function handlePhotoFileUpload(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
 
-  if (!file.type.startsWith('image/')) {
-    if (window.showToast) window.showToast('Please select a valid image file (JPG, PNG, WebP).', 'warning');
+  // The server stores PNG, JPEG and WebP only
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    if (window.showToast) window.showToast('Please select a JPG, PNG or WebP image.', 'warning');
     return;
   }
 
@@ -263,7 +264,7 @@ function populateWardDropdown() {
 
   if (cachedWards && cachedWards.length > 0) {
     optionsHtml += cachedWards.map(w => 
-      `<option value="${w.ward_id}">${w.ward_id} - ${w.room_title}</option>`
+      `<option value="${escapeHtml(w.ward_id)}">${escapeHtml(w.ward_id)} - ${escapeHtml(w.room_title)}</option>`
     ).join('');
   }
 
@@ -298,7 +299,7 @@ function handleWardSelectionChange() {
     bedSelect.innerHTML = `<option value="" disabled selected>⚠️ No available beds in this ward (All Occupied / Unavailable)</option>`;
   } else {
     bedSelect.innerHTML = available.map(b => 
-      `<option value="${b.bed_id}">🟢 ${b.bed_code} (${b.bed_id}) - Available</option>`
+      `<option value="${escapeHtml(b.bed_id)}">🟢 ${escapeHtml(b.bed_code)} (${escapeHtml(b.bed_id)}) - Available</option>`
     ).join('');
   }
 }
@@ -311,7 +312,7 @@ async function loadPatientsDirectory() {
   if (!tbody) return;
 
   try {
-    const res = await fetch(`/api/patients/list?status=${currentPatientFilter}`);
+    const res = await fetch(`/api/patients/list?status=${encodeURIComponent(currentPatientFilter)}`);
     const data = await res.json();
 
     if (data.success) {
@@ -319,7 +320,7 @@ async function loadPatientsDirectory() {
       renderPatientsTable(cachedPatients);
       updateCensusCounts();
     } else {
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--danger); padding:24px;">Failed to load patients: ${data.error || 'Server error'}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--danger); padding:24px;">Failed to load patients: ${escapeHtml(data.error || 'Server error')}</td></tr>`;
     }
   } catch (err) {
     console.error('Failed to load patients directory:', err);
@@ -359,8 +360,8 @@ function renderPatientsTable(patients) {
     // Photo or initials fallback
     const initials = p.full_name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
     const photoImg = p.photo_url 
-      ? `<img src="${p.photo_url}" alt="${p.full_name}" onerror="this.onerror=null; this.parentElement.innerText='${initials}'">`
-      : initials;
+      ? `<img src="${escapeHtml(p.photo_url)}" alt="${escapeHtml(p.full_name)}"${imgFallbackAttrs(initials)}>`
+      : escapeHtml(initials);
 
     // Fall risk badge
     let riskBadge = `<span class="badge badge-live">● LOW RISK</span>`;
@@ -369,7 +370,7 @@ function renderPatientsTable(patients) {
 
     // Bed and Ward info
     const bedInfo = p.status === 'ADMITTED' && p.assigned_bed_id
-      ? `<span class="badge badge-info">${p.assigned_ward_id} · ${p.bed_code || p.assigned_bed_id}</span>`
+      ? `<span class="badge badge-info">${escapeHtml(p.assigned_ward_id)} · ${escapeHtml(p.bed_code || p.assigned_bed_id)}</span>`
       : `<span class="badge badge-neutral">No Active Bed</span>`;
 
     // Status pill
@@ -380,38 +381,38 @@ function renderPatientsTable(patients) {
     // Discharge / Assign Bed Action button
     let secondaryActionBtn = '';
     if (p.status === 'ADMITTED' && p.assigned_bed_id) {
-      secondaryActionBtn = `<button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation(); confirmDischargePatient('${p.patient_id}', '${p.full_name.replace(/'/g, "\\'")}', '${p.assigned_ward_id ? p.assigned_ward_id + ' · ' + (p.bed_code || p.assigned_bed_id) : 'assigned bed'}')">Discharge</button>`;
+      secondaryActionBtn = `<button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDischargePatient', [p.patient_id, p.full_name, p.assigned_ward_id ? p.assigned_ward_id + ' · ' + (p.bed_code || p.assigned_bed_id) : 'assigned bed'], { stop: true })}>Discharge</button>`;
     } else {
-      secondaryActionBtn = `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); openAssignBedModal('${p.patient_id}')">Assign Bed</button>`;
+      secondaryActionBtn = `<button class="btn btn-primary btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })}>Assign Bed</button>`;
     }
 
     const genderLabel = p.gender === 'FEMALE' ? 'Female' : p.gender === 'MALE' ? 'Male' : 'Other';
 
     return `
-      <tr class="table-row-clickable" onclick="viewPatientProfileReadOnly('${p.patient_id}')" title="Click to view full clinical profile for ${p.full_name}">
+      <tr class="table-row-clickable"${actionAttrs('viewPatientProfileReadOnly', [p.patient_id])} title="Click to view full clinical profile for ${escapeHtml(p.full_name)}">
         <td>
           <div class="patient-cell">
-            <div class="patient-thumb" title="${p.full_name}">
+            <div class="patient-thumb" title="${escapeHtml(p.full_name)}">
               ${photoImg}
             </div>
             <div>
-              <div style="font-weight: 600; color: var(--text-primary);">${p.full_name}</div>
-              <div class="mono" style="font-size: 11px; color: var(--primary); font-weight: 600;">${p.patient_id}</div>
+              <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(p.full_name)}</div>
+              <div class="mono" style="font-size: 11px; color: var(--primary); font-weight: 600;">${escapeHtml(p.patient_id)}</div>
             </div>
           </div>
         </td>
-        <td class="mono">${p.nric_passport}</td>
-        <td>${p.age !== null ? p.age + ' yrs' : '-'}</td>
+        <td class="mono">${escapeHtml(p.nric_passport)}</td>
+        <td>${escapeHtml(p.age !== null ? p.age + ' yrs' : '-')}</td>
         <td><span class="badge badge-neutral" style="font-size: 11px;">${genderLabel}</span></td>
         <td>${bedInfo}</td>
         <td>${riskBadge}</td>
-        <td style="color: var(--text-secondary); font-size: 12px;">${p.admission_date || '-'}</td>
+        <td style="color: var(--text-secondary); font-size: 12px;">${escapeHtml(p.admission_date || '-')}</td>
         <td>${statusBadge}</td>
         <td style="text-align: right; white-space: nowrap;">
-          <button class="btn btn-outline btn-sm" onclick="event.stopPropagation(); openPatientVitalsHistoryModal('${p.patient_id}', '${p.full_name.replace(/'/g, "\\'")}')" title="View InfluxDB Historical Vitals" style="margin-right: 4px;">📈 Vitals</button>
-          <button class="btn btn-outline btn-sm" onclick="event.stopPropagation(); editPatientInfo('${p.patient_id}')" style="margin-right: 4px;">Edit Infos</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="View InfluxDB Historical Vitals" style="margin-right: 4px;">📈 Vitals</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('editPatientInfo', [p.patient_id], { stop: true })} style="margin-right: 4px;">Edit Infos</button>
           ${secondaryActionBtn}
-          <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation(); confirmDeletePatient('${p.patient_id}', '${p.full_name.replace(/'/g, "\\'")}')" title="Delete record" style="margin-left: 4px;">🗑️</button>
+          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeletePatient', [p.patient_id, p.full_name], { stop: true })} title="Delete record" style="margin-left: 4px;">🗑️</button>
         </td>
       </tr>
     `;
@@ -635,9 +636,12 @@ async function handlePatientAdmission(event) {
               body: JSON.stringify({ patient_id: id, image_data: photoUrl })
             });
             const uploadData = await uploadRes.json();
-            if (uploadData.success && uploadData.photo_url) {
-              photoUrl = uploadData.photo_url;
+            if (!uploadData.success || !uploadData.photo_url) {
+              // Without a stored photo the admission is not sent: the patient is not admitted with a broken picture
+              if (window.showToast) window.showToast(`Photo upload failed: ${uploadData.error || 'unknown error'}`, 'danger');
+              return;
             }
+            photoUrl = uploadData.photo_url;
           }
 
           // Submit admission to API
@@ -777,7 +781,7 @@ function confirmDeletePatient(patientId, patientName) {
  */
 async function openAssignBedModal(patientId) {
   try {
-    const res = await fetch(`/api/patients/get?id=${patientId}`);
+    const res = await fetch(`/api/patients/get?id=${encodeURIComponent(patientId)}`);
     const data = await res.json();
     if (!data.success || !data.patient) {
       if (window.showToast) window.showToast('Patient record not found.', 'warning');
@@ -804,11 +808,11 @@ async function openAssignBedModal(patientId) {
       return;
     }
 
-    const wardOptions = wards.map(w => `<option value="${w.ward_id}">${w.ward_id} - ${w.room_title}</option>`).join('');
+    const wardOptions = wards.map(w => `<option value="${escapeHtml(w.ward_id)}">${escapeHtml(w.ward_id)} - ${escapeHtml(w.room_title)}</option>`).join('');
 
     const modalContent = `
       <div style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">
-        Assigning active bed cubicle for <strong>${p.full_name}</strong> (${p.patient_id}, NRIC: ${p.nric_passport}).
+        Assigning active bed cubicle for <strong>${escapeHtml(p.full_name)}</strong> (${escapeHtml(p.patient_id)}, NRIC: ${escapeHtml(p.nric_passport)}).
       </div>
       <div class="form-group">
         <label class="form-label">Target Ward Unit *</label>
@@ -832,7 +836,7 @@ async function openAssignBedModal(patientId) {
       if (filtered.length === 0) {
         bedEl.innerHTML = `<option value="" disabled selected>No available beds in this ward</option>`;
       } else {
-        bedEl.innerHTML = filtered.map(b => `<option value="${b.bed_id}">🟢 ${b.bed_code} (${b.bed_id})</option>`).join('');
+        bedEl.innerHTML = filtered.map(b => `<option value="${escapeHtml(b.bed_id)}">🟢 ${escapeHtml(b.bed_code)} (${escapeHtml(b.bed_id)})</option>`).join('');
       }
     };
 
@@ -891,7 +895,7 @@ async function openAssignBedModal(patientId) {
  */
 async function viewPatientProfileReadOnly(patientId) {
   try {
-    const res = await fetch(`/api/patients/get?id=${patientId}`);
+    const res = await fetch(`/api/patients/get?id=${encodeURIComponent(patientId)}`);
     const data = await res.json();
     if (!data.success || !data.patient) {
       if (window.showToast) window.showToast('Patient record not found.', 'warning');
@@ -908,12 +912,12 @@ async function viewPatientProfileReadOnly(patientId) {
 
     const modalContent = `
       <div style="display:flex; gap:16px; align-items:center; margin-bottom:16px;">
-        <img src="${photoSrc}" alt="${p.full_name}" style="width:76px; height:76px; border-radius:50%; object-fit:cover; border:3px solid var(--primary); box-shadow:0 3px 10px rgba(0,0,0,0.1);">
+        <img src="${escapeHtml(photoSrc)}" alt="${escapeHtml(p.full_name)}" style="width:76px; height:76px; border-radius:50%; object-fit:cover; border:3px solid var(--primary); box-shadow:0 3px 10px rgba(0,0,0,0.1);">
         <div>
-          <div style="font-size:18px; font-weight:700; color:var(--text-primary);">${p.full_name}</div>
-          <div style="font-size:12px; color:var(--primary); font-weight:600;" class="mono">${p.patient_id} · NRIC: ${p.nric_passport}</div>
+          <div style="font-size:18px; font-weight:700; color:var(--text-primary);">${escapeHtml(p.full_name)}</div>
+          <div style="font-size:12px; color:var(--primary); font-weight:600;" class="mono">${escapeHtml(p.patient_id)} · NRIC: ${escapeHtml(p.nric_passport)}</div>
           <div style="font-size:12px; color:var(--text-muted); margin-top:3px;">
-            ${p.age} yrs · ${genderLabel} · DOB: ${p.dob} · 📞 ${p.phone_number}
+            ${escapeHtml(p.age)} yrs · ${genderLabel} · DOB: ${escapeHtml(p.dob)} · 📞 ${escapeHtml(p.phone_number)}
           </div>
         </div>
       </div>
@@ -921,28 +925,28 @@ async function viewPatientProfileReadOnly(patientId) {
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; background:#F8FAFC; border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:14px; font-size:12px;">
         <div>
           <span style="color:var(--text-muted);">Assigned Location:</span><br>
-          <strong style="color:var(--text-primary);">${bedDesc}</strong>
+          <strong style="color:var(--text-primary);">${escapeHtml(bedDesc)}</strong>
         </div>
         <div>
           <span style="color:var(--text-muted);">Fall Risk Level:</span><br>
-          <strong style="color:${p.fall_risk_score === 'HIGH' ? 'var(--danger)' : p.fall_risk_score === 'MEDIUM' ? 'var(--warning)' : 'var(--success)'};">● ${p.fall_risk_score} RISK</strong>
+          <strong style="color:${p.fall_risk_score === 'HIGH' ? 'var(--danger)' : p.fall_risk_score === 'MEDIUM' ? 'var(--warning)' : 'var(--success)'};">● ${escapeHtml(p.fall_risk_score)} RISK</strong>
         </div>
         <div>
           <span style="color:var(--text-muted);">Admission Timestamp:</span><br>
-          <span style="color:var(--text-secondary);">${p.admission_date || '-'}</span>
+          <span style="color:var(--text-secondary);">${escapeHtml(p.admission_date || '-')}</span>
         </div>
         <div>
           <span style="color:var(--text-muted);">Status:</span><br>
-          <strong style="color:${p.status === 'ADMITTED' ? 'var(--success)' : 'var(--text-muted)'};">${p.status}</strong>
+          <strong style="color:${p.status === 'ADMITTED' ? 'var(--success)' : 'var(--text-muted)'};">${escapeHtml(p.status)}</strong>
         </div>
       </div>
 
       <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px;">
         <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">Medical History, Chronic Conditions &amp; Drug Allergies:</div>
-        <div style="color:var(--text-secondary); line-height:1.5; white-space:pre-wrap;">${p.medical_history || 'No recorded chronic illnesses or known drug allergies.'}</div>
+        <div style="color:var(--text-secondary); line-height:1.5; white-space:pre-wrap;">${escapeHtml(p.medical_history || 'No recorded chronic illnesses or known drug allergies.')}</div>
       </div>
 
-      <button type="button" class="btn btn-outline btn-sm" onclick="openPatientVitalsHistoryModal('${p.patient_id}', '${p.full_name.replace(/'/g, "\\'")}')" style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; color:var(--primary); border-color:var(--primary);">
+      <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; color:var(--primary); border-color:var(--primary);">
         📈 <span>View InfluxDB Historical Vitals Trends (Table 4.10: 30-Day Retention)</span>
       </button>
     `;
@@ -967,7 +971,7 @@ async function viewPatientProfileReadOnly(patientId) {
  */
 async function editPatientInfo(patientId) {
   try {
-    const res = await fetch(`/api/patients/get?id=${patientId}`);
+    const res = await fetch(`/api/patients/get?id=${encodeURIComponent(patientId)}`);
     const data = await res.json();
     if (!data.success || !data.patient) {
       if (window.showToast) window.showToast('Patient record not found.', 'warning');
@@ -987,8 +991,9 @@ async function editPatientInfo(patientId) {
       const file = event.target.files && event.target.files[0];
       if (!file) return;
 
-      if (!file.type.startsWith('image/')) {
-        if (window.showToast) window.showToast('Please select a valid image file (JPG, PNG, WebP).', 'warning');
+      // The server stores PNG, JPEG and WebP only
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        if (window.showToast) window.showToast('Please select a JPG, PNG or WebP image.', 'warning');
         return;
       }
 
@@ -1021,18 +1026,18 @@ async function editPatientInfo(patientId) {
     const modalContent = `
       <div style="display:flex; gap:16px; align-items:center; margin-bottom:16px;">
         <div style="position:relative; width:68px; height:68px; flex-shrink:0;">
-          <img id="edit-patient-photo-preview" src="${photoSrc}" alt="${p.full_name}" style="width:68px; height:68px; border-radius:50%; object-fit:cover; border:2.5px solid var(--primary); box-shadow:0 2px 8px rgba(0,0,0,0.12);">
+          <img id="edit-patient-photo-preview" src="${escapeHtml(photoSrc)}" alt="${escapeHtml(p.full_name)}" style="width:68px; height:68px; border-radius:50%; object-fit:cover; border:2.5px solid var(--primary); box-shadow:0 2px 8px rgba(0,0,0,0.12);">
         </div>
         <div style="flex:1;">
-          <div style="font-size:16px; font-weight:700; color:var(--text-primary);">${p.full_name}</div>
-          <div style="font-size:11px; color:var(--primary); font-weight:600;" class="mono">${p.patient_id} · NRIC: ${p.nric_passport}</div>
+          <div style="font-size:16px; font-weight:700; color:var(--text-primary);">${escapeHtml(p.full_name)}</div>
+          <div style="font-size:11px; color:var(--primary); font-weight:600;" class="mono">${escapeHtml(p.patient_id)} · NRIC: ${escapeHtml(p.nric_passport)}</div>
           <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">
-            ${p.age !== null ? p.age + ' yrs' : '-'} · ${genderLabel} · DOB: ${p.dob} · Location: ${bedDesc}
+            ${escapeHtml(p.age !== null ? p.age + ' yrs' : '-')} · ${genderLabel} · DOB: ${escapeHtml(p.dob)} · Location: ${escapeHtml(bedDesc)}
           </div>
           
           <!-- Photo Re-upload / Preset Select Bar -->
           <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <input type="file" id="edit-patient-photo-file" accept="image/*" style="display:none;" onchange="handleEditPhotoFileUpload(event)">
+            <input type="file" id="edit-patient-photo-file" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="handleEditPhotoFileUpload(event)">
             <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('edit-patient-photo-file').click()" style="font-size:11px; padding:3px 9px;">
               📷 Re-upload Photo
             </button>
@@ -1052,14 +1057,14 @@ async function editPatientInfo(patientId) {
               </button>
             </div>
           </div>
-          <input type="hidden" id="edit-patient-photo-url" value="${photoSrc}">
+          <input type="hidden" id="edit-patient-photo-url" value="${escapeHtml(photoSrc)}">
         </div>
       </div>
 
       <div style="border-top:1px solid var(--border); padding-top:12px;">
         <div class="form-group">
           <label class="form-label" style="font-weight:600;">Emergency Contact Phone *</label>
-          <input type="text" class="form-control" id="edit-patient-phone" value="${p.phone_number || ''}" placeholder="+6012-3456789">
+          <input type="text" class="form-control" id="edit-patient-phone" value="${escapeHtml(p.phone_number || '')}" placeholder="+6012-3456789">
         </div>
 
         <div class="form-group">
@@ -1082,7 +1087,7 @@ async function editPatientInfo(patientId) {
 
         <div class="form-group" style="margin-bottom:0;">
           <label class="form-label" style="font-weight:600;">Medical History, Chronic Conditions &amp; Drug Allergies</label>
-          <textarea id="edit-patient-history" class="form-control" rows="3" style="font-size:12px;">${p.medical_history || ''}</textarea>
+          <textarea id="edit-patient-history" class="form-control" rows="3" style="font-size:12px;">${escapeHtml(p.medical_history || '')}</textarea>
         </div>
       </div>
     `;
@@ -1123,9 +1128,11 @@ async function editPatientInfo(patientId) {
                     body: JSON.stringify({ patient_id: p.patient_id, image_data: updatedPhoto })
                   });
                   const uploadData = await uploadRes.json();
-                  if (uploadData.success && uploadData.photo_url) {
-                    updatedPhoto = uploadData.photo_url;
+                  if (!uploadData.success || !uploadData.photo_url) {
+                    if (window.showToast) window.showToast(`Photo upload failed: ${uploadData.error || 'unknown error'}`, 'danger');
+                    return;
                   }
+                  updatedPhoto = uploadData.photo_url;
                 }
 
                 const updateRes = await fetch('/api/patients/update', {
@@ -1215,8 +1222,8 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
     <div style="margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
       <div>
         <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-          <span>📈 ${safeName}</span>
-          <span class="mono" style="font-size: 12px; color: var(--primary); font-weight: 600;">(${patientId})</span>
+          <span>📈 ${escapeHtml(safeName)}</span>
+          <span class="mono" style="font-size: 12px; color: var(--primary); font-weight: 600;">(${escapeHtml(patientId)})</span>
         </div>
         <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
           InfluxDB Engine · Bucket: <span class="mono">shiro_telemetry</span> · 
@@ -1226,11 +1233,11 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
       
       <!-- Range Filter Buttons -->
       <div id="vitals-range-pills" style="display: flex; gap: 6px; background: #F1F5F9; padding: 4px; border-radius: 6px; border: 1px solid var(--border);">
-        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-1h" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-1h', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">1h</button>
-        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-6h" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-6h', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">6h</button>
-        <button type="button" class="btn btn-primary btn-sm range-btn" data-range="-24h" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-24h', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">24h</button>
-        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-7d" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-7d', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;">7d</button>
-        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-30d" onclick="switchVitalsHistoryRange('${patientId}', '${safeName.replace(/'/g, "\\'")}', '-30d', this)" style="padding: 4px 10px; font-size: 11px; font-weight: 600;" title="Full 30-Day InfluxDB Table 4.10 Retention">30d</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-1h"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-1h'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">1h</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-6h"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-6h'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">6h</button>
+        <button type="button" class="btn btn-primary btn-sm range-btn" data-range="-24h"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-24h'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">24h</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-7d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-7d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">7d</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-30d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-30d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;" title="Full 30-Day InfluxDB Table 4.10 Retention">30d</button>
       </div>
     </div>
 
@@ -1238,7 +1245,7 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
     <div id="vitals-history-dynamic-container" style="min-height: 380px;">
       <div style="text-align: center; padding: 48px; color: var(--text-muted);">
         <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
-        <div>Querying InfluxDB time-series records for ${safeName}...</div>
+        <div>Querying InfluxDB time-series records for ${escapeHtml(safeName)}...</div>
       </div>
     </div>
   `;
@@ -1272,14 +1279,14 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
   if (clickedBtn) {
     clickedBtn.className = 'btn btn-primary btn-sm range-btn';
   } else {
-    const defaultBtn = document.querySelector(`#vitals-range-pills .range-btn[data-range="${range}"]`);
+    const defaultBtn = document.querySelector(`#vitals-range-pills .range-btn[data-range="${CSS.escape(String(range))}"]`);
     if (defaultBtn) defaultBtn.className = 'btn btn-primary btn-sm range-btn';
   }
 
   container.innerHTML = `
     <div style="text-align: center; padding: 48px; color: var(--text-muted);">
       <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
-      <div>Loading InfluxDB records for range ${range}...</div>
+      <div>Loading InfluxDB records for range ${escapeHtml(range)}...</div>
     </div>
   `;
 
@@ -1291,14 +1298,14 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
       container.innerHTML = `
         <div style="background: #F8FAFC; border: 1px dashed var(--border); border-radius: 8px; padding: 36px 20px; text-align: center; margin-top: 10px;">
           <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
-          <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;">No InfluxDB Vitals Recorded for Selected Range (${range})</div>
+          <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;">No InfluxDB Vitals Recorded for Selected Range (${escapeHtml(range)})</div>
           <div style="font-size: 12px; color: var(--text-muted); max-width: 520px; margin: 8px auto 14px auto; line-height: 1.5;">
             Telemetry is automatically ingested into bucket <span class="mono">shiro_telemetry</span> when this patient's wristband is bound and streaming (either in scheduled 3-min passive bursts or active 1 Hz inspection).
           </div>
           <div style="display: flex; gap: 8px; justify-content: center; font-size: 11px;">
-            <span class="badge badge-info">Patient: ${patientId}</span>
-            <span class="badge badge-neutral">Device: ${data.device_id || 'Standby'}</span>
-            <span class="badge badge-neutral">MAC: ${data.wristband_mac || 'Pending'}</span>
+            <span class="badge badge-info">Patient: ${escapeHtml(patientId)}</span>
+            <span class="badge badge-neutral">Device: ${escapeHtml(data.device_id || 'Standby')}</span>
+            <span class="badge badge-neutral">MAC: ${escapeHtml(data.wristband_mac || 'Pending')}</span>
           </div>
         </div>
       `;
@@ -1347,7 +1354,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
           <div style="font-size: 20px; font-weight: 800; color: var(--text-primary); margin-top: 2px;">
             ${vitals.length} <span style="font-size: 11px; font-weight: 500;">points</span>
           </div>
-          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" title="Each point is the median of the readings stored in one interval. Intervals without a reading have no point.">Range: ${data.range || range} · median per ${data.window || 'interval'}</div>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" title="Each point is the median of the readings stored in one interval. Intervals without a reading have no point.">Range: ${escapeHtml(data.range || range)} · median per ${escapeHtml(data.window || 'interval')}</div>
         </div>
 
         <div style="background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; padding: 10px 12px;">
@@ -1404,8 +1411,8 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
                 return `
                   <tr style="border-bottom: 1px solid #F1F5F9;">
                     <td style="padding: 4px 10px;" class="mono">${timeStr}</td>
-                    <td style="padding: 4px 10px; font-weight: 600; color: ${v.heart_rate > 100 || v.heart_rate < 50 ? '#DC2626' : '#15803D'};">${v.heart_rate || '--'} BPM</td>
-                    <td style="padding: 4px 10px; font-weight: 600; color: ${v.spo2 < 94 ? '#DC2626' : '#0369A1'};">${v.spo2 ? v.spo2 + '%' : '--'}</td>
+                    <td style="padding: 4px 10px; font-weight: 600; color: ${v.heart_rate > 100 || v.heart_rate < 50 ? '#DC2626' : '#15803D'};">${escapeHtml(v.heart_rate || '--')} BPM</td>
+                    <td style="padding: 4px 10px; font-weight: 600; color: ${v.spo2 < 94 ? '#DC2626' : '#0369A1'};">${escapeHtml(v.spo2 ? v.spo2 + '%' : '--')}</td>
                   </tr>
                 `;
               }).join('')}
@@ -1418,7 +1425,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
   } catch (err) {
     container.innerHTML = `
       <div style="padding: 24px; text-align: center; color: var(--danger);">
-        Error loading InfluxDB vitals: ${err.message}
+        Error loading InfluxDB vitals: ${escapeHtml(err.message)}
       </div>
     `;
   }
@@ -1464,7 +1471,7 @@ function generateVitalsSvg(points, field, minAxis, maxAxis, normalLow, normalHig
     const isAbnormal = p[field] < normalLow || p[field] > normalHigh;
     const dotColor = isAbnormal ? '#DC2626' : strokeColor;
     const timeLabel = new Date(p.time).toLocaleTimeString();
-    circles.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${validPoints.length > 50 ? 2 : 3.5}" fill="${dotColor}" stroke="#FFFFFF" stroke-width="1.5"><title>${timeLabel}: ${p[field]} ${unit}</title></circle>`);
+    circles.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${validPoints.length > 50 ? 2 : 3.5}" fill="${dotColor}" stroke="#FFFFFF" stroke-width="1.5"><title>${escapeHtml(timeLabel)}: ${escapeHtml(p[field])} ${unit}</title></circle>`);
   });
 
   // Generate Y-axis gridlines

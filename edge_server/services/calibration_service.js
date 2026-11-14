@@ -19,7 +19,8 @@ function getMedian(values) {
  */
 async function startSession({ ward_id, tag_id, target_x, target_y, target_z = 0.85, duration_sec = 10, path_loss_n = 3.2 }) {
   const pool = getPool();
-  const wardId = ward_id || 'WARD-001';
+  if (!ward_id) throw new Error('A ward ID is required to start a calibration.');
+  const wardId = ward_id;
   const cleanTag = (tag_id || '').toUpperCase().trim();
 
   // Query anchors assigned to this ward

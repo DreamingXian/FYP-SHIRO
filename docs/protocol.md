@@ -116,7 +116,16 @@ An anchor tracks up to 16 wristbands and frees the slot of a wristband that has 
 
 ## 3. What the server does with it
 
-`normalizeTelemetry()` turns the JSON into one validated object:
+Every MQTT message is first checked by `checkAnchorMessage()` (`edge_server/services/telemetry/anchor_message.js`). A message that fails is ignored and logged, at most once per client and reason every 10 seconds:
+
+- The payload must be a JSON object of at most 2048 bytes.
+- `anchor_mac` must be a MAC address.
+- `rssi` must be a number from -120 to 0 (0 marks the standby heartbeat).
+- `tag_mac` must be a MAC address. When it is not, the wristband part of the message is dropped and only the anchor's presence is recorded.
+
+An enrolled anchor or wristband is known by its device ID, any other by its MAC address. No device ID is assumed.
+
+`normalizeTelemetry()` then turns the telemetry fields into one validated object:
 
 - Heart rate outside 30 to 220, SpO2 outside 70 to 100, and `0` become `null`.
 - With `imu_fault`, acceleration and motion become `null`. With `ppg_fault`, heart rate and SpO2 become `null`.

@@ -173,7 +173,7 @@ function initLiveLabListeners() {
       const isAnchorB = msg.anchor === 'anchor-B' || msg.anchor === 'anchor-002' || msg.anchor?.endsWith('002') || msg.anchor?.endsWith('-B');
 
       if (isAnchorA) {
-        if (valDistA) valDistA.innerHTML = `${msg.filtered_distance.toFixed(2)} <span class="metric-unit">meters</span>`;
+        if (valDistA) valDistA.innerHTML = `${escapeHtml(Number(msg.filtered_distance).toFixed(2))} <span class="metric-unit">meters</span>`;
         if (valRawA) valRawA.innerText = msg.raw_rssi;
         if (valFiltA) valFiltA.innerText = msg.filtered_rssi;
         if (anchorABadge) {
@@ -187,7 +187,7 @@ function initLiveLabListeners() {
         if (healthDistA) healthDistA.innerText = `${msg.filtered_distance.toFixed(2)} m`;
         if (healthTimeA) healthTimeA.innerText = msg.timestamp;
       } else if (isAnchorB) {
-        if (valDistB) valDistB.innerHTML = `${msg.filtered_distance.toFixed(2)} <span class="metric-unit">meters</span>`;
+        if (valDistB) valDistB.innerHTML = `${escapeHtml(Number(msg.filtered_distance).toFixed(2))} <span class="metric-unit">meters</span>`;
         if (valRawB) valRawB.innerText = msg.raw_rssi;
         if (valFiltB) valFiltB.innerText = msg.filtered_rssi;
         if (anchorBBadge) {
@@ -204,9 +204,9 @@ function initLiveLabListeners() {
 
       if (logBody) {
         const row = `<tr>
-          <td style="color: var(--text-muted);">${msg.timestamp}</td>
-          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${msg.topic}</td>
-          <td class="mono">Raw: ${msg.raw_rssi} dBm ➔ Filtered: ${msg.filtered_rssi} dBm (Dist: ${msg.filtered_distance}m)</td>
+          <td style="color: var(--text-muted);">${escapeHtml(msg.timestamp)}</td>
+          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${escapeHtml(msg.topic)}</td>
+          <td class="mono">Raw: ${escapeHtml(msg.raw_rssi)} dBm ➔ Filtered: ${escapeHtml(msg.filtered_rssi)} dBm (Dist: ${escapeHtml(msg.filtered_distance)}m)</td>
           <td style="color: var(--primary); font-weight: 600;">✓ EKF Filtered</td>
         </tr>`;
         logBody.insertAdjacentHTML('afterbegin', row);
@@ -252,7 +252,7 @@ function initLiveLabListeners() {
         }
 
         if (d.bpm && d.bpm > 30) {
-          if (valBpm) valBpm.innerHTML = `${d.bpm} <span class="metric-unit">BPM</span>`;
+          if (valBpm) valBpm.innerHTML = `${escapeHtml(d.bpm)} <span class="metric-unit">BPM</span>`;
           if (bpmStatus) {
             bpmStatus.innerText = 'Synchronized with Pulse';
             bpmStatus.style.color = '#059669';
@@ -266,7 +266,7 @@ function initLiveLabListeners() {
         }
 
         if (d.spo2 && d.spo2 > 70) {
-          if (valSpo2) valSpo2.innerHTML = `${d.spo2} <span class="metric-unit">%</span>`;
+          if (valSpo2) valSpo2.innerHTML = `${escapeHtml(d.spo2)} <span class="metric-unit">%</span>`;
           if (spo2Badge) {
             // Not calibrated: no "optimal" or "hypoxia" verdict is shown for this value
             spo2Badge.innerText = '● Indicative only';
@@ -338,9 +338,9 @@ function initLiveLabListeners() {
 
       if (logBody) {
         const row = `<tr>
-          <td style="color: var(--text-muted);">${msg.timestamp}</td>
-          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${msg.topic}</td>
-          <td class="mono" style="font-size: 12px; color: var(--text-secondary);">${JSON.stringify(d)}</td>
+          <td style="color: var(--text-muted);">${escapeHtml(msg.timestamp)}</td>
+          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${escapeHtml(msg.topic)}</td>
+          <td class="mono" style="font-size: 12px; color: var(--text-secondary);">${escapeHtml(JSON.stringify(d))}</td>
           <td style="color: var(--status-success-text); font-weight: 600;">✓ Delivered (${delta}ms)</td>
         </tr>`;
 
@@ -360,23 +360,60 @@ function initLiveLabListeners() {
   const btnSimGeofence = document.getElementById('btn-sim-geofence');
   const simPatientSelect = document.getElementById('sim-patient-select');
 
+  // The test bench offers the patients that are admitted now. The server reads
+  // the name, ward, bed and wristband of the chosen patient from the database.
+  async function loadSimulationPatients() {
+    if (!simPatientSelect) return;
+    const chosen = simPatientSelect.value;
+    let patients = [];
+    let failed = false;
+    try {
+      const res = await fetch('/api/patients/list?status=ADMITTED');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.patients)) patients = data.patients;
+      else failed = true;
+    } catch (e) {
+      failed = true;
+      console.error('[SIMULATION] Could not load the patient list:', e);
+    }
+
+    // Built with DOM methods, so a patient name is always shown as text
+    simPatientSelect.replaceChildren();
+    if (patients.length === 0) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = failed ? 'Patient list could not be loaded' : 'No admitted patient';
+      simPatientSelect.appendChild(option);
+      return;
+    }
+    for (const p of patients) {
+      const option = document.createElement('option');
+      option.value = p.patient_id;
+      const place = p.bed_code ? ` (${p.assigned_ward_id}, ${p.bed_code})` : ' (no bed assigned)';
+      option.textContent = `${p.patient_id}: ${p.full_name}${place}`;
+      simPatientSelect.appendChild(option);
+    }
+    if (patients.some(p => p.patient_id === chosen)) simPatientSelect.value = chosen;
+  }
+
+  if (simPatientSelect) {
+    loadSimulationPatients();
+    // Refreshed whenever the list is opened, so new admissions appear without a reload
+    simPatientSelect.addEventListener('focus', loadSimulationPatients);
+  }
+
   async function triggerSimulation(category) {
-    const patientId = simPatientSelect ? simPatientSelect.value : 'P-001';
-    let patientName = 'Tan Ah Kow';
-    if (patientId === 'P-002') patientName = 'Siti Nurhaliza';
-    if (patientId === 'P-003') patientName = 'Kavitha Mohan';
+    const patientId = simPatientSelect ? simPatientSelect.value : '';
+    if (!patientId) {
+      if (typeof showToast === 'function') showToast('Admit a patient first: a simulation needs an existing patient.', 'warning');
+      return;
+    }
 
     try {
       const res = await fetch('/api/alerts/trigger-simulation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          category,
-          patient_id: patientId,
-          patient_name: patientName,
-          ward_id: 'WARD-001',
-          bed_id: patientId === 'P-001' ? 'BED-001-01' : (patientId === 'P-002' ? 'BED-001-02' : 'BED-001-03')
-        })
+        body: JSON.stringify({ category, patient_id: patientId })
       });
       const data = await res.json();
       if (typeof showToast === 'function') {

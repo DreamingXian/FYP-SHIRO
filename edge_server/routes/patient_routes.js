@@ -2,6 +2,8 @@
 // Patient Directory & Admission Routes Dispatcher
 // =============================================================================
 const patientController = require('../controllers/patient_controller');
+const { HttpError, sendJson, sendFailure } = require('../utils/http');
+const { requireId } = require('../utils/validate');
 
 async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
   // 1. GET /api/patients/list or /api/patients
@@ -68,10 +70,15 @@ async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
   if (pathname === '/api/patients/vitals-history' && req.method === 'GET') {
     const timeSeriesService = require('../services/time_series_service');
     const { getPool } = require('../database/db');
-    const patientId = parsedUrl.searchParams.get('id') || 'P-001';
-    // Only the ranges the service knows are answered; anything else gets the default
-    const { range, window } = timeSeriesService.resolveHistoryRange(parsedUrl.searchParams.get('range'));
     try {
+      const patientId = requireId(parsedUrl.searchParams.get('id'), 'id');
+      // Without a range the default is used. A range that is not in the list is refused.
+      const requestedRange = parsedUrl.searchParams.get('range');
+      if (requestedRange !== null && requestedRange !== '' && !timeSeriesService.isHistoryRange(requestedRange)) {
+        throw new HttpError(400, 'range must be one of: -1h, -6h, -24h, -7d, -30d.');
+      }
+      const { range, window } = timeSeriesService.resolveHistoryRange(requestedRange);
+
       let wristbandMac = null;
       let deviceId = null;
       try {
@@ -93,20 +100,18 @@ async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
 
       // History is matched on the patient ID only; the binding is returned for display.
       const vitals = await timeSeriesService.queryVitalsHistory(patientId, range);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ 
-        success: true, 
-        patient_id: patientId, 
+      sendJson(res, 200, {
+        success: true,
+        patient_id: patientId,
         device_id: deviceId,
         wristband_mac: wristbandMac,
         range,
         window,
         count: vitals.length,
-        vitals 
-      }));
+        vitals
+      });
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: err.message }));
+      sendFailure(res, err, 'vitalsHistory');
     }
     return true;
   }
