@@ -63,7 +63,7 @@
 
         const isSelected = selectedDeviceId && selectedDeviceId === dev.device_id;
         const statusDot = dev.status === 'ONLINE' ? '● Online' : '○ Offline';
-        optionsHtml += `<option value="${dev.device_id}" ${isSelected ? 'selected' : ''}>${dev.device_id} (${statusDot})</option>`;
+        optionsHtml += `<option value="${escapeHtml(dev.device_id)}" ${isSelected ? 'selected' : ''}>${escapeHtml(dev.device_id)} (${escapeHtml(statusDot)})</option>`;
       });
       return optionsHtml;
     }
@@ -72,7 +72,7 @@
       // 1. Update dropdown options text across all rows in Ward Editor
       const selects = document.querySelectorAll('.anchor-hardware-select');
       selects.forEach(sel => {
-        const opt = sel.querySelector(`option[value="${deviceId}"]`);
+        const opt = sel.querySelector(`option[value="${CSS.escape(String(deviceId))}"]`);
         if (opt) {
           const statusDot = status === 'ONLINE' ? '● Online' : '○ Offline';
           opt.textContent = `${deviceId} (${statusDot})`;
@@ -86,7 +86,7 @@
             const statusCell = document.querySelector(`.anchor-status-cell[data-slot-index="${index}"]`);
             if (statusCell) {
               const badgeClass = status === 'ONLINE' ? 'badge-live' : 'badge-alert';
-              statusCell.innerHTML = `<span class="badge ${badgeClass}">● ${status}</span>`;
+              statusCell.innerHTML = `<span class="badge ${badgeClass}">● ${escapeHtml(status)}</span>`;
             }
           }
         });
@@ -295,27 +295,27 @@
 
       wards.forEach(w => {
         const updated = w.updated_at ? new Date(w.updated_at).toLocaleString() : 'Recently';
-        const uuidShort = w.spatial_anchor_uuid ? `${w.spatial_anchor_uuid.substring(0, 8)}...` : '<span style="color:var(--text-muted);">None</span>';
+        const uuidShort = w.spatial_anchor_uuid ? `${escapeHtml(w.spatial_anchor_uuid.substring(0, 8))}...` : '<span style="color:var(--text-muted);">None</span>';
         const isLiveMapReady = (w.anchor_count >= 3 && w.assigned_anchor_count >= w.anchor_count);
         const liveMapBtn = isLiveMapReady
-          ? `<button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); window.openWardLiveMap('${w.ward_id}')" style="background:#0EA5E9; border-color:#0284C7;">🗺️ View Live Map</button>`
+          ? `<button class="btn btn-primary btn-sm"${actionAttrs('openWardLiveMap', [w.ward_id], { stop: true })} style="background:#0EA5E9; border-color:#0284C7;">🗺️ View Live Map</button>`
           : `<button class="btn btn-outline btn-sm" disabled style="opacity:0.45; cursor:not-allowed;" title="Please complete anchor registration &amp; assignment for all anchor slots to enable the live map function." onclick="event.stopPropagation();">🗺️ View Live Map</button>`;
 
-        const row = `<tr class="table-row-clickable" onclick="viewWardDetailsReadOnly('${w.ward_id}')" title="Click to view layout &amp; specifications for ${w.room_title || w.ward_id}">
-          <td><b style="color: var(--primary);">${w.ward_id}</b></td>
-          <td><b style="color: var(--text-primary);">${w.room_title || 'Ward'}</b></td>
+        const row = `<tr class="table-row-clickable"${actionAttrs('viewWardDetailsReadOnly', [w.ward_id])} title="Click to view layout &amp; specifications for ${escapeHtml(w.room_title || w.ward_id)}">
+          <td><b style="color: var(--primary);">${escapeHtml(w.ward_id)}</b></td>
+          <td><b style="color: var(--text-primary);">${escapeHtml(w.room_title || 'Ward')}</b></td>
           <td><span class="mono">${Number(w.length_x).toFixed(2)}m × ${Number(w.width_y).toFixed(2)}m × ${Number(w.height_z).toFixed(2)}m</span></td>
-          <td><span class="badge badge-neutral">${w.door_wall || 'SOUTH'} @ ${Number(w.door_x).toFixed(2)}m (${Number(w.door_width).toFixed(2)}m w)</span></td>
-          <td><span class="badge badge-info">${w.bed_count} Beds</span></td>
-          <td><span class="badge ${w.anchor_count >= 3 ? 'badge-live' : 'badge-warning'}">${w.anchor_count} Nodes</span></td>
-          <td><span class="badge badge-neutral">${w.obstacle_count} Cutout${w.obstacle_count === 1 ? '' : 's'}</span></td>
-          <td class="mono" style="font-size: 11px;" title="${w.spatial_anchor_uuid}">${uuidShort}</td>
-          <td style="color: var(--text-muted); font-size: 12px;">${updated}</td>
+          <td><span class="badge badge-neutral">${escapeHtml(w.door_wall || 'SOUTH')} @ ${Number(w.door_x).toFixed(2)}m (${Number(w.door_width).toFixed(2)}m w)</span></td>
+          <td><span class="badge badge-info">${escapeHtml(w.bed_count)} Beds</span></td>
+          <td><span class="badge ${w.anchor_count >= 3 ? 'badge-live' : 'badge-warning'}">${escapeHtml(w.anchor_count)} Nodes</span></td>
+          <td><span class="badge badge-neutral">${escapeHtml(w.obstacle_count)} Cutout${w.obstacle_count === 1 ? '' : 's'}</span></td>
+          <td class="mono" style="font-size: 11px;" title="${escapeHtml(w.spatial_anchor_uuid)}">${uuidShort}</td>
+          <td style="color: var(--text-muted); font-size: 12px;">${escapeHtml(updated)}</td>
           <td>
             <div style="display: flex; gap: 6px;">
               ${liveMapBtn}
-              <button class="btn btn-outline btn-sm" onclick="event.stopPropagation(); openWardEditor('${w.ward_id}')">✏️ Configure Layout</button>
-              <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation(); deleteWardRecord('${w.ward_id}')">🗑 Delete</button>
+              <button class="btn btn-outline btn-sm"${actionAttrs('openWardEditor', [w.ward_id], { stop: true })}>✏️ Configure Layout</button>
+              <button class="btn btn-danger-outline btn-sm"${actionAttrs('deleteWardRecord', [w.ward_id], { stop: true })}>🗑 Delete</button>
             </div>
           </td>
         </tr>`;
@@ -376,9 +376,9 @@
               const rotLabel = rot === 0 ? '0° (N)' : rot === 90 ? '90° (E)' : rot === 180 ? '180° (S)' : '270° (W)';
               return `
               <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-bottom:1px solid var(--border-light); font-size:12px;">
-                <div><strong>${b.bed_code || b.bed_id}</strong> <span style="font-size:10px; color:var(--text-muted); font-weight:600;">[${rotLabel}]</span></div>
+                <div><strong>${escapeHtml(b.bed_code || b.bed_id)}</strong> <span style="font-size:10px; color:var(--text-muted); font-weight:600;">[${rotLabel}]</span></div>
                 <div style="font-family:monospace; color:var(--text-muted);">${Number(b.x).toFixed(2)}m, ${Number(b.y).toFixed(2)}m</div>
-                <span class="badge ${b.status === 'AVAILABLE' ? 'badge-live' : b.status === 'OCCUPIED' ? 'badge-alert' : 'badge-neutral'}">${b.status}</span>
+                <span class="badge ${b.status === 'AVAILABLE' ? 'badge-live' : b.status === 'OCCUPIED' ? 'badge-alert' : 'badge-neutral'}">${escapeHtml(b.status)}</span>
               </div>`;
             }).join('')
           : '<div style="color:var(--text-muted); font-size:12px; padding:8px; text-align:center;">No beds configured.</div>';
@@ -390,17 +390,17 @@
               const liveStatus = isAssigned ? (a.status || 'OFFLINE') : 'STANDBY';
               const badgeClass = liveStatus === 'ONLINE' ? 'badge-live' : (liveStatus === 'OFFLINE' ? 'badge-alert' : 'badge-neutral');
               const nodeDisplay = isAssigned 
-                ? `<div class="mono" style="font-size:11px; color:var(--primary); font-weight:700;">Node: ${a.device_id}</div>`
+                ? `<div class="mono" style="font-size:11px; color:var(--primary); font-weight:700;">Node: ${escapeHtml(a.device_id)}</div>`
                 : `<div style="font-size:11px; color:var(--text-muted); font-style:italic;">Node: Unassigned (Standby Slot)</div>`;
 
               return `
-              <div class="modal-anchor-card" data-device-id="${a.device_id || ''}" style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
+              <div class="modal-anchor-card" data-device-id="${escapeHtml(a.device_id || '')}" style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
-                  <strong style="color:var(--text-primary); font-size:12px;">📡 ${a.anchor_id}</strong>
-                  <span class="badge modal-anchor-badge ${badgeClass}" style="font-size:10px;">● ${liveStatus}</span>
+                  <strong style="color:var(--text-primary); font-size:12px;">📡 ${escapeHtml(a.anchor_id)}</strong>
+                  <span class="badge modal-anchor-badge ${badgeClass}" style="font-size:10px;">● ${escapeHtml(liveStatus)}</span>
                 </div>
                 <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 3px;">
-                  Position: (${Number(a.x).toFixed(2)}m, ${Number(a.y).toFixed(2)}m, ${Number(a.z).toFixed(2)}m) · ${a.wall_location || 'Wall'}
+                  Position: (${Number(a.x).toFixed(2)}m, ${Number(a.y).toFixed(2)}m, ${Number(a.z).toFixed(2)}m) · ${escapeHtml(a.wall_location || 'Wall')}
                 </div>
                 ${nodeDisplay}
               </div>`;
@@ -416,11 +416,11 @@
               return `
                 <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
-                    <strong style="color:var(--text-primary); font-size:12px;">${icon} ${o.label || o.id || 'Obstacle'}</strong>
-                    <span class="badge badge-neutral" style="font-size:10px;">${typeStr}</span>
+                    <strong style="color:var(--text-primary); font-size:12px;">${icon} ${escapeHtml(o.label || o.id || 'Obstacle')}</strong>
+                    <span class="badge badge-neutral" style="font-size:10px;">${escapeHtml(typeStr)}</span>
                   </div>
                   <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
-                    Type: ${typeStr} · Height: ${hVal}m
+                    Type: ${escapeHtml(typeStr)} · Height: ${escapeHtml(hVal)}m
                   </div>
                   <div style="font-size:11px; color:var(--text-secondary);">
                     Position: (${Number(o.x).toFixed(2)}m, ${Number(o.y).toFixed(2)}m) · Size: ${Number(o.width).toFixed(2)}m × ${Number(o.length).toFixed(2)}m
@@ -447,22 +447,22 @@
               </div>
               <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-top: 6px; padding: 0 4px;">
                 <span>Dimensions: ${Number(w.length_x).toFixed(2)}m × ${Number(w.width_y).toFixed(2)}m × ${Number(w.height_z).toFixed(2)}m</span>
-                <span>🚪 Door: ${doorWall} wall @ ${doorX}m (${doorWidth}m)</span>
+                <span>🚪 Door: ${escapeHtml(doorWall)} wall @ ${escapeHtml(doorX)}m (${escapeHtml(doorWidth)}m)</span>
               </div>
             </div>
 
             <!-- Right Column: Room Specs, Beds Fleet & Devices -->
             <div>
               <div style="margin-bottom: 12px;">
-                <div style="font-size: 16px; font-weight: 700; color: var(--text-primary);">${w.room_title || 'Ward'}</div>
-                <div style="font-size: 11px; color: var(--primary); font-weight: 600;" class="mono">${w.ward_id} · Archetype: ${w.layout_type || 'RECTANGLE'}</div>
+                <div style="font-size: 16px; font-weight: 700; color: var(--text-primary);">${escapeHtml(w.room_title || 'Ward')}</div>
+                <div style="font-size: 11px; color: var(--primary); font-weight: 600;" class="mono">${escapeHtml(w.ward_id)} · Archetype: ${escapeHtml(w.layout_type || 'RECTANGLE')}</div>
               </div>
 
               <!-- Quick Meta Card -->
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 11px;">
                 <div>
                   <span style="color: var(--text-muted);">Spatial UUID:</span><br>
-                  <span class="mono" style="font-size: 10px; color: var(--text-secondary); word-break: break-all;" title="${w.spatial_anchor_uuid || ''}">${w.spatial_anchor_uuid ? w.spatial_anchor_uuid.substring(0, 16) + '...' : 'Not Mapped'}</span>
+                  <span class="mono" style="font-size: 10px; color: var(--text-secondary); word-break: break-all;" title="${escapeHtml(w.spatial_anchor_uuid || '')}">${escapeHtml(w.spatial_anchor_uuid ? w.spatial_anchor_uuid.substring(0, 16) + '...' : 'Not Mapped')}</span>
                 </div>
                 <div>
                   <span style="color: var(--text-muted);">Total Inventory:</span><br>
@@ -791,7 +791,7 @@
               <option value="STORAGE" ${obsType === 'STORAGE' ? 'selected' : ''}>📦 Storage</option>
             </select>
           </td>
-          <td><input type="text" class="form-control" style="padding: 4px 8px; font-size: 12px;" value="${obs.label || ''}" oninput="updateObstacle(${index}, 'label', this.value)"></td>
+          <td><input type="text" class="form-control" style="padding: 4px 8px; font-size: 12px;" value="${escapeHtml(obs.label || '')}" oninput="updateObstacle(${index}, 'label', this.value)"></td>
           <td>
             <div style="display: flex; gap: 4px; align-items: center;">
               <span style="font-size: 11px; color: var(--text-muted);">X:</span>
@@ -924,7 +924,7 @@
 
         const row = `<tr>
           <td>
-            <input type="text" class="form-control" style="padding: 4px 8px; font-size: 12px; font-weight: 600;" value="${b.bed_code}" oninput="updateBed(${index}, 'bed_code', this.value)">
+            <input type="text" class="form-control" style="padding: 4px 8px; font-size: 12px; font-weight: 600;" value="${escapeHtml(b.bed_code)}" oninput="updateBed(${index}, 'bed_code', this.value)">
           </td>
           <td>
             <div style="display: flex; gap: 4px; align-items: center;">
@@ -1042,13 +1042,13 @@
         if (isAssigned) {
           const foundDev = cachedRegisteredAnchors.find(d => d.device_id === a.device_id);
           const liveStatus = (foundDev ? foundDev.status : a.status) || 'OFFLINE';
-          statusBadgeHtml = `<span class="badge ${liveStatus === 'ONLINE' ? 'badge-live' : 'badge-alert'}">● ${liveStatus}</span>`;
+          statusBadgeHtml = `<span class="badge ${liveStatus === 'ONLINE' ? 'badge-live' : 'badge-alert'}">● ${escapeHtml(liveStatus)}</span>`;
         } else {
           statusBadgeHtml = `<span class="badge badge-neutral">● STANDBY</span>`;
         }
 
         const row = `<tr>
-          <td><b style="color: var(--primary); font-size: 12px;">${a.anchor_id}</b></td>
+          <td><b style="color: var(--primary); font-size: 12px;">${escapeHtml(a.anchor_id)}</b></td>
           <td>
             <select class="form-control anchor-hardware-select" data-slot-index="${index}" style="padding: 4px 8px; font-size: 12px; font-weight: 600;" onchange="onAnchorDeviceSelected(${index}, this.value)">
               ${optionsHtml}
@@ -1157,17 +1157,17 @@
           : '<span style="color:var(--text-muted);">No Beds Configured</span>';
 
         const boundText = a.device_id
-          ? `<span class="mono" style="color:var(--primary); font-weight:700;">${a.device_id}</span>`
+          ? `<span class="mono" style="color:var(--primary); font-weight:700;">${escapeHtml(a.device_id)}</span>`
           : `<span style="color:var(--text-muted); font-style:italic;">Standby (Unbound)</span>`;
 
         return `
           <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 3px;">
-              <strong style="font-size:12px; color:var(--text-primary);">📡 ${a.anchor_id}</strong>
+              <strong style="font-size:12px; color:var(--text-primary);">📡 ${escapeHtml(a.anchor_id)}</strong>
               <span style="font-size:11px;">Hardware: ${boundText}</span>
             </div>
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 2px;">
-              Placement: <strong>${a.wall_location}</strong> · X: <strong>${Number(a.x).toFixed(2)}m</strong>, Y: <strong>${Number(a.y).toFixed(2)}m</strong>, Z: <strong>${Number(a.z).toFixed(2)}m</strong>
+              Placement: <strong>${escapeHtml(a.wall_location)}</strong> · X: <strong>${Number(a.x).toFixed(2)}m</strong>, Y: <strong>${Number(a.y).toFixed(2)}m</strong>, Z: <strong>${Number(a.z).toFixed(2)}m</strong>
             </div>
             <div style="font-size:11px;">
               3D Line-of-Sight: ${losText}
@@ -1657,7 +1657,7 @@
 
       const patternOptionsHtml = results.map((p, idx) => {
         const isBest = idx === 0 ? ' ⭐ (Recommended)' : '';
-        return `<option value="${p.id}" ${idx === 0 ? 'selected' : ''}>[Rank #${idx + 1} - Score: ${p.compositeScore}/100] ${p.title}${isBest}</option>`;
+        return `<option value="${escapeHtml(p.id)}" ${idx === 0 ? 'selected' : ''}>[Rank #${idx + 1} - Score: ${escapeHtml(p.compositeScore)}/100] ${escapeHtml(p.title)}${isBest}</option>`;
       }).join('');
 
       const anchorCardsHtml = renderAnchorCardsHtml(activePat.anchors);
@@ -1696,7 +1696,7 @@
                 ${patternOptionsHtml}
               </select>
               <div id="modal-pattern-desc" style="font-size: 11px; color: var(--text-secondary); margin-top: 6px; line-height: 1.35; padding: 5px 8px; background: #FFFFFF; border-radius: 4px; border: 1px solid var(--border);">
-                ${activePat.description}
+                ${escapeHtml(activePat.description)}
               </div>
             </div>
 

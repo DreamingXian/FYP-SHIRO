@@ -212,8 +212,8 @@
             menu.innerHTML = items.map(p => {
               const initials = p.full_name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
               const avatarHtml = p.photo_url
-                ? `<img src="${p.photo_url}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--border);" onerror="this.outerHTML='<div class=\\'patient-thumb\\' style=\\'width:34px;height:34px;font-size:11px;\\'>${initials}</div>'">`
-                : `<div class="patient-thumb" style="width: 34px; height: 34px; font-size: 11px;">${initials}</div>`;
+                ? `<img src="${escapeHtml(p.photo_url)}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--border);"${imgFallbackAttrs(initials, { replaceClass: 'patient-thumb', replaceStyle: 'width:34px;height:34px;font-size:11px;' })}>`
+                : `<div class="patient-thumb" style="width: 34px; height: 34px; font-size: 11px;">${escapeHtml(initials)}</div>`;
 
               const riskBadge = p.fall_risk_score === 'HIGH'
                 ? '<span class="badge badge-alert" style="font-size: 10px;">● HIGH RISK</span>'
@@ -225,17 +225,17 @@
               const ageGender = `${p.age || '-'} yrs / ${p.gender ? p.gender[0] : '-'}`;
 
               return `
-      <div class="combobox-item" onclick="selectPatientCandidate('${p.patient_id}')"
+      <div class="combobox-item"${actionAttrs('selectPatientCandidate', [p.patient_id])}
         style="padding: 10px 14px; border-bottom: 1px solid var(--border-light); cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.15s ease;"
         onmouseover="this.style.background='var(--input-bg)'" onmouseout="this.style.background='#FFFFFF'">
         <div style="display: flex; gap: 10px; align-items: center;">
           ${avatarHtml}
           <div>
             <div style="font-weight: 700; color: var(--text-primary); font-size: 13px;">
-              ${p.full_name} <span class="mono" style="color: var(--primary); font-size: 11px; font-weight: 600;">(${p.patient_id})</span>
+              ${escapeHtml(p.full_name)} <span class="mono" style="color: var(--primary); font-size: 11px; font-weight: 600;">(${escapeHtml(p.patient_id)})</span>
             </div>
             <div style="font-size: 11px; color: var(--text-muted); margin-top: 1px;">
-              🛏️ ${bedText} · ${ageGender}
+              🛏️ ${escapeHtml(bedText)} · ${escapeHtml(ageGender)}
             </div>
           </div>
         </div>
@@ -291,8 +291,8 @@
 
             const initials = p.full_name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
             const avatarHtml = p.photo_url
-              ? `<img src="${p.photo_url}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border);" onerror="this.outerHTML='<div class=\\'patient-thumb\\' style=\\'width:48px;height:48px;font-size:16px;\\'>${initials}</div>'">`
-              : `<div class="patient-thumb" style="width: 48px; height: 48px; font-size: 16px;">${initials}</div>`;
+              ? `<img src="${escapeHtml(p.photo_url)}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border);"${imgFallbackAttrs(initials, { replaceClass: 'patient-thumb', replaceStyle: 'width:48px;height:48px;font-size:16px;' })}>`
+              : `<div class="patient-thumb" style="width: 48px; height: 48px; font-size: 16px;">${escapeHtml(initials)}</div>`;
 
             const riskBadge = p.fall_risk_score === 'HIGH'
               ? '<span class="badge badge-alert">● HIGH FALL RISK</span>'
@@ -309,15 +309,15 @@
       <div style="flex: 1;">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
           <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;">
-            ${p.full_name} <span class="mono" style="color: var(--primary); font-size: 12px;">(${p.patient_id})</span>
+            ${escapeHtml(p.full_name)} <span class="mono" style="color: var(--primary); font-size: 12px;">(${escapeHtml(p.patient_id)})</span>
           </div>
           ${riskBadge}
         </div>
         <div style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">
-          NRIC: <span class="mono">${p.nric_passport || '-'}</span> · Age: ${ageGender}
+          NRIC: <span class="mono">${escapeHtml(p.nric_passport || '-')}</span> · Age: ${escapeHtml(ageGender)}
         </div>
         <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
-          🛏️ Assigned Bed: <strong style="color: var(--text-primary);">${bedText}</strong>
+          🛏️ Assigned Bed: <strong style="color: var(--text-primary);">${escapeHtml(bedText)}</strong>
         </div>
       </div>
     </div>
@@ -385,15 +385,15 @@
               const batText = w.battery_level !== null && w.battery_level !== undefined ? `${w.battery_level}% Battery` : 'Battery N/A';
 
               return `
-      <div class="combobox-item" onclick="selectWristbandCandidate('${w.device_id}')"
+      <div class="combobox-item"${actionAttrs('selectWristbandCandidate', [w.device_id])}
         style="padding: 10px 14px; border-bottom: 1px solid var(--border-light); cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.15s ease;"
         onmouseover="this.style.background='var(--input-bg)'" onmouseout="this.style.background='#FFFFFF'">
         <div>
           <div style="font-weight: 700; color: var(--text-primary); font-size: 13px;">
-            ${w.device_id} <span class="mono" style="color: var(--text-muted); font-size: 11px;">(${w.mac_address})</span>
+            ${escapeHtml(w.device_id)} <span class="mono" style="color: var(--text-muted); font-size: 11px;">(${escapeHtml(w.mac_address)})</span>
           </div>
           <div style="font-size: 11px; color: var(--text-muted); margin-top: 1px;">
-            ${w.hardware_model || 'XIAO ESP32-C6'} · ${batText}
+            ${escapeHtml(w.hardware_model || 'XIAO ESP32-C6')} · ${escapeHtml(batText)}
           </div>
         </div>
         <div>
@@ -459,13 +459,13 @@
     <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; flex-wrap: wrap; gap: 8px;">
       <div>
         <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;">
-          ${w.device_id} <span style="font-weight: 400; font-size: 12px; color: var(--text-muted);">(${w.hardware_model || 'XIAO ESP32-C6'})</span>
+          ${escapeHtml(w.device_id)} <span style="font-weight: 400; font-size: 12px; color: var(--text-muted);">(${escapeHtml(w.hardware_model || 'XIAO ESP32-C6')})</span>
         </div>
         <div class="mono" style="font-size: 11px; color: var(--primary); font-weight: 600; margin-top: 3px;">
-          MAC: ${w.mac_address} · FW: ${w.firmware_version || 'v1.0.0'}
+          MAC: ${escapeHtml(w.mac_address)} · FW: ${escapeHtml(w.firmware_version || 'v1.0.0')}
         </div>
         <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-          ${batText} · Ready for Bio-telemetry stream
+          ${escapeHtml(batText)} · Ready for Bio-telemetry stream
         </div>
       </div>
       <div style="text-align: right;">
@@ -650,8 +650,8 @@
           tbody.innerHTML = pageItems.map(b => {
             const initials = b.patient_name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
             const avatarHtml = b.photo_url
-              ? `<img src="${b.photo_url}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--border);" onerror="this.outerHTML='<div class=\\'patient-thumb\\' style=\\'width:32px;height:32px;font-size:11px;\\'>${initials}</div>'">`
-              : `<div class="patient-thumb" style="width: 32px; height: 32px; font-size: 11px;">${initials}</div>`;
+              ? `<img src="${escapeHtml(b.photo_url)}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--border);"${imgFallbackAttrs(initials, { replaceClass: 'patient-thumb', replaceStyle: 'width:32px;height:32px;font-size:11px;' })}>`
+              : `<div class="patient-thumb" style="width: 32px; height: 32px; font-size: 11px;">${escapeHtml(initials)}</div>`;
 
             const riskBadge = b.fall_risk_score === 'HIGH'
               ? '<span class="badge badge-alert" style="font-size: 10px;">● HIGH RISK</span>'
@@ -677,15 +677,15 @@
             return `
       <tr>
         <td>
-          <span class="badge badge-info" style="font-size: 11px; font-weight: 700;">${bedText}</span>
-          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">${wardText}</div>
+          <span class="badge badge-info" style="font-size: 11px; font-weight: 700;">${escapeHtml(bedText)}</span>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">${escapeHtml(wardText)}</div>
         </td>
         <td>
           <div style="display: flex; gap: 8px; align-items: center;">
             ${avatarHtml}
             <div>
-              <b style="color: var(--text-primary); font-size: 13px;">${b.patient_name}</b>
-              <div style="font-size: 11px; color: var(--primary); font-weight: 600;" class="mono">${b.patient_id}</div>
+              <b style="color: var(--text-primary); font-size: 13px;">${escapeHtml(b.patient_name)}</b>
+              <div style="font-size: 11px; color: var(--primary); font-weight: 600;" class="mono">${escapeHtml(b.patient_id)}</div>
             </div>
           </div>
         </td>
@@ -693,21 +693,21 @@
           ${riskBadge}
         </td>
         <td>
-          <span class="mono" style="color: var(--text-secondary); font-size: 12px; font-weight: 600;">${b.mac_address}</span>
-          <span class="badge badge-neutral" style="margin-left: 6px; font-size: 10px;">${b.device_id}</span>
-          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">${b.hardware_model || 'XIAO ESP32-C6'}</div>
+          <span class="mono" style="color: var(--text-secondary); font-size: 12px; font-weight: 600;">${escapeHtml(b.mac_address)}</span>
+          <span class="badge badge-neutral" style="margin-left: 6px; font-size: 10px;">${escapeHtml(b.device_id)}</span>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">${escapeHtml(b.hardware_model || 'XIAO ESP32-C6')}</div>
         </td>
         <td>
           ${statusBadge}
         </td>
         <td style="color: var(--text-secondary); font-size: 12px;">
-          <div>${b.bound_at || 'Recently'}</div>
+          <div>${escapeHtml(b.bound_at || 'Recently')}</div>
         </td>
         <td style="color: var(--text-muted); font-weight: 500; font-size: 12px;">
-          ${b.bound_by || 'DOC-8821'}
+          ${escapeHtml(b.bound_by || 'DOC-8821')}
         </td>
         <td>
-          <button class="btn btn-danger-outline btn-sm" onclick="unbindTag('${b.binding_id}', '${b.patient_name.replace(/'/g, "\\'")}', '${b.device_id}')">
+          <button class="btn btn-danger-outline btn-sm"${actionAttrs('unbindTag', [b.binding_id, b.patient_name, b.device_id])}>
             🔓 Unbind Tag
           </button>
         </td>

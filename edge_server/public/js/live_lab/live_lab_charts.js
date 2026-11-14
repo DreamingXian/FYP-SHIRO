@@ -173,7 +173,7 @@ function initLiveLabListeners() {
       const isAnchorB = msg.anchor === 'anchor-B' || msg.anchor === 'anchor-002' || msg.anchor?.endsWith('002') || msg.anchor?.endsWith('-B');
 
       if (isAnchorA) {
-        if (valDistA) valDistA.innerHTML = `${msg.filtered_distance.toFixed(2)} <span class="metric-unit">meters</span>`;
+        if (valDistA) valDistA.innerHTML = `${escapeHtml(Number(msg.filtered_distance).toFixed(2))} <span class="metric-unit">meters</span>`;
         if (valRawA) valRawA.innerText = msg.raw_rssi;
         if (valFiltA) valFiltA.innerText = msg.filtered_rssi;
         if (anchorABadge) {
@@ -187,7 +187,7 @@ function initLiveLabListeners() {
         if (healthDistA) healthDistA.innerText = `${msg.filtered_distance.toFixed(2)} m`;
         if (healthTimeA) healthTimeA.innerText = msg.timestamp;
       } else if (isAnchorB) {
-        if (valDistB) valDistB.innerHTML = `${msg.filtered_distance.toFixed(2)} <span class="metric-unit">meters</span>`;
+        if (valDistB) valDistB.innerHTML = `${escapeHtml(Number(msg.filtered_distance).toFixed(2))} <span class="metric-unit">meters</span>`;
         if (valRawB) valRawB.innerText = msg.raw_rssi;
         if (valFiltB) valFiltB.innerText = msg.filtered_rssi;
         if (anchorBBadge) {
@@ -204,9 +204,9 @@ function initLiveLabListeners() {
 
       if (logBody) {
         const row = `<tr>
-          <td style="color: var(--text-muted);">${msg.timestamp}</td>
-          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${msg.topic}</td>
-          <td class="mono">Raw: ${msg.raw_rssi} dBm ➔ Filtered: ${msg.filtered_rssi} dBm (Dist: ${msg.filtered_distance}m)</td>
+          <td style="color: var(--text-muted);">${escapeHtml(msg.timestamp)}</td>
+          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${escapeHtml(msg.topic)}</td>
+          <td class="mono">Raw: ${escapeHtml(msg.raw_rssi)} dBm ➔ Filtered: ${escapeHtml(msg.filtered_rssi)} dBm (Dist: ${escapeHtml(msg.filtered_distance)}m)</td>
           <td style="color: var(--primary); font-weight: 600;">✓ EKF Filtered</td>
         </tr>`;
         logBody.insertAdjacentHTML('afterbegin', row);
@@ -252,7 +252,7 @@ function initLiveLabListeners() {
         }
 
         if (d.bpm && d.bpm > 30) {
-          if (valBpm) valBpm.innerHTML = `${d.bpm} <span class="metric-unit">BPM</span>`;
+          if (valBpm) valBpm.innerHTML = `${escapeHtml(d.bpm)} <span class="metric-unit">BPM</span>`;
           if (bpmStatus) {
             bpmStatus.innerText = 'Synchronized with Pulse';
             bpmStatus.style.color = '#059669';
@@ -266,7 +266,7 @@ function initLiveLabListeners() {
         }
 
         if (d.spo2 && d.spo2 > 70) {
-          if (valSpo2) valSpo2.innerHTML = `${d.spo2} <span class="metric-unit">%</span>`;
+          if (valSpo2) valSpo2.innerHTML = `${escapeHtml(d.spo2)} <span class="metric-unit">%</span>`;
           if (spo2Badge) {
             // Not calibrated: no "optimal" or "hypoxia" verdict is shown for this value
             spo2Badge.innerText = '● Indicative only';
@@ -338,9 +338,9 @@ function initLiveLabListeners() {
 
       if (logBody) {
         const row = `<tr>
-          <td style="color: var(--text-muted);">${msg.timestamp}</td>
-          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${msg.topic}</td>
-          <td class="mono" style="font-size: 12px; color: var(--text-secondary);">${JSON.stringify(d)}</td>
+          <td style="color: var(--text-muted);">${escapeHtml(msg.timestamp)}</td>
+          <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${escapeHtml(msg.topic)}</td>
+          <td class="mono" style="font-size: 12px; color: var(--text-secondary);">${escapeHtml(JSON.stringify(d))}</td>
           <td style="color: var(--status-success-text); font-weight: 600;">✓ Delivered (${delta}ms)</td>
         </tr>`;
 

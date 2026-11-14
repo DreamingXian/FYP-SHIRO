@@ -200,8 +200,8 @@
         <div style="display:flex; align-items:center; gap:8px;">
           <span style="font-size:16px;">${s.photo_url ? '👤' : '👤'}</span>
           <div>
-            <div style="font-weight:700; font-size:12px; color:var(--text-primary);">${s.full_name || 'Anonymous Patient'}</div>
-            <div style="font-size:10px; color:var(--text-muted); font-family:monospace;">${s.device_id} · ${bedLabel}</div>
+            <div style="font-weight:700; font-size:12px; color:var(--text-primary);">${escapeHtml(s.full_name || 'Anonymous Patient')}</div>
+            <div style="font-size:10px; color:var(--text-muted); font-family:monospace;">${escapeHtml(s.device_id)} · ${escapeHtml(bedLabel)}</div>
           </div>
         </div>
         <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px;">
@@ -250,7 +250,7 @@
       if (noteEl) noteEl.innerText = subject.medical_history || 'No medical precautions or clinical notes on file.';
 
       if (avatarEl && subject.photo_url) {
-        avatarEl.innerHTML = `<img src="${subject.photo_url}" style="width:100%; height:100%; object-fit:cover;" onerror="this.parentElement.innerText='👤'">`;
+        avatarEl.innerHTML = `<img src="${escapeHtml(subject.photo_url)}" style="width:100%; height:100%; object-fit:cover;"${imgFallbackAttrs('👤')}>`;
       } else if (avatarEl) {
         avatarEl.innerText = '👤';
       }
@@ -474,9 +474,9 @@
     container.innerHTML = pos.anchors.map(a => {
       return `
         <div style="display:flex; justify-content:space-between; align-items:center; background:#FFFFFF; border:1px solid var(--border-light); border-radius:4px; padding:4px 8px;">
-          <div><strong style="color:var(--primary);">${a.anchor_id}</strong> <span style="color:var(--text-muted); font-family:monospace;">(${a.device_id})</span></div>
+          <div><strong style="color:var(--primary);">${escapeHtml(a.anchor_id)}</strong> <span style="color:var(--text-muted); font-family:monospace;">(${escapeHtml(a.device_id)})</span></div>
           <div style="font-family:monospace; color:var(--text-secondary);">${Number(a.distance).toFixed(2)}m</div>
-          <div><span class="badge badge-info" style="font-size:9px;">${a.rssi} dBm</span></div>
+          <div><span class="badge badge-info" style="font-size:9px;">${escapeHtml(a.rssi)} dBm</span></div>
         </div>
       `;
     }).join('');
@@ -1465,8 +1465,8 @@
         row.style.cssText = 'display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; border: 1px solid var(--border-light); border-radius: 6px; padding: 7px 12px; font-size: 11px;';
         row.innerHTML = `
           <div style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-weight: 700; color: var(--text-primary);">${a.anchor_id}</span>
-            <span class="mono" style="color: var(--text-muted); font-size: 10px;">(${a.device_id || a.mac_address || 'Unassigned'})</span>
+            <span style="font-weight: 700; color: var(--text-primary);">${escapeHtml(a.anchor_id)}</span>
+            <span class="mono" style="color: var(--text-muted); font-size: 10px;">(${escapeHtml(a.device_id || a.mac_address || 'Unassigned')})</span>
           </div>
           <div style="display: flex; align-items: center; gap: 12px;">
             <span style="color: var(--text-secondary);">True Dist: <b style="color: var(--primary);">${dTrue}m</b></span>
@@ -1504,8 +1504,8 @@
         b.className = 'card';
         b.style.cssText = 'padding: 8px 14px; min-width: 110px; border: 1px solid var(--border); border-radius: 8px; text-align: center;';
         b.innerHTML = `
-          <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary);">${a.anchor_id}</div>
-          <div class="mono" style="font-size: 16px; font-weight: 700; color: var(--primary); margin-top: 2px;" id="cal-count-num-${a.anchor_id}">0 pkts</div>
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary);">${escapeHtml(a.anchor_id)}</div>
+          <div class="mono" style="font-size: 16px; font-weight: 700; color: var(--primary); margin-top: 2px;" id="cal-count-num-${escapeHtml(a.anchor_id)}">0 pkts</div>
         `;
         countsContainer.appendChild(b);
       });
@@ -1594,12 +1594,12 @@
 
         tr.innerHTML = `
           <td style="padding: 10px 14px;">
-            <b style="color: var(--text-primary);">${r.anchor_id}</b>
-            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">${r.device_id || r.mac_address || ''}</div>
+            <b style="color: var(--text-primary);">${escapeHtml(r.anchor_id)}</b>
+            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">${escapeHtml(r.device_id || r.mac_address || '')}</div>
           </td>
-          <td style="padding: 10px 12px;" class="mono">${r.d_true}m</td>
+          <td style="padding: 10px 12px;" class="mono">${escapeHtml(r.d_true)}m</td>
           <td style="padding: 10px 12px;">
-            ${r.median_rssi !== null ? `<span class="mono">${r.median_rssi} dBm</span> <span style="font-size: 10px; color: var(--text-muted);">(${r.samples_count} pkts)</span>` : '<span style="color: #DC2626; font-weight: 700;">0 pkts (N/A)</span>'}
+            ${r.median_rssi !== null ? `<span class="mono">${escapeHtml(r.median_rssi)} dBm</span> <span style="font-size: 10px; color: var(--text-muted);">(${escapeHtml(r.samples_count)} pkts)</span>` : '<span style="color: #DC2626; font-weight: 700;">0 pkts (N/A)</span>'}
           </td>
           <td style="padding: 10px 12px;" class="mono">${Number(r.current_a).toFixed(1)} dBm</td>
           <td style="padding: 10px 12px;">
@@ -1607,7 +1607,7 @@
           </td>
           <td style="padding: 10px 14px;">
             <span class="badge" style="background: #F1F5F9; color: ${deltaColor}; font-weight: 700; font-family: monospace;">
-              ${deltaSign} dBm
+              ${escapeHtml(deltaSign)} dBm
             </span>
           </td>
         `;

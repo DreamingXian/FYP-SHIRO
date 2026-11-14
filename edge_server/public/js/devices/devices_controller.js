@@ -119,7 +119,7 @@ function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
       filterDevicesTable();
     } else {
       // Update status badge directly in DOM if visible
-      const row = document.querySelector(`tr[data-device-id="${deviceId}"]`);
+      const row = document.querySelector(`tr[data-device-id="${CSS.escape(String(deviceId))}"]`);
       if (row) {
         const statusCell = row.querySelector('.device-status-cell');
         if (statusCell) {
@@ -130,13 +130,13 @@ function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
           } else if (dev.status === 'CHARGING') {
             statusCell.innerHTML = `<span class="badge badge-warning">⚡ CHARGING</span>`;
           } else {
-            statusCell.innerHTML = `<span class="badge badge-neutral">● ${dev.status}</span>`;
+            statusCell.innerHTML = `<span class="badge badge-neutral">● ${escapeHtml(dev.status)}</span>`;
           }
         }
 
         const powerCell = row.querySelector('.device-power-cell');
         if (powerCell && dev.battery_level !== null && dev.battery_level !== undefined) {
-          const bat = Math.min(100, Math.max(0, dev.battery_level));
+          const bat = Math.min(100, Math.max(0, Number(dev.battery_level)));
           const isCharging = (dev.status === 'CHARGING' || extra.is_charging === true);
           const barColor = isCharging ? '#D97706' : (bat > 40 ? '#16A34A' : bat > 20 ? '#D97706' : '#DC2626');
           const textColor = isCharging ? '#D97706' : (bat <= 20 ? '#DC2626' : 'var(--text-secondary)');
@@ -188,7 +188,7 @@ async function loadDevicesFleet() {
       filterDevicesTable();
       updateFleetCounts();
     } else {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--danger); padding:24px;">Failed to load fleet: ${data.error || 'Server error'}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--danger); padding:24px;">Failed to load fleet: ${escapeHtml(data.error || 'Server error')}</td></tr>`;
     }
   } catch (err) {
     console.error('loadDevicesFleet error:', err);
@@ -271,7 +271,7 @@ function getRadarBatteryHtml(d) {
     return `<span style="color:var(--text-muted); font-size:12px;">⚡ AC Mains Power</span>`;
   }
   if (d.battery_level !== null && d.battery_level !== undefined) {
-    const batVal = Math.min(100, Math.max(0, d.battery_level));
+    const batVal = Math.min(100, Math.max(0, Number(d.battery_level)));
     const isCharging = (d.is_charging === true || d.status_text === 'CHARGING' || d.status === 'CHARGING');
     const batColor = isCharging ? '#D97706' : (batVal > 40 ? '#16A34A' : batVal > 20 ? '#D97706' : '#DC2626');
     const textColor = isCharging ? '#D97706' : (batVal <= 20 ? '#DC2626' : 'var(--text-secondary)');
@@ -322,7 +322,7 @@ function renderDiscoveryTable(items) {
 
   // 2. In-place update or create rows
   items.forEach(d => {
-    const existingRow = tbody.querySelector(`tr[data-radar-mac="${d.mac}"]`);
+    const existingRow = tbody.querySelector(`tr[data-radar-mac="${CSS.escape(String(d.mac))}"]`);
     if (existingRow) {
       // In-place update: only refresh RSSI & battery without rebuilding button or row
       const rssiCell = existingRow.querySelector('.radar-rssi-cell');
@@ -345,17 +345,17 @@ function renderDiscoveryTable(items) {
         : `<span class="badge badge-neutral">🥽 Headset</span>`;
 
       tr.innerHTML = `
-        <td class="mono" style="font-weight: 700; color: var(--primary);">${d.mac}</td>
-        <td>${d.hardware_model}</td>
+        <td class="mono" style="font-weight: 700; color: var(--primary);">${escapeHtml(d.mac)}</td>
+        <td>${escapeHtml(d.hardware_model)}</td>
         <td>${typePill}</td>
         <td class="radar-rssi-cell">${getRadarSignalHtml(d)}</td>
         <td class="radar-battery-cell">${getRadarBatteryHtml(d)}</td>
         <td class="radar-time-cell" style="color: var(--text-secondary); font-size:12px;">
-          <span class="mono" style="font-weight:600;">${d.first_detected || 'Just now'}</span>
+          <span class="mono" style="font-weight:600;">${escapeHtml(d.first_detected || 'Just now')}</span>
           <span style="font-size:10px; color:var(--success); margin-left:4px;">● Live</span>
         </td>
         <td style="text-align: right;">
-          <button class="btn btn-primary btn-sm" onclick="openEnrollModal('${d.mac}', '${d.hardware_model}', '${d.device_type}', ${d.battery_level !== null ? d.battery_level : 'null'}, '${d.ip_address || ''}')">
+          <button class="btn btn-primary btn-sm"${actionAttrs('openEnrollModal', [d.mac, d.hardware_model, d.device_type, d.battery_level !== null && d.battery_level !== undefined ? d.battery_level : null, d.ip_address || ''])}>
             ➕ Enroll Device
           </button>
         </td>
@@ -549,7 +549,7 @@ function renderDevicesTable(filtered) {
 
       msg = `No registered hardware matches the active filters (${activeFilters.join(', ')}).`;
     }
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:32px;">${msg}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:32px;">${escapeHtml(msg)}</td></tr>`;
     return;
   }
 
@@ -567,7 +567,7 @@ function renderDevicesTable(filtered) {
 
     let powerDisplay = `<span style="color:var(--text-muted); font-size:11px;">⚡ Mains / USB</span>`;
     if (d.battery_level !== null && d.battery_level !== undefined) {
-      const bat = Math.min(100, Math.max(0, d.battery_level));
+      const bat = Math.min(100, Math.max(0, Number(d.battery_level)));
       const isCharging = (d.status === 'CHARGING' || d.is_charging === true);
       const batColor = isCharging ? '#D97706' : (bat > 40 ? '#16A34A' : bat > 20 ? '#D97706' : '#DC2626');
       const textColor = isCharging ? '#D97706' : (bat <= 20 ? '#DC2626' : 'var(--text-secondary)');
@@ -588,9 +588,9 @@ function renderDevicesTable(filtered) {
     if (effectiveAvail === 'IN_USE') {
       let inUseDetail = '';
       if (d.bound_patient_name) {
-        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">👤 ${d.bound_patient_name}</div>`;
+        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">👤 ${escapeHtml(d.bound_patient_name)}</div>`;
       } else if (d.assigned_ward_id) {
-        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">📍 ${d.assigned_ward_id}</div>`;
+        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">📍 ${escapeHtml(d.assigned_ward_id)}</div>`;
       }
       availBadge = `<span class="badge badge-info" style="font-size:10px;">In Use</span>${inUseDetail}`;
     } else if (effectiveAvail === 'UNAVAILABLE') {
@@ -598,18 +598,18 @@ function renderDevicesTable(filtered) {
     }
 
     return `
-      <tr data-device-id="${d.device_id}">
+      <tr data-device-id="${escapeHtml(d.device_id)}">
         <td>
-          <div style="font-weight: 700; color: var(--text-primary); font-size:13px;">${d.device_id}</div>
+          <div style="font-weight: 700; color: var(--text-primary); font-size:13px;">${escapeHtml(d.device_id)}</div>
         </td>
         <td>${typeBadge}</td>
         <td>
-          <div class="mono" style="color: var(--primary); font-weight: 600; font-size:12px;">${d.mac_address}</div>
-          <div class="mono" style="color: var(--text-muted); font-size: 11px;">${d.ip_address || 'BLE Beacon (No IP)'}</div>
+          <div class="mono" style="color: var(--primary); font-weight: 600; font-size:12px;">${escapeHtml(d.mac_address)}</div>
+          <div class="mono" style="color: var(--text-muted); font-size: 11px;">${escapeHtml(d.ip_address || 'BLE Beacon (No IP)')}</div>
         </td>
         <td>
-          <div style="font-size:12px; color:var(--text-primary);">${d.hardware_model}</div>
-          <span class="badge badge-neutral" style="font-size:10px;">${d.firmware_version || 'v1.0.0'}</span>
+          <div style="font-size:12px; color:var(--text-primary);">${escapeHtml(d.hardware_model)}</div>
+          <span class="badge badge-neutral" style="font-size:10px;">${escapeHtml(d.firmware_version || 'v1.0.0')}</span>
         </td>
         <td class="device-power-cell">${powerDisplay}</td>
         <td class="device-status-cell">
@@ -619,10 +619,10 @@ function renderDevicesTable(filtered) {
           ${availBadge}
         </td>
         <td style="text-align: right; white-space: nowrap;">
-          <button class="btn btn-outline btn-sm" onclick="openEditDeviceModal('${d.device_id}')" title="Configure Availability &amp; Maintenance">
+          <button class="btn btn-outline btn-sm"${actionAttrs('openEditDeviceModal', [d.device_id])} title="Configure Availability &amp; Maintenance">
             ⚙️ Edit
           </button>
-          <button class="btn btn-danger-outline btn-sm" onclick="confirmDeleteDevice('${d.device_id}')" title="Decommission &amp; Delete Device" style="margin-left:4px;">
+          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeleteDevice', [d.device_id])} title="Decommission &amp; Delete Device" style="margin-left:4px;">
             🗑️
           </button>
         </td>
@@ -660,7 +660,7 @@ async function pingDevice(deviceId) {
 async function openEnrollModal(mac, model, type, battery, ip) {
   let initialId = '';
   try {
-    const nextRes = await fetch(`/api/devices/next-id?type=${type || 'WRISTBAND'}`);
+    const nextRes = await fetch(`/api/devices/next-id?type=${encodeURIComponent(type || 'WRISTBAND')}`);
     const nextData = await nextRes.json();
     if (nextData.success && nextData.nextId) {
       initialId = nextData.nextId;
@@ -688,7 +688,7 @@ async function openEnrollModal(mac, model, type, battery, ip) {
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; font-size:13px;">
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Assigned Device ID</span>
-          <strong class="mono" style="font-size:14px; color:var(--primary);">${initialId}</strong>
+          <strong class="mono" style="font-size:14px; color:var(--primary);">${escapeHtml(initialId)}</strong>
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Device Category</span>
@@ -696,11 +696,11 @@ async function openEnrollModal(mac, model, type, battery, ip) {
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Hardware Model</span>
-          <strong>${model || 'ESP32'}</strong>
+          <strong>${escapeHtml(model || 'ESP32')}</strong>
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Physical MAC Address</span>
-          <span class="mono" style="font-weight:600; font-size:12px;">${mac}</span>
+          <span class="mono" style="font-weight:600; font-size:12px;">${escapeHtml(mac)}</span>
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Live Connectivity</span>
@@ -804,7 +804,7 @@ async function openManualEnrollModal() {
     if (t === 'WRISTBAND' && modelInput) modelInput.value = 'Seeed Studio XIAO ESP32-C6';
 
     try {
-      const res = await fetch(`/api/devices/next-id?type=${t}`);
+      const res = await fetch(`/api/devices/next-id?type=${encodeURIComponent(t)}`);
       const data = await res.json();
       if (data.success && data.nextId) {
         const idEl = document.getElementById('manual-dev-id');
@@ -872,36 +872,36 @@ function openEditDeviceModal(deviceId) {
 
   let inUseNote = '';
   if (isBound) {
-    inUseNote = `<div style="font-size:11px; color:var(--primary); margin-top:4px;">Currently bound to patient: <strong>${d.bound_patient_name}</strong>. Unbind from Patient profile to mark Available.</div>`;
+    inUseNote = `<div style="font-size:11px; color:var(--primary); margin-top:4px;">Currently bound to patient: <strong>${escapeHtml(d.bound_patient_name)}</strong>. Unbind from Patient profile to mark Available.</div>`;
   } else if (isAssignedWard) {
-    inUseNote = `<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Currently assigned to ward room: <strong>${d.assigned_ward_id}</strong>. Remove in Ward Config to unassign.</div>`;
+    inUseNote = `<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Currently assigned to ward room: <strong>${escapeHtml(d.assigned_ward_id)}</strong>. Remove in Ward Config to unassign.</div>`;
   }
 
   const modalHtml = `
     <div style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">
-      Manage service availability and maintenance parameters for <strong>${d.device_id}</strong>.
+      Manage service availability and maintenance parameters for <strong>${escapeHtml(d.device_id)}</strong>.
     </div>
 
     <div class="form-grid-2">
       <div class="form-group">
         <label class="form-label" style="font-weight:600;">Device Identifier</label>
-        <input type="text" class="form-control mono" value="${d.device_id}" readonly style="background:#F1F5F9;">
+        <input type="text" class="form-control mono" value="${escapeHtml(d.device_id)}" readonly style="background:#F1F5F9;">
       </div>
       <div class="form-group">
         <label class="form-label" style="font-weight:600;">Hardware Category</label>
-        <input type="text" class="form-control" value="${d.device_type}" readonly style="background:#F1F5F9;">
+        <input type="text" class="form-control" value="${escapeHtml(d.device_type)}" readonly style="background:#F1F5F9;">
       </div>
     </div>
 
     <div class="form-grid-2">
       <div class="form-group">
         <label class="form-label" style="font-weight:600;">Physical MAC Address</label>
-        <input type="text" class="form-control mono" value="${d.mac_address}" readonly style="background:#F1F5F9;">
+        <input type="text" class="form-control mono" value="${escapeHtml(d.mac_address)}" readonly style="background:#F1F5F9;">
       </div>
       <div class="form-group">
         <label class="form-label" style="font-weight:600;">Live Connectivity</label>
         <div style="padding-top:6px;">
-          <span class="badge ${d.status === 'ONLINE' ? 'badge-live' : d.status === 'STANDBY' ? 'badge-neutral' : 'badge-alert'}">● ${d.status}</span>
+          <span class="badge ${d.status === 'ONLINE' ? 'badge-live' : d.status === 'STANDBY' ? 'badge-neutral' : 'badge-alert'}">● ${escapeHtml(d.status)}</span>
           <span style="font-size:11px; color:var(--text-muted); margin-left:6px;">(Auto-detected via RF)</span>
         </div>
       </div>
@@ -919,7 +919,7 @@ function openEditDeviceModal(deviceId) {
       </div>
       <div class="form-group">
         <label class="form-label" style="font-weight:600;">Firmware Version</label>
-        <input type="text" class="form-control" id="edit-dev-fw" value="${d.firmware_version || 'v1.0.0'}">
+        <input type="text" class="form-control" id="edit-dev-fw" value="${escapeHtml(d.firmware_version || 'v1.0.0')}">
       </div>
     </div>
   `;
