@@ -176,4 +176,10 @@ Before the 30 minutes, one measurement at about 00:29 stored no value (the measu
 
 - [x] Round 2 confirms the PC results on the wristband (finding 7).
 - [x] Round 3 check passed.
-- [ ] Wearing position for the demonstration and the thesis: inner side / outer side of the wrist.
+- [x] Wearing position for the demonstration and the thesis: **outer side of the wrist** (chosen by the tester on 15 Nov 2026).
+
+What this choice means, from the rounds above:
+
+- The outer side gave a heart rate in 94% of the seconds at rest in Round 2 (`r2_outside`), but only during 30 seconds of the two Round 1 recordings. The difference is where exactly the sensor sits.
+- For the demonstration and every further test, the sensor sits at the same marked spot, with the strap snug enough that the sensor does not move on the skin.
+- The thesis reports the outer side as the wearing position, together with this dependence on placement and the inner-side results as the comparison.
