@@ -78,7 +78,7 @@ Consequences:
 
 Note on `wrist_rest`: the 19 values (82 to 85 BPM) fall in seconds 14 to 32. The pulse was counted from second 20 to 80 and was 93 BPM on average, so the values are 8 to 11 BPM below the count. Whether the pulse was lower in those seconds or the values are too low cannot be decided from this recording. In `finger` the rate moved from 98 to 89 BPM within one minute.
 
-Checks with generated signals (part of the host tests, 222 checks in total):
+Checks with generated signals (part of the host tests):
 
 | Check | Result |
 | :--- | :--- |
@@ -92,27 +92,73 @@ Checks with generated signals (part of the host tests, 222 checks in total):
 
 ## Limits that remain
 
-- On the outer side of the wrist this sensor delivers a usable pulse only part of the time. The wristband then shows no heart rate. Worn with the sensor on the inner side of the wrist, it showed a heart rate in about 70% of the seconds at rest.
+- On the outer side of the wrist the result depends on where exactly the sensor sits: in Round 1 it delivered a pulse for 30 seconds of two recordings, in Round 2 for 94% of a recording. Without a pulse the wristband shows no heart rate. On the inner side of the wrist it showed a heart rate in about 70% of the seconds at rest in both rounds.
 - While the arm moves, no heart rate is reported.
 - The reference was a manual pulse count over 30 or 60 seconds, not a medical device. Statements about accuracy are limited to "within ±10 BPM of the count".
 - One tester, one day, at rest. Rates outside 82 to 100 BPM were tested with generated signals only.
 - SpO2 is not validated.
 
-## Round 2: check on the wristband (firmware with the new estimator)
+## Round 2: check on the wristband (firmware `532e586`, new estimator)
 
-Flash the wristband, then record with the sensor on the inner side of the wrist and on the fingertip. The script shows the counted pulse; the recording contains what the wristband reported (lines starting with `E,`).
+Recordings made with the wristband running the new estimator. Each contains the raw signal and what the wristband itself reported once per second.
+
+| Recording | Position | Counted pulse | Seconds with a heart rate | Within ±10 BPM | Reported range | SpO2 reported |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `r2_inside` (180 s) | Inner side of the wrist, sitting still | 87 BPM | 124 of 170 (73%) | 100% | 82 to 96 BPM | 89 to 96% |
+| `r2_finger` (60 s) | Fingertip on the sensor | 92 BPM (46 beats in 30 s) | 47 of 50 (94%) | 100% | 83 to 98 BPM | 98 to 100% |
+| `r2_outside` (120 s) | Outer side of the wrist, sitting still | 88 BPM | 103 of 110 (94%) | 96% | 45 to 92 BPM | 98 to 100% |
+| `r2_typing` (120 s) | Worn, typing | not counted | 0 of 110 | | no reading | none |
+
+"Seconds with a heart rate" counts from second 10 of each recording, when the first estimate is possible.
 
 | Check | Result |
 | :--- | :--- |
-| `.\record_ppg.bat r2_inside 180`: sensor on the inner side of the wrist, sitting still. Counted pulse | |
-| `.\record_ppg.bat r2_finger 60`: fingertip on the sensor. Counted pulse | |
-| `.\record_ppg.bat r2_outside 120`: worn on the outer side, sitting still. Counted pulse | |
-| `.\record_ppg.bat r2_typing 120 -NoCount`: worn as you prefer, typing | |
-| Worn for 20 minutes with the dashboard open: number of vitals alarms (expected 0) | |
-| Heart rate on the live map: shows a value at rest and "no value" while moving (Y/N) | |
-| One arm drop as in Phase 3: fall pop-up with three values still appears (Y/N) | |
+| The wristband reports what the PC model calculates from the same samples | identical in 437 of 440 estimates, within 1 BPM in 439 |
+| Time the wristband needs for one estimate | 4.0 ms (longest 4.3 ms), once per second |
+| Samples lost | none (99.77 samples per second) |
+| Worn for 20 minutes with the dashboard open (22:55 to 23:15): number of vitals alarms (expected 0) | 0, and none while it was worn afterwards |
+| Heart rate on the live map: shows a value at rest and no value while the arm moves | Y: the value drops to "no value" as soon as the hand moves |
+| One arm drop as in Phase 3: fall pop-up with three values still appears | Y |
+
+Observations of the tester:
+
+- From 22:55 to 23:15 no heart rate was reported at all: every 3-minute measurement showed 0 until it ended, and the vitals trend had no new point after 22:49. Later measurements delivered values again. See finding 8.
+- For one activation of the 1 Hz mode from the live map, the wristband logged two or three connections, each with its own `ACTIVE` command. See finding 10.
+
+Server records (InfluxDB) of the evening: values during the three still recordings (22:39 to 22:49), none from 22:50 to 23:17, then measurements with a heart rate at 23:17 (81 to 89 BPM), 23:24 (79 to 84 BPM) and from 23:27 (78 to 88 BPM).
+
+## Findings from Round 2
+
+7. **The estimator works on the wristband as calculated on the PC**, and one estimate takes 4 ms. With a still arm it reported a heart rate within ±10 BPM of the count on the fingertip, on the inner side and, in this round, also on the outer side of the wrist. In Round 1 the outer side gave a pulse only for 30 seconds: whether the outer side works depends on where exactly the sensor sits.
+8. **Measurements without any value were caused by movement, not by a fault.** Replaying the three still recordings from 165 different starting moments gives a value within 30 seconds in 164 cases (typically after 12 seconds). The two typing recordings give none within 90 seconds from any of 30 starting moments. With a fixed measurement of 30 seconds every 3 minutes, a person who uses the hands gets no reading for long stretches. Changed in commit `b16faff`: a passive measurement now runs until it has delivered a heart rate for 10 seconds (about 22 seconds with a still arm) and keeps trying for at most 90 seconds. It ends after 5 seconds when the sensor sees no skin. This helps a wearer whose arm is still for part of the time. During continuous hand movement there is still no reading.
+9. **One wrong value: 45 BPM for 4 seconds, half the true rate of 88** (`r2_outside`, seconds 87 to 90). A small jolt at second 82 lowered the autocorrelation peak at one beat (0.35 to 0.41) below the peak at two beats (0.57 to 0.67). Corrected in commit `b16faff`: when a clear peak stands at half or a third of the chosen period, that one is taken. On the same recording the wristband now reports nothing for those seconds and 84 to 92 BPM for the rest. A slow pulse with a strong second harmonic (30 to 100 BPM, generated signals) is still reported correctly and not doubled. The recording is kept as test data.
+10. **One activation of the 1 Hz mode makes every anchor in range connect to the wristband.** The command is sent to all anchors, and each anchor that hears the wristband well connects and writes `ACTIVE`. With two or three anchors in range this gives two or three connections. It does no harm (each command only restarts the same 60-second timer), but the wristband pauses its broadcast during every connection. Not changed here; noted for Phase 5 (device and network security), where this command is reworked.
+
+   Serial Monitor of the wristband for one activation (status lines between the events left out; the first activation showed three connections, the second two):
+
+   ```
+   [BLE SERVER] Central Client Connected!
+   [BLE GATT CMD] Received 'ACTIVE' -> Escalating to 1 Hz Active Mode!
+   [POWER] Escalated to 1 Hz Active Streaming (MAX30102 Awake)
+   [BLE SERVER] Central Client Disconnected. Resuming advertisement.
+   [BLE SERVER] Central Client Connected!
+   [BLE GATT CMD] Received 'ACTIVE' -> Escalating to 1 Hz Active Mode!
+   [BLE SERVER] Central Client Disconnected. Resuming advertisement.
+   ```
+
+## Round 3: short check after commit `b16faff`
+
+| Check | Result |
+| :--- | :--- |
+| Wristband reflashed. Serial Monitor, arm still: a passive measurement ends with `Vitals measurement ended after ... s: done (10 s with a heart rate)`. Seconds shown | |
+| Arm moving during a whole measurement: it ends after 90 s with `no steady pulse found` (Y/N) | |
+| Wristband taken off: the measurement ends after 5 s with `no skin contact` (Y/N) | |
+| Worn for 30 minutes of normal activity: number of 3-minute measurements with a heart rate in the vitals trend, out of about 8 | |
+| Vitals alarms during that time (expected 0) | |
+| Any value on the live map that was clearly wrong (for example half or double your pulse) (Y/N, value) | |
 
 ## Decision
 
-- [ ] Round 2 confirms the PC results on the wristband.
+- [x] Round 2 confirms the PC results on the wristband (finding 7).
+- [ ] Round 3 check passed.
 - [ ] Wearing position for the demonstration and the thesis: inner side / outer side of the wrist.
