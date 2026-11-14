@@ -34,6 +34,16 @@
 // mode without the dashboard. Must be 0 on a wristband worn by a patient.
 #define SHIRO_DEBUG_SHAKE_WAKE 0
 
+// Bench measurements: recorder for the raw pulse signal, USB serial only.
+// Commands typed into the Serial Monitor (or sent by firmware/tools/record_ppg.bat),
+// each followed by Enter:
+//   rec [seconds]   record for 1 to 600 seconds (default 120)
+//   stop            end the recording now
+//   led <hex>       LED current for the next recording, 01 to FF (default 24)
+// Nothing of this is sent by radio, and the normal operation is not changed
+// while no recording runs.
+#define SHIRO_PPG_RECORDER 1
+
 // I2C Pin Configuration for Seeed Studio XIAO ESP32-C6
 #define I2C_SDA D4
 #define I2C_SCL D5
@@ -58,6 +68,17 @@ const float VOLTAGE_DIVIDER_RATIO = 2.0f; // Halved by 100k:100k divider
 // Sensor Objects
 MAX30105 particleSensor;
 bool maxReady = false;
+const uint8_t PPG_LED_CURRENT = 0x24;   // red and infrared LED current, about 7 mA
+
+// Raw pulse-signal recorder (see SHIRO_PPG_RECORDER above)
+bool ppgRecording = false;
+#if SHIRO_PPG_RECORDER
+unsigned long ppgRecEndMs = 0;
+uint32_t ppgSampleNo = 0;
+uint8_t ppgLedLevel = PPG_LED_CURRENT;
+char ppgCmd[24];
+uint8_t ppgCmdLen = 0;
+#endif
 
 // -----------------------------------------------------------------------------
 // Heart Rate (BPM) State Variables
@@ -369,6 +390,76 @@ bool readMPU6050TotalG(float& totalG) {
   return true;
 }
 
+#if SHIRO_PPG_RECORDER
+// -----------------------------------------------------------------------------
+// Raw pulse-signal recorder (bench measurements over USB serial)
+//
+// Lines written while a recording runs:
+//   P,<sample>,<infrared>,<red>,<g x 100>     every sample (100 per second)
+//   B,<sample>,<interval ms>,<BPM reported>   every beat the firmware detected
+//   T,<sample>,<millis>                       every 100 samples, to check the sample rate
+// -----------------------------------------------------------------------------
+void ppgSetLed(uint8_t level) {
+  if (!maxReady) return;
+  particleSensor.setPulseAmplitudeIR(level);
+  particleSensor.setPulseAmplitudeRed(level);
+  ppgLedLevel = level;
+}
+
+void ppgStop(const char* reason) {
+  if (!ppgRecording) return;
+  ppgRecording = false;
+  Serial.printf("[PPG-REC] end samples=%lu reason=%s\n", (unsigned long)ppgSampleNo, reason);
+  // A changed LED current applies to one recording only
+  if (ppgLedLevel != PPG_LED_CURRENT) ppgSetLed(PPG_LED_CURRENT);
+}
+
+void ppgHandleCommand(const char* cmd) {
+  if (strncmp(cmd, "rec", 3) == 0) {
+    if (!maxReady) {
+      Serial.println("[PPG-REC] error: the pulse sensor is not available");
+      return;
+    }
+    long seconds = atol(cmd + 3);
+    if (seconds <= 0) seconds = 120;
+    if (seconds > 600) seconds = 600;
+    unsigned long now = millis();
+    ppgRecEndMs = now + (unsigned long)seconds * 1000UL;
+    activeModeEndTime = ppgRecEndMs + 1000;   // keeps the pulse sensor awake for the recording
+    ppgSampleNo = 0;
+    ppgRecording = true;
+    Serial.printf("[PPG-REC] start seconds=%ld led=0x%02X sample_hz=100\n", seconds, (unsigned)ppgLedLevel);
+  } else if (strncmp(cmd, "stop", 4) == 0) {
+    ppgStop("command");
+  } else if (strncmp(cmd, "led", 3) == 0) {
+    long level = strtol(cmd + 3, NULL, 16);
+    if (level < 1 || level > 255) {
+      Serial.println("[PPG-REC] error: led needs a hex value from 01 to FF");
+      return;
+    }
+    ppgSetLed((uint8_t)level);
+    Serial.printf("[PPG-REC] led=0x%02X\n", (unsigned)ppgLedLevel);
+  } else {
+    Serial.println("[PPG-REC] commands: rec [seconds] | stop | led <hex 01..FF>");
+  }
+}
+
+void ppgPollSerial() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (ppgCmdLen > 0) {
+        ppgCmd[ppgCmdLen] = '\0';
+        ppgCmdLen = 0;
+        ppgHandleCommand(ppgCmd);
+      }
+    } else if (ppgCmdLen < sizeof(ppgCmd) - 1) {
+      ppgCmd[ppgCmdLen++] = c;
+    }
+  }
+}
+#endif  // SHIRO_PPG_RECORDER
+
 // -----------------------------------------------------------------------------
 // Arduino Setup
 // -----------------------------------------------------------------------------
@@ -407,8 +498,9 @@ void setup() {
 
   // 4. Initialize HW-605 (MAX30102)
   if (particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
-    particleSensor.setup(0x24, 4, 2, 400, 411, 4096);
-    particleSensor.setPulseAmplitudeRed(0x24);
+    // 400 samples per second averaged by 4 = 100 samples per second, red + infrared
+    particleSensor.setup(PPG_LED_CURRENT, 4, 2, 400, 411, 4096);
+    particleSensor.setPulseAmplitudeRed(PPG_LED_CURRENT);
     particleSensor.setPulseAmplitudeGreen(0);
     maxReady = true;
     Serial.println("[OK] HW-605 (MAX30102) Initialized.");
@@ -469,6 +561,11 @@ void setup() {
 // -----------------------------------------------------------------------------
 void loop() {
   unsigned long now = millis();
+
+#if SHIRO_PPG_RECORDER
+  ppgPollSerial();
+  if (ppgRecording && (long)(now - ppgRecEndMs) >= 0) ppgStop("time");
+#endif
 
   // 1. High-Frequency Kinematic Sampling (~50 Hz) for Algorithm 3 Fall Detection
   static unsigned long lastImuTime = 0;
@@ -618,6 +715,15 @@ void loop() {
       latestIR  = irVal;
       latestRed = redVal;
 
+#if SHIRO_PPG_RECORDER
+      if (ppgRecording) {
+        if (ppgSampleNo % 100 == 0) Serial.printf("T,%lu,%lu\n", (unsigned long)ppgSampleNo, (unsigned long)millis());
+        Serial.printf("P,%lu,%lu,%lu,%d\n", (unsigned long)ppgSampleNo, (unsigned long)irVal,
+                      (unsigned long)redVal, (int)(currentG * 100.0f + 0.5f));
+        ppgSampleNo++;
+      }
+#endif
+
       if (irVal > 50000) {
         touchState = 1;
         lastValidContactTime = now;
@@ -638,6 +744,9 @@ void loop() {
             lastValidBeatMs = millis();
             if (lastValidBeatMs == 0) lastValidBeatMs = 1;
           }
+#if SHIRO_PPG_RECORDER
+          if (ppgRecording) Serial.printf("B,%lu,%ld,%d\n", (unsigned long)ppgSampleNo, delta, beatAvg);
+#endif
         }
 
         if (irVal > irMax)   irMax = irVal;
@@ -713,12 +822,15 @@ void loop() {
     lastBleTransmitTime = now;
     updateBleAdvertisement();
 
-    Serial.printf("[BROADCAST %s] BPM: %d | SpO2: %d%% | Bat: %d%%%s | G: %.2f | Motion: %s [%s]%s%s\n",
-                  BLEDevice::getAddress().toString().c_str(),
-                  beatAvg, spo2Avg, currentBatteryPct,
-                  isCharging ? " (⚡ CHG)" : "", currentG, currentMotion,
-                  vitalsMode == MODE_ACTIVE_STREAM ? "1Hz ACTIVE" : (vitalsMode == MODE_PASSIVE_BURST ? "3m BURST" : "3m SLEEP"),
-                  imuFault ? " | IMU FAULT" : "", !maxReady ? " | PPG FAULT" : "");
+    // The status line is left out while a raw recording runs (it would sit between the samples)
+    if (!ppgRecording) {
+      Serial.printf("[BROADCAST %s] BPM: %d | SpO2: %d%% | Bat: %d%%%s | G: %.2f | Motion: %s [%s]%s%s\n",
+                    BLEDevice::getAddress().toString().c_str(),
+                    beatAvg, spo2Avg, currentBatteryPct,
+                    isCharging ? " (⚡ CHG)" : "", currentG, currentMotion,
+                    vitalsMode == MODE_ACTIVE_STREAM ? "1Hz ACTIVE" : (vitalsMode == MODE_PASSIVE_BURST ? "3m BURST" : "3m SLEEP"),
+                    imuFault ? " | IMU FAULT" : "", !maxReady ? " | PPG FAULT" : "");
+    }
   }
 
   delay(5);

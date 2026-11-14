@@ -14,6 +14,9 @@ node_modules/
 # Firmware site settings (Wi-Fi / MQTT credentials). Keep secrets.example.h only.
 firmware/**/secrets.h
 
+# Raw pulse recordings of bench measurements (selected ones are copied into the test data)
+firmware/tools/recordings/
+
 # Runtime logs
 logs/
 *.log
