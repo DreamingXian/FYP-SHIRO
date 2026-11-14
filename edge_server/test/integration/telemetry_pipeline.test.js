@@ -4,87 +4,12 @@
 // Time-series logging is off for this file, so nothing is written to InfluxDB.
 process.env.INFLUX_TOKEN = '';
 
-const { db, freshDatabase } = require('./helper');
+const { db, freshDatabase, startServer, connectMqtt } = require('./helper');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
-const net = require('node:net');
-const path = require('node:path');
 const WebSocket = require('ws');
 
-const TOPIC = 'shiro/ward-A1/anchor/telemetry';
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-// ----- a minimal MQTT 3.1.1 client: CONNECT and QoS 0 PUBLISH are all an anchor uses -----
-function mqttString(text) {
-  const body = Buffer.from(text, 'utf8');
-  const length = Buffer.alloc(2);
-  length.writeUInt16BE(body.length);
-  return Buffer.concat([length, body]);
-}
-
-function mqttPacket(firstByte, body) {
-  const lengthBytes = [];
-  let remaining = body.length;
-  do {
-    let digit = remaining % 128;
-    remaining = Math.floor(remaining / 128);
-    if (remaining > 0) digit |= 0x80;
-    lengthBytes.push(digit);
-  } while (remaining > 0);
-  return Buffer.concat([Buffer.from([firstByte, ...lengthBytes]), body]);
-}
-
-function connectMqtt(port, clientId) {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host: '127.0.0.1', port });
-    socket.once('error', reject);
-    socket.once('connect', () => {
-      const body = Buffer.concat([mqttString('MQTT'), Buffer.from([0x04, 0x02, 0x00, 0x3C]), mqttString(clientId)]);
-      socket.write(mqttPacket(0x10, body));
-    });
-    socket.once('data', (data) => {
-      if (data[0] === 0x20 && data[3] === 0x00) {
-        resolve({
-          publish: (payload) => socket.write(mqttPacket(0x30, Buffer.concat([
-            mqttString(TOPIC),
-            Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload))
-          ]))),
-          close: () => socket.destroy()
-        });
-      } else {
-        reject(new Error('MQTT connection refused'));
-      }
-    });
-  });
-}
-
-// ----- server process -----
-function startServer(extraEnv) {
-  const child = spawn(process.execPath, ['server.js'], {
-    cwd: path.join(__dirname, '..', '..'),
-    env: { ...process.env, DB_NAME: 'shiro_test', INFLUX_TOKEN: '', ...extraEnv }
-  });
-  const state = { child, output: '' };
-  child.stdout.on('data', d => { state.output += d; });
-  child.stderr.on('data', d => { state.output += d; });
-  state.ready = new Promise((resolve, reject) => {
-    const started = Date.now();
-    const timer = setInterval(() => {
-      if (/Gateway Ready/.test(state.output)) { clearInterval(timer); resolve(); }
-      else if (child.exitCode !== null || Date.now() - started > 30000) {
-        clearInterval(timer);
-        reject(new Error(`server did not start:\n${state.output}`));
-      }
-    }, 100);
-  });
-  state.stop = () => new Promise((resolve) => {
-    if (child.exitCode !== null) return resolve();
-    child.once('exit', resolve);
-    child.kill();
-  });
-  return state;
-}
 
 /** The message the anchor firmware builds for a decoded protocol 2 packet. */
 function anchorMessage(anchorMac, tagMac, extra = {}) {
