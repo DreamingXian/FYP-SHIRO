@@ -166,20 +166,61 @@ function logFallVector(point) {
   if (line) queuePoint(line);
 }
 
+// A wristband stores several readings per second while it measures, so a day
+// holds tens of thousands of points. The trend shows one point per window (the
+// median of the readings in it), which keeps every range complete with a few
+// hundred points. Cutting the list instead would show only one end of the range.
+const HISTORY_WINDOWS = { '-1h': '10s', '-6h': '1m', '-24h': '5m', '-7d': '30m', '-30d': '2h' };
+const DEFAULT_HISTORY_RANGE = '-24h';
+const RAW_RANGE_FORMAT = /^-\d{1,3}[mhd]$/;
+const RAW_POINT_LIMIT = 1000;
+
+/**
+ * The range and window a history request is answered with. A range that is
+ * not in the list is answered with the default range.
+ */
+function resolveHistoryRange(range) {
+  const known = Object.prototype.hasOwnProperty.call(HISTORY_WINDOWS, range);
+  const used = known ? range : DEFAULT_HISTORY_RANGE;
+  return { range: used, window: HISTORY_WINDOWS[used] };
+}
+
 /**
  * Builds the Flux query for one patient's vitals history.
  * Matches on patient_id only: a wristband that is later given to another
  * patient must never bring the previous patient's readings with it.
+ *
+ * Default: one median point per window over the whole range, stamped with
+ * the start of its window.
+ * With { raw: true }: the individual readings, the newest RAW_POINT_LIMIT of them.
  */
-function buildVitalsHistoryQuery(patientId, range = '-24h') {
-  return `
+function buildVitalsHistoryQuery(patientId, range = DEFAULT_HISTORY_RANGE, { raw = false } = {}) {
+  const source = (start) => `
       from(bucket: "${bucket}")
-        |> range(start: ${range})
+        |> range(start: ${start})
         |> filter(fn: (r) => r._measurement == "patient_vitals" and r.patient_id == "${patientId}")
-        |> filter(fn: (r) => r._field == "heart_rate" or r._field == "spo2_percentage")
+        |> filter(fn: (r) => r._field == "heart_rate" or r._field == "spo2_percentage")`;
+
+  if (raw) {
+    // The readings of one patient are spread over several series (one per
+    // wristband and sampling mode). They are merged before the newest are taken.
+    const start = RAW_RANGE_FORMAT.test(String(range)) ? range : DEFAULT_HISTORY_RANGE;
+    return `${source(start)}
         |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+        |> group()
         |> sort(columns: ["_time"], desc: false)
-        |> limit(n: 500)
+        |> tail(n: ${RAW_POINT_LIMIT})
+    `;
+  }
+
+  const resolved = resolveHistoryRange(range);
+  return `${source(resolved.range)}
+        |> group(columns: ["_field"])
+        |> toFloat()
+        |> aggregateWindow(every: ${resolved.window}, fn: median, createEmpty: false, timeSrc: "_start")
+        |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+        |> group()
+        |> sort(columns: ["_time"], desc: false)
     `;
 }
 
@@ -220,10 +261,10 @@ function parseVitalsCsv(csvData) {
 /**
  * 4. Query Historical Vitals via Flux (Table 4.10: 30-Day Vitals Retention)
  */
-function queryVitalsHistory(patientId, range = '-24h') {
+function queryVitalsHistory(patientId, range = DEFAULT_HISTORY_RANGE, options = {}) {
   return new Promise((resolve) => {
     if (!enabled) return resolve([]);
-    const flux = buildVitalsHistoryQuery(patientId, range);
+    const flux = buildVitalsHistoryQuery(patientId, range, options);
 
     const req = http.request({
       host: influxUrl.hostname,
@@ -268,6 +309,7 @@ module.exports = {
   flushBuffer,
   isEnabled,
   buildVitalsHistoryQuery,
+  resolveHistoryRange,
   buildVitalsLine,
   buildFallVectorLine,
   parseVitalsCsv,

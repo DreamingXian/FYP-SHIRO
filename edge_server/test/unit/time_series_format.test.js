@@ -35,6 +35,40 @@ describe('vitals history query', () => {
     assert.doesNotMatch(flux, /wristband_mac/);
     assert.doesNotMatch(flux, / or r\.patient_id/);
   });
+
+  test('covers the whole range with one point per window instead of cutting the list', () => {
+    const windows = { '-1h': '10s', '-6h': '1m', '-24h': '5m', '-7d': '30m', '-30d': '2h' };
+    for (const [range, every] of Object.entries(windows)) {
+      const flux = timeSeries.buildVitalsHistoryQuery('P-007', range);
+      assert.ok(flux.includes(`aggregateWindow(every: ${every},`), range);
+      assert.ok(!flux.includes('limit(') && !flux.includes('tail('), 'a cut would hide one end of the range');
+    }
+  });
+
+  test('merges the series of one patient before sorting by time', () => {
+    // Readings of one patient are stored in one series per wristband and
+    // sampling mode; sorted separately they come back as blocks, not in time order.
+    const flux = timeSeries.buildVitalsHistoryQuery('P-007', '-1h');
+    assert.ok(flux.indexOf('|> group()') !== -1 && flux.indexOf('|> group()') < flux.lastIndexOf('|> sort('));
+  });
+
+  test('a range that is not in the list is answered with the default range', () => {
+    for (const range of ['-99y', '', null, undefined, 'constructor', '-1h) |> drop(']) {
+      assert.deepEqual(timeSeries.resolveHistoryRange(range), { range: '-24h', window: '5m' }, String(range));
+      assert.ok(timeSeries.buildVitalsHistoryQuery('P-007', range).includes('range(start: -24h)'), String(range));
+    }
+    assert.deepEqual(timeSeries.resolveHistoryRange('-1h'), { range: '-1h', window: '10s' });
+  });
+
+  test('raw readings: the newest points of the merged series, range format checked', () => {
+    const flux = timeSeries.buildVitalsHistoryQuery('P-007', '-10m', { raw: true });
+    assert.ok(flux.includes('range(start: -10m)'));
+    assert.ok(flux.includes('tail(n: 1000)'));
+    assert.ok(!flux.includes('aggregateWindow'));
+    assert.ok(flux.indexOf('|> group()') !== -1 && flux.indexOf('|> group()') < flux.indexOf('|> sort('));
+    const bad = timeSeries.buildVitalsHistoryQuery('P-007', '-1h) |> drop(', { raw: true });
+    assert.ok(bad.includes('range(start: -24h)'));
+  });
 });
 
 describe('vitals points', () => {
