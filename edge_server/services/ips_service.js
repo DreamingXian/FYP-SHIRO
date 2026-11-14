@@ -608,7 +608,7 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
       posX: smoothX,
       posY: smoothY,
       confidence: (motionStateText === 'STATIONARY') ? 0.99 : 0.88,
-      zone: wardId || 'WARD-001'
+      zone: wardId || 'UNKNOWN_WARD'
     });
   }
 }

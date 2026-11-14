@@ -34,8 +34,12 @@ async function bootstrap() {
   const httpServer = http.createServer((req, res) => {
     handleRequest(req, res).catch((err) => {
       console.error('[HTTP UNHANDLED ERROR]', err);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Internal Server Error' }));
+      if (res.headersSent) {
+        res.end();
+        return;
+      }
+      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ success: false, error: 'Internal server error. The details are in the server log.' }));
     });
   });
 

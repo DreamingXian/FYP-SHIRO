@@ -4,6 +4,7 @@
 // =============================================================================
 const http = require('http');
 const config = require('../config/app_config');
+const { isId } = require('../utils/validate');
 
 const influxUrl = new URL(config.INFLUX_URL || 'http://127.0.0.1:8086');
 const token = config.INFLUX_TOKEN;
@@ -99,6 +100,19 @@ function queuePoint(line) {
 }
 
 /**
+ * A tag value for InfluxDB line protocol. Commas, equals signs and spaces are
+ * escaped; backslashes and control characters (a line break would start a new
+ * point) are removed. An empty result becomes the given fallback.
+ */
+function escapeTag(value, fallback) {
+  const text = String(value === undefined || value === null ? '' : value)
+    .replace(/[\u0000-\u001F\u007F\\]/g, '')
+    .trim()
+    .replace(/[,= ]/g, '\\$&');
+  return text === '' ? fallback : text;
+}
+
+/**
  * 1. Log Patient Physiological Vitals (patient_vitals measurement)
  * Table 4.10: heart_rate (Integer, BPM), spo2_percentage (Float, %), ppg_signal_quality (Float, 0.0-1.0)
  */
@@ -115,9 +129,9 @@ function buildVitalsLine({ patientId, wristbandMac, bpm, spo2, quality = 0.95, m
   const q = Number(quality);
   if (Number.isFinite(q)) fields.push(`ppg_signal_quality=${q.toFixed(2)}`);
 
-  const pId = patientId || 'UNASSIGNED';
-  const mac = wristbandMac || 'UNKNOWN_MAC';
-  const m = mode || 'ACTIVE_STREAM';
+  const pId = escapeTag(patientId, 'UNASSIGNED');
+  const mac = escapeTag(wristbandMac, 'UNKNOWN_MAC');
+  const m = escapeTag(mode, 'ACTIVE_STREAM');
   return `patient_vitals,patient_id=${pId},wristband_mac=${mac},sampling_mode=${m} ${fields.join(',')}`;
 }
 
@@ -132,9 +146,9 @@ function logVitals(point) {
  */
 function logTrajectory({ patientId, wristbandMac, posX, posY, confidence = 0.92, zone = 'IN_WARD' }) {
   if (posX === undefined || posY === undefined || isNaN(posX) || isNaN(posY)) return;
-  const pId = patientId || 'UNASSIGNED';
-  const mac = wristbandMac || 'UNKNOWN_MAC';
-  const z = zone || 'IN_WARD';
+  const pId = escapeTag(patientId, 'UNASSIGNED');
+  const mac = escapeTag(wristbandMac, 'UNKNOWN_MAC');
+  const z = escapeTag(zone, 'UNKNOWN_ZONE');
 
   const line = `spatial_trajectories,patient_id=${pId},wristband_mac=${mac},zone_status=${z} pos_x=${parseFloat(posX).toFixed(2)},pos_y=${parseFloat(posY).toFixed(2)},estimation_confidence=${parseFloat(confidence).toFixed(2)}`;
   queuePoint(line);
@@ -157,8 +171,8 @@ function buildFallVectorLine({ wristbandMac, minG = null, impactG = null, stillG
   add('post_impact_motion_g', stillG);
   if (fields.length === 0) return null;
 
-  const mac = wristbandMac || 'UNKNOWN_MAC';
-  return `kinematic_fall_vectors,wristband_mac=${mac},alert_level=${alertLevel} ${fields.join(',')}`;
+  const mac = escapeTag(wristbandMac, 'UNKNOWN_MAC');
+  return `kinematic_fall_vectors,wristband_mac=${mac},alert_level=${escapeTag(alertLevel, 'CRITICAL')} ${fields.join(',')}`;
 }
 
 function logFallVector(point) {
@@ -179,6 +193,10 @@ const RAW_POINT_LIMIT = 1000;
  * The range and window a history request is answered with. A range that is
  * not in the list is answered with the default range.
  */
+function isHistoryRange(range) {
+  return typeof range === 'string' && Object.prototype.hasOwnProperty.call(HISTORY_WINDOWS, range);
+}
+
 function resolveHistoryRange(range) {
   const known = Object.prototype.hasOwnProperty.call(HISTORY_WINDOWS, range);
   const used = known ? range : DEFAULT_HISTORY_RANGE;
@@ -195,6 +213,8 @@ function resolveHistoryRange(range) {
  * With { raw: true }: the individual readings, the newest RAW_POINT_LIMIT of them.
  */
 function buildVitalsHistoryQuery(patientId, range = DEFAULT_HISTORY_RANGE, { raw = false } = {}) {
+  // The ID becomes part of the query text: anything but a plain identifier is refused
+  if (!isId(patientId)) throw new Error('A valid patient ID is required for a vitals history query.');
   const source = (start) => `
       from(bucket: "${bucket}")
         |> range(start: ${start})
@@ -263,8 +283,8 @@ function parseVitalsCsv(csvData) {
  */
 function queryVitalsHistory(patientId, range = DEFAULT_HISTORY_RANGE, options = {}) {
   return new Promise((resolve) => {
-    if (!enabled) return resolve([]);
     const flux = buildVitalsHistoryQuery(patientId, range, options);
+    if (!enabled) return resolve([]);
 
     const req = http.request({
       host: influxUrl.hostname,
@@ -310,6 +330,8 @@ module.exports = {
   isEnabled,
   buildVitalsHistoryQuery,
   resolveHistoryRange,
+  isHistoryRange,
+  escapeTag,
   buildVitalsLine,
   buildFallVectorLine,
   parseVitalsCsv,

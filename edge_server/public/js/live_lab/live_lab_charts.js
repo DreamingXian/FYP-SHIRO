@@ -360,23 +360,60 @@ function initLiveLabListeners() {
   const btnSimGeofence = document.getElementById('btn-sim-geofence');
   const simPatientSelect = document.getElementById('sim-patient-select');
 
+  // The test bench offers the patients that are admitted now. The server reads
+  // the name, ward, bed and wristband of the chosen patient from the database.
+  async function loadSimulationPatients() {
+    if (!simPatientSelect) return;
+    const chosen = simPatientSelect.value;
+    let patients = [];
+    let failed = false;
+    try {
+      const res = await fetch('/api/patients/list?status=ADMITTED');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.patients)) patients = data.patients;
+      else failed = true;
+    } catch (e) {
+      failed = true;
+      console.error('[SIMULATION] Could not load the patient list:', e);
+    }
+
+    // Built with DOM methods, so a patient name is always shown as text
+    simPatientSelect.replaceChildren();
+    if (patients.length === 0) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = failed ? 'Patient list could not be loaded' : 'No admitted patient';
+      simPatientSelect.appendChild(option);
+      return;
+    }
+    for (const p of patients) {
+      const option = document.createElement('option');
+      option.value = p.patient_id;
+      const place = p.bed_code ? ` (${p.assigned_ward_id}, ${p.bed_code})` : ' (no bed assigned)';
+      option.textContent = `${p.patient_id}: ${p.full_name}${place}`;
+      simPatientSelect.appendChild(option);
+    }
+    if (patients.some(p => p.patient_id === chosen)) simPatientSelect.value = chosen;
+  }
+
+  if (simPatientSelect) {
+    loadSimulationPatients();
+    // Refreshed whenever the list is opened, so new admissions appear without a reload
+    simPatientSelect.addEventListener('focus', loadSimulationPatients);
+  }
+
   async function triggerSimulation(category) {
-    const patientId = simPatientSelect ? simPatientSelect.value : 'P-001';
-    let patientName = 'Tan Ah Kow';
-    if (patientId === 'P-002') patientName = 'Siti Nurhaliza';
-    if (patientId === 'P-003') patientName = 'Kavitha Mohan';
+    const patientId = simPatientSelect ? simPatientSelect.value : '';
+    if (!patientId) {
+      if (typeof showToast === 'function') showToast('Admit a patient first: a simulation needs an existing patient.', 'warning');
+      return;
+    }
 
     try {
       const res = await fetch('/api/alerts/trigger-simulation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          category,
-          patient_id: patientId,
-          patient_name: patientName,
-          ward_id: 'WARD-001',
-          bed_id: patientId === 'P-001' ? 'BED-001-01' : (patientId === 'P-002' ? 'BED-001-02' : 'BED-001-03')
-        })
+        body: JSON.stringify({ category, patient_id: patientId })
       });
       const data = await res.json();
       if (typeof showToast === 'function') {

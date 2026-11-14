@@ -72,7 +72,8 @@ const WARD_TEMPLATES = {
 /**
  * Retrieve complete ward configuration from MySQL
  */
-async function getWardConfig(wardId = 'WARD-001') {
+async function getWardConfig(wardId) {
+  if (!wardId) throw new Error('A ward ID is required.');
   const pool = getPool();
 
   // 1. Fetch Room Metadata
@@ -169,7 +170,9 @@ async function saveWardConfig(data) {
   try {
     await conn.beginTransaction();
 
-    const wardId = data.ward_id || 'WARD-001';
+    // No default ward: saving without an ID must never overwrite an existing ward
+    if (!data || !data.ward_id) throw new Error('A ward ID is required to save a ward.');
+    const wardId = data.ward_id;
     const title = data.room_title || 'Acute Care Ward 001';
     const lenX = parseFloat(data.length_x) || 6.40;
     const widY = parseFloat(data.width_y) || 4.80;
