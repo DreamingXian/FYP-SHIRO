@@ -46,6 +46,8 @@ struct PulseConfig {
   // Acceptance
   float minStrength;        // lowest autocorrelation peak that counts as a pulse
   float firstPeakShare;     // first peak at least this share of the highest one (a pulse repeats at T, 2T, ...)
+  float subMultipleShare;   // a peak at half or a third of the chosen lag wins from this share of its height
+  float subMultipleTolerance;  // "at half" = within this fraction of the exact place
   uint8_t confirm;          // estimates in a row that must agree before a rate is reported
   float agreeBpm;           // "agree" = within this many BPM of the previous estimate
   uint8_t withdrawAfter;    // seconds without a new confirmation until the value is withdrawn
@@ -67,6 +69,8 @@ inline PulseConfig defaultPulseConfig() {
   c.invalidResetSamples = 50;   // 0.5 s
   c.minStrength = 0.6f;
   c.firstPeakShare = 0.8f;
+  c.subMultipleShare = 0.55f;
+  c.subMultipleTolerance = 0.12f;
   c.confirm = 3;
   c.agreeBpm = 10.0f;
   c.withdrawAfter = 4;
@@ -319,6 +323,28 @@ class PulseEstimator {
         for (int lag = LAG_MIN; lag <= LAG_MAX && first == 0; lag++) {
           if (isPeak(curve, lag) && curve[lag] >= cfg.firstPeakShare * best) first = lag;
         }
+        // A pulse with period T also repeats at 2T and 3T. After a jolt the peak at T can
+        // be lower than the one at 2T, and half the true rate would be taken (bench
+        // recording of 14 Nov 2026: 45 BPM for a pulse of 88). If a clear peak stands at
+        // a third or at half of the chosen lag, that one is the pulse.
+        for (int divisor = 3; divisor >= 2; divisor--) {
+          const double centre = (double)first / divisor;
+          int from = (int)floor(centre * (1.0 - cfg.subMultipleTolerance));
+          const int to = (int)ceil(centre * (1.0 + cfg.subMultipleTolerance));
+          if (from < LAG_MIN) from = LAG_MIN;
+          int found = 0;
+          for (int lag = from; lag <= to; lag++) {
+            if (isPeak(curve, lag) && curve[lag] >= cfg.subMultipleShare * curve[first] &&
+                (found == 0 || curve[lag] > curve[found])) {
+              found = lag;
+            }
+          }
+          if (found != 0) {
+            first = found;
+            break;
+          }
+        }
+
         const double a = curve[first - 1], b = curve[first], c = curve[first + 1];
         const double den = a - 2.0 * b + c;
         const double shift = den != 0.0 ? 0.5 * (a - c) / den : 0.0;

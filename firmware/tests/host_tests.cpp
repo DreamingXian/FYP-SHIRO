@@ -560,6 +560,7 @@ struct PulseSignal {
   double drift = 200;       // breathing, 15 per minute
   double ratio = 0.5;
   double level = 130000;
+  double harmonic = 0.5;    // second harmonic relative to the fundamental (third: half of it)
 };
 
 static void playPulse(PulseEstimator& p, PulseRun& run, const PulseSignal& s, int seconds, uint32_t seed = 7) {
@@ -568,7 +569,8 @@ static void playPulse(PulseEstimator& p, PulseRun& run, const PulseSignal& s, in
   for (int i = 0; i < seconds * 100; i++) {
     const double t = i / 100.0;
     const double phase = 2.0 * kPi * (s.bpm / 60.0) * t;
-    const double pulse = std::sin(phase) + 0.5 * std::sin(2 * phase + 0.8) + 0.25 * std::sin(3 * phase + 1.6);
+    const double pulse = std::sin(phase) + s.harmonic * std::sin(2 * phase + 0.8) +
+                         0.5 * s.harmonic * std::sin(3 * phase + 1.6);
     const double wander = s.drift * std::sin(2.0 * kPi * 0.25 * t);
     const double ir = s.level + s.amplitude * pulse + wander + s.noise * noise.next();
     const double red = s.level * 0.75 + s.amplitude * s.ratio * 0.75 * pulse + wander * 0.7 + s.noise * noise.next();
@@ -620,6 +622,23 @@ static void testPulseWeakSignal() {
   slow.bpm = 45;
   slow.amplitude = 15;
   CHECK(runPulse(slow, 40).allWithin(42, 48));
+}
+
+static void testPulseHalfAndDouble() {
+  section("pulse: neither half nor double the true rate");
+  // A slow pulse with a strong second harmonic has a bump at half its period. It must
+  // not be taken for a pulse of twice the rate: a slow heart would be shown as normal.
+  const int rates[] = {30, 35, 40, 45, 50, 60, 75, 100};
+  for (int rate : rates) {
+    PulseSignal s;
+    s.bpm = rate;
+    s.harmonic = 0.9;
+    const PulseRun run = runPulse(s, 40);
+    CHECK(run.shown() >= 20);
+    CHECK(run.allWithin(rate - 2, rate + 2));
+  }
+  // The opposite error (half the rate after a jolt) is covered by the recording
+  // "r2_outside" in testPulseRecordings.
 }
 
 static void testPulseNoReading() {
@@ -801,6 +820,16 @@ static void testPulseRecordings() {
     CHECK(loaded);
     CHECK(run.shown() == 0);
   }
+  {
+    // Recorded with the new estimator on the wristband, outer side of the wrist with a
+    // good signal, counted pulse 88. A small jolt at second 82 made the first version
+    // report 45 BPM for 4 seconds (half the rate). Now nothing is reported until the
+    // pulse is clear again.
+    const PulseRun run = replayRecording("r2_outside", loaded);
+    CHECK(loaded);
+    CHECK(run.shown() * 100 >= (int)run.bpm.size() * 85);
+    CHECK(run.allWithin(78, 98));
+  }
 }
 
 int main() {
@@ -826,6 +855,7 @@ int main() {
   testVitalsFilter();
   testPulseRange();
   testPulseWeakSignal();
+  testPulseHalfAndDouble();
   testPulseNoReading();
   testPulseWithdrawal();
   testPulseRateChange();

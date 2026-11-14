@@ -127,9 +127,16 @@ unsigned long burstStartTime = 0;
 unsigned long activeModeEndTime = 0;
 
 const unsigned long PASSIVE_CYCLE_INTERVAL = 180000; // 3 Minutes (180s)
-// The first heart rate needs about 13 s (2 s settling, 8 s of signal, 3 agreeing estimates),
-// so a burst of 30 s leaves about 17 s of readings.
-const unsigned long BURST_MEASURE_DURATION = 30000;  // 30 Seconds
+// A passive measurement runs until it has delivered a heart rate for 10 seconds, which
+// takes about 22 s with a still arm (the first value needs about 12 s). When the arm
+// moves or the signal is poor it keeps trying, for 90 s at most. It ends after 5 s when
+// the sensor sees no skin at all (wristband not worn).
+// Bench test of 14 Nov 2026: with a fixed length of 30 s, nine measurements in a row
+// ended without a single value while the tester was using the keyboard.
+const unsigned long BURST_MAX_DURATION     = 90000;  // 90 Seconds
+const unsigned long BURST_NO_SKIN_TIMEOUT  = 5000;   // 5 Seconds
+const uint8_t       BURST_READINGS_WANTED  = 10;     // seconds with a heart rate
+uint8_t burstReadings = 0;
 const unsigned long ACTIVE_STREAM_TIMEOUT  = 60000;  // 60 Seconds when triggered
 
 // Kinematic Vector & Motion Classifier
@@ -654,14 +661,22 @@ void loop() {
       if (now - lastVitalsBurstTime >= PASSIVE_CYCLE_INTERVAL) {
         vitalsMode = MODE_PASSIVE_BURST;
         burstStartTime = now;
+        burstReadings = 0;
         if (maxSensorSleeping && maxReady) {
           particleSensor.wakeUp();
           maxSensorSleeping = false;
-          Serial.println("[POWER] Waking MAX30102 for scheduled 30s vitals measurement.");
+          Serial.println("[POWER] Waking MAX30102 for a scheduled vitals measurement (up to 90 s).");
         }
       }
     } else if (vitalsMode == MODE_PASSIVE_BURST) {
-      if (now - burstStartTime >= BURST_MEASURE_DURATION) {
+      const unsigned long burstElapsed = now - burstStartTime;
+      const bool enoughReadings = burstReadings >= BURST_READINGS_WANTED;
+      const bool notWorn = burstElapsed >= BURST_NO_SKIN_TIMEOUT && touchState == 0;
+      if (enoughReadings || notWorn || burstElapsed >= BURST_MAX_DURATION) {
+        Serial.printf("[POWER] Vitals measurement ended after %lu s: %s (%u s with a heart rate).\n",
+                      burstElapsed / 1000UL,
+                      enoughReadings ? "done" : (notWorn ? "no skin contact" : "no steady pulse found"),
+                      (unsigned)burstReadings);
         vitalsMode = MODE_PASSIVE_SLEEP;
         lastVitalsBurstTime = now;
         beatAvg = 0;
@@ -671,7 +686,7 @@ void loop() {
         if (!maxSensorSleeping && maxReady) {
           particleSensor.shutDown();
           maxSensorSleeping = true;
-          Serial.println("[POWER] 30s vitals sample completed. MAX30102 sleeping for 3 minutes. Vitals reset to 0.");
+          Serial.println("[POWER] MAX30102 sleeping for 3 minutes. Vitals reset to 0.");
         }
       }
     }
@@ -714,6 +729,7 @@ void loop() {
       const bool newEstimate = pulse.addSample(irVal, redVal);
       beatAvg = pulse.bpm();
       spo2Avg = pulse.spo2();
+      if (newEstimate && beatAvg != 0 && burstReadings < 255) burstReadings++;   // one estimate per second
 #if SHIRO_PPG_RECORDER
       if (ppgRecording && newEstimate) {
         // The last number is the time the estimate took, in microseconds
