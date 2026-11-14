@@ -130,7 +130,8 @@ Alarm rules use the normalised values and the limits in `edge_server/config/clin
 - **Fall after a server restart:** for 90 seconds after start-up, a wristband that is still flagging a fall is matched to the incident already stored for it, so a restart does not raise the same fall twice.
 - **Heart rate:** judged only with skin contact. An extreme rate must persist for 5 seconds. An abnormal rate must be confirmed (5 seconds without a break) in two measurement cycles, or last 30 seconds without a break. A silence of more than 10 seconds, or a reading that is not abnormal, ends a series.
 - **SpO2:** stored and displayed, but it raises no alarm (`spo2AlarmsEnabled: false` in `config/clinical_thresholds.js`). The wristband's SpO2 formula is not calibrated: in the bench tests of 14 Nov 2026, 68% of the readings on a healthy tester were below 90%. The switch may be turned on after validation against a reference pulse oximeter.
-- **Wristband heart rate:** reported only after three beat intervals have been measured (median), and withdrawn (`0`) when no valid beat has been detected for 6 seconds.
+- **Wristband heart rate:** estimated once per second from the last 8 seconds of the pulse signal (`pulse_estimator.h`). A value is reported only when the signal is clearly periodic and three estimates in a row agree; it is the median of the last five. It is withdrawn (`0`) after 4 seconds without a new confirmation. With movement, a loose strap or a weak pulse the wristband therefore reports no heart rate instead of a wrong one. The first value of a measurement takes about 13 seconds; a passive measurement lasts 30 seconds.
+- **Wristband SpO2:** reported together with a heart rate, from the red and infrared pulse amplitudes of the same 8 seconds. The conversion line is not calibrated for this hardware.
 
 ## 4. Changing the protocol
 

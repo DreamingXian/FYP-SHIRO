@@ -89,6 +89,7 @@ Unified packets are published directly over Wi-Fi to the central Edge Server's e
 * **Dual-Role Anchor Pipeline:** Anchors continuously capture BLE manufacturer packets from wristbands, record raw RSSI for IPS multilateration, decode physiological vitals (BPM, SpO2, battery, touch), and publish unified JSON telemetry over Wi-Fi/MQTT (`shiro/ward-A1/anchor/telemetry`).
 * **Connectionless Broadcast Telemetry:** Eliminated point-to-point BLE GATT connection bottlenecks. The wristband broadcasts high-rate advertising beacons heard by all anchors in radio range simultaneously.
 * **On-Chip Triple-Phase Fall Detection:** Wristband runs an embedded kinematic fall state machine (free-fall below 0.5 g for at least 150 ms $\rightarrow$ impact above 2.5 g within 500 ms $\rightarrow$ 0.5 s settling, then stillness for 2 s) on the MPU-6050 (±16 g range). A confirmed fall is broadcast with a fall counter and its measured impact, free-fall minimum and post-impact motion.
+* **Heart Rate Reported Only When It Can Be Measured:** The wristband estimates the heart rate from how regularly the pulse signal repeats over 8 seconds, and reports it only when that is clear and three estimates agree. With movement or a weak signal it reports no reading instead of a wrong value. The sensor (MAX30102) is made for a fingertip: on the wrist it works best on the inner side (evidence in [docs/test_records/heart-rate-measurement.md](docs/test_records/heart-rate-measurement.md)).
 * **Vitals Alarms on Heart Rate Only:** Heart-rate alarms need a persisting or repeated abnormal reading (limits in `edge_server/config/clinical_thresholds.js`). SpO2 is displayed as an indicative value and raises no alarm, because the wristband's SpO2 measurement is not calibrated (evidence in [docs/test_records/phase-3-bench-test.md](docs/test_records/phase-3-bench-test.md)).
 * **Versioned Telemetry Packet:** The wristband broadcasts a 15-byte packet (version 2) defined once in [docs/protocol.md](docs/protocol.md). A failed accelerometer or pulse sensor is reported by a fault flag; missing values are never replaced by defaults.
 * **Battery Sensing & Adaptive Power:** 100k/100k voltage divider on pin `D0` with battery percentage calculation and non-blocking optical sensor FIFO sampling.
@@ -178,7 +179,7 @@ Run from `edge_server/`:
 | `npm test` | Unit tests (filters, positioning maths, incident IDs, binding cache, alarm thresholds, fall de-duplication, telemetry validation, firmware/server contract) | Nothing |
 | `npm run test:integration` | Database start-up, restart safety, bindings, incident log, alarm path, and the full MQTT-to-dashboard pipeline with a real server on spare ports | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
 
-Firmware logic (fall state machine, telemetry packet, vitals smoothing) is tested on the PC, without a board:
+Firmware logic (fall state machine, telemetry packet, heart-rate and SpO2 estimation against recorded pulse signals) is tested on the PC, without a board:
 
 | Command | What it runs | Needs |
 | :--- | :--- | :--- |

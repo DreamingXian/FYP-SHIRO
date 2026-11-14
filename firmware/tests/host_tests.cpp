@@ -2,8 +2,9 @@
  * =========================================================================================
  *   SHIRO firmware logic tests - runs on a PC, no board needed.
  *
- *   Compiles the same fall_detector.h and shiro_packet.h that go into the
- *   firmware and checks them against synthetic 50 Hz acceleration traces.
+ *   Compiles the same fall_detector.h, shiro_packet.h and pulse_estimator.h that go
+ *   into the firmware and checks them against synthetic traces and against the
+ *   pulse recordings of the bench measurements (tests/data).
  *
  *   Windows (Visual Studio C++ tools):   run_host_tests.bat
  *   Any system with g++ or clang++:      g++ -std=c++17 -Wall -Wextra host_tests.cpp -o host_tests && ./host_tests
@@ -12,12 +13,15 @@
  */
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include "../shiro_wristband_vitals/fall_detector.h"
+#include "../shiro_wristband_vitals/pulse_estimator.h"
 #include "../shiro_wristband_vitals/shiro_packet.h"
 #include "../shiro_wristband_vitals/vitals_filter.h"
 
@@ -463,45 +467,11 @@ static void testPacketRejection() {
 }
 
 static void testVitalsFilter() {
-  section("vitals: accepted range and beat smoothing");
+  section("vitals: accepted range");
   CHECK(!isValidBpm(29.9f) && isValidBpm(30.0f) && isValidBpm(220.0f) && !isValidBpm(220.1f));
   CHECK(!isValidSpo2(69.9f) && isValidSpo2(70.0f) && isValidSpo2(100.0f) && !isValidSpo2(100.1f));
   CHECK(isValidBpm(35.0f));   // bradycardia must not be discarded
   CHECK(isValidSpo2(78.0f));  // nor desaturation
-
-  const uint8_t empty[4] = {0, 0, 0, 0};
-  CHECK(medianOfNonZero(empty, 4) == 0);
-  const uint8_t one[4] = {72, 0, 0, 0};
-  CHECK(medianOfNonZero(one, 4) == 72);
-  const uint8_t two[4] = {70, 0, 74, 0};
-  CHECK(medianOfNonZero(two, 4) == 72);
-  const uint8_t three[4] = {70, 90, 72, 0};
-  CHECK(medianOfNonZero(three, 4) == 72);
-  const uint8_t missedBeat[4] = {70, 71, 35, 72};   // one missed beat halves one interval
-  CHECK(medianOfNonZero(missedBeat, 4) == 71);
-  const uint8_t doubledBeat[4] = {70, 140, 71, 72}; // one false extra beat
-  CHECK(medianOfNonZero(doubledBeat, 4) == 72);
-  const uint8_t realChange[4] = {70, 38, 37, 36};   // a real drop shows after three beats
-  CHECK(medianOfNonZero(realChange, 4) == 38);
-  const uint8_t high[4] = {220, 220, 219, 221};     // values above 127 must not overflow
-  CHECK(medianOfNonZero(high, 4) == 220);
-
-  // Bench finding of 14 Nov 2026: the first interval of a measurement was reported
-  // as the heart rate (35 BPM on a healthy wrist). Three intervals are needed now.
-  const uint8_t firstBeat[4] = {35, 0, 0, 0};
-  CHECK(medianOfNonZero(firstBeat, 4, BPM_MIN_BEATS) == 0);
-  const uint8_t twoBeats[4] = {35, 72, 0, 0};
-  CHECK(medianOfNonZero(twoBeats, 4, BPM_MIN_BEATS) == 0);
-  const uint8_t threeBeats[4] = {35, 72, 74, 0};      // the wrong first interval is outvoted
-  CHECK(medianOfNonZero(threeBeats, 4, BPM_MIN_BEATS) == 72);
-  const uint8_t realSlow[4] = {36, 35, 37, 0};        // a real slow rate still gets through
-  CHECK(medianOfNonZero(realSlow, 4, BPM_MIN_BEATS) == 36);
-
-  // A value with no recent beat behind it is withdrawn
-  CHECK(!isBeatStale(10000, 10000 - BPM_STALE_MS));
-  CHECK(isBeatStale(10000, 10000 - BPM_STALE_MS - 1));
-  CHECK(!isBeatStale(500, 0xFFFFFFFFu - 1000u));      // millis() wrap: 1.5 s apart
-  CHECK(60000u / BPM_STALE_MS < (uint32_t)BPM_VALID_MIN);  // the slowest valid rate beats faster than the limit
 }
 
 static std::string readFile(const char* path) {
@@ -522,6 +492,315 @@ static void testPacketHeaderCopies() {
   CHECK(!wristband.empty());
   CHECK(!anchor.empty());
   CHECK(wristband == anchor);
+}
+
+// ---------------------------------------------------------------------------
+// Pulse estimator (heart rate and SpO2 from the raw sensor signal)
+// ---------------------------------------------------------------------------
+struct PulseRun {
+  std::vector<int> bpm;    // reported rate after every estimate (one per second), 0 = no reading
+  std::vector<int> spo2;
+  int firstShownSample = -1;
+  int samples = 0;
+
+  int shown() const {
+    int n = 0;
+    for (int v : bpm) n += (v != 0);
+    return n;
+  }
+  int last() const { return bpm.empty() ? 0 : bpm.back(); }
+  // every reported rate lies between lo and hi
+  bool allWithin(int lo, int hi) const {
+    for (int v : bpm) {
+      if (v != 0 && (v < lo || v > hi)) return false;
+    }
+    return true;
+  }
+  bool spo2Within(int lo, int hi) const {
+    for (int v : spo2) {
+      if (v != 0 && (v < lo || v > hi)) return false;
+    }
+    return true;
+  }
+  int spo2Shown() const {
+    int n = 0;
+    for (int v : spo2) n += (v != 0);
+    return n;
+  }
+};
+
+static void feedPulse(PulseEstimator& p, uint32_t ir, uint32_t red, PulseRun& run) {
+  run.samples++;
+  if (!p.addSample(ir, red)) return;
+  run.bpm.push_back(p.bpm());
+  run.spo2.push_back(p.spo2());
+  if (p.bpm() != 0 && run.firstShownSample < 0) run.firstShownSample = run.samples;
+}
+
+// Repeatable noise, roughly normal with standard deviation 1
+struct TestNoise {
+  uint32_t state;
+  explicit TestNoise(uint32_t seed) : state(seed) {}
+  double next() {
+    double sum = 0;
+    for (int i = 0; i < 12; i++) {
+      state = state * 1103515245u + 12345u;
+      sum += ((state >> 8) & 0xFFFF) / 65536.0;
+    }
+    return sum - 6.0;
+  }
+};
+
+// A pulse wave with harmonics on a slowly breathing level, as the sensor would deliver it.
+// "ratio" is R of the SpO2 formula: (red pulse / red level) / (infrared pulse / infrared level).
+struct PulseSignal {
+  double bpm;
+  double amplitude = 100;   // sensor counts
+  double noise = 10;
+  double drift = 200;       // breathing, 15 per minute
+  double ratio = 0.5;
+  double level = 130000;
+};
+
+static void playPulse(PulseEstimator& p, PulseRun& run, const PulseSignal& s, int seconds, uint32_t seed = 7) {
+  const double kPi = 3.14159265358979323846;
+  TestNoise noise(seed);
+  for (int i = 0; i < seconds * 100; i++) {
+    const double t = i / 100.0;
+    const double phase = 2.0 * kPi * (s.bpm / 60.0) * t;
+    const double pulse = std::sin(phase) + 0.5 * std::sin(2 * phase + 0.8) + 0.25 * std::sin(3 * phase + 1.6);
+    const double wander = s.drift * std::sin(2.0 * kPi * 0.25 * t);
+    const double ir = s.level + s.amplitude * pulse + wander + s.noise * noise.next();
+    const double red = s.level * 0.75 + s.amplitude * s.ratio * 0.75 * pulse + wander * 0.7 + s.noise * noise.next();
+    feedPulse(p, (uint32_t)(ir + 0.5), (uint32_t)(red + 0.5), run);
+  }
+}
+
+static PulseRun runPulse(const PulseSignal& s, int seconds, uint32_t seed = 7) {
+  PulseEstimator p;
+  PulseRun run;
+  playPulse(p, run, s, seconds, seed);
+  return run;
+}
+
+static void testPulseRange() {
+  section("pulse: every rate from 30 to 220 BPM is measured");
+  const int rates[] = {30, 35, 40, 48, 60, 75, 93, 120, 150, 180, 200, 220};
+  for (int rate : rates) {
+    PulseSignal s;
+    s.bpm = rate;
+    const PulseRun run = runPulse(s, 40);
+    CHECK(run.shown() >= 25);                       // 30 estimates in 40 s, the first after 10 s
+    CHECK(run.allWithin(rate - 1, rate + 1));
+    CHECK(run.firstShownSample > 0 && run.firstShownSample <= 1400);   // first value within 14 s
+  }
+
+  // The reported range is the range of the packet and of the edge server
+  const PulseConfig cfg = defaultPulseConfig();
+  CHECK(cfg.validMinBpm == (uint8_t)BPM_VALID_MIN && cfg.validMaxBpm == (uint8_t)BPM_VALID_MAX);
+}
+
+static void testPulseWeakSignal() {
+  section("pulse: a weak pulse on a breathing level is not pulled upwards");
+  // Design finding: with a weaker high-pass filter, breathing lifted the short lags of the
+  // autocorrelation and a weak pulse of 160 was reported as 177 with full confidence.
+  const int rates[] = {93, 130, 160, 190};
+  for (int rate : rates) {
+    for (uint32_t seed = 1; seed <= 5; seed++) {
+      PulseSignal s;
+      s.bpm = rate;
+      s.amplitude = 15;
+      const PulseRun run = runPulse(s, 40, seed * 101);
+      CHECK(run.shown() >= 20);
+      CHECK(run.allWithin(rate - 3, rate + 3));
+    }
+  }
+  // Slow and weak: it may take longer or stay unknown, but it must not be wrong
+  PulseSignal slow;
+  slow.bpm = 45;
+  slow.amplitude = 15;
+  CHECK(runPulse(slow, 40).allWithin(42, 48));
+}
+
+static void testPulseNoReading() {
+  section("pulse: no reading without a pulse");
+  {
+    PulseSignal s;
+    s.bpm = 93;
+    s.amplitude = 0;
+    s.noise = 30;
+    CHECK(runPulse(s, 60).shown() == 0);            // noise only
+    s.noise = 20;
+    s.drift = 2000;
+    CHECK(runPulse(s, 60).shown() == 0);            // breathing or slow movement only
+  }
+  {
+    // Movement: the level jumps several times a second
+    PulseEstimator p;
+    PulseRun run;
+    TestNoise noise(3);
+    for (int i = 0; i < 6000; i++) {
+      const int stepNo = (i / 137) % 5;
+      feedPulse(p, (uint32_t)(130000 + stepNo * 900 + 20 * noise.next()), (uint32_t)(97000 + stepNo * 700 + 20 * noise.next()), run);
+    }
+    CHECK(run.shown() == 0);
+  }
+  {
+    PulseEstimator p;
+    PulseRun run;
+    for (int i = 0; i < 6000; i++) feedPulse(p, 262143, 262143, run);   // sensor at its ceiling
+    CHECK(run.bpm.empty() && p.bpm() == 0 && p.spo2() == 0);
+  }
+  {
+    PulseEstimator p;
+    PulseRun run;
+    for (int i = 0; i < 6000; i++) feedPulse(p, 3000, 2500, run);       // no skin
+    CHECK(run.bpm.empty() && p.bpm() == 0 && p.spo2() == 0);
+  }
+}
+
+static void testPulseWithdrawal() {
+  section("pulse: a value is withdrawn when the pulse is gone");
+  PulseSignal good;
+  good.bpm = 80;
+  {
+    // Pulse, then the same level without a pulse (sensor slipped)
+    PulseEstimator p;
+    PulseRun run;
+    playPulse(p, run, good, 30);
+    CHECK(run.last() == 80 || run.last() == 79 || run.last() == 81);
+    PulseSignal flat = good;
+    flat.amplitude = 0;
+    PulseRun after;
+    playPulse(p, after, flat, 20, 99);
+    CHECK(after.last() == 0);
+    // within 12 s: the 8-second window has to empty first, then 4 s without confirmation
+    CHECK(after.bpm.size() >= 12 && after.bpm[11] == 0);
+  }
+  {
+    // Skin contact lost: gone after half a second, and the next measurement starts from zero
+    PulseEstimator p;
+    PulseRun run;
+    playPulse(p, run, good, 30);
+    CHECK(p.bpm() != 0);
+    for (int i = 0; i < 20; i++) p.addSample(3000, 2500);   // a dip of 0.2 s changes nothing
+    CHECK(p.bpm() != 0);
+    for (int i = 0; i < 40; i++) p.addSample(3000, 2500);   // 0.6 s in total
+    CHECK(p.bpm() == 0 && p.spo2() == 0);
+    PulseRun again;
+    playPulse(p, again, good, 9);
+    CHECK(again.bpm.empty());                               // nothing before the window is full again
+    playPulse(p, again, good, 10, 5);
+    CHECK(p.bpm() >= 79 && p.bpm() <= 81);
+  }
+}
+
+static void testPulseRateChange() {
+  section("pulse: a real change of rate is followed");
+  PulseEstimator p;
+  PulseRun run;
+  PulseSignal s;
+  s.bpm = 70;
+  playPulse(p, run, s, 30);
+  s.bpm = 130;
+  playPulse(p, run, s, 30, 11);
+  CHECK(run.last() >= 129 && run.last() <= 131);
+  bool onlyOldOrNew = true;
+  for (int v : run.bpm) {
+    const bool oldRate = v >= 62 && v <= 72;   // the window holds both rates for a few seconds
+    const bool newRate = v >= 128 && v <= 132;
+    if (v != 0 && !oldRate && !newRate) onlyOldOrNew = false;
+  }
+  CHECK(onlyOldOrNew);
+  // the new rate is reported within 12 s of the change (estimate 20 is at second 30)
+  CHECK(run.bpm.size() > 32 && run.bpm[32] >= 128);
+}
+
+static void testPulseSpo2() {
+  section("pulse: SpO2 follows the red to infrared ratio");
+  struct Case { double ratio; int lo; int hi; };
+  const Case cases[] = {{0.4, 99, 100}, {0.5, 97, 98}, {0.8, 89, 91}, {1.0, 84, 86}};
+  for (const Case& c : cases) {
+    PulseSignal s;
+    s.bpm = 75;
+    s.ratio = c.ratio;
+    const PulseRun run = runPulse(s, 40);
+    CHECK(run.spo2Shown() >= 25);
+    CHECK(run.spo2Within(c.lo, c.hi));
+  }
+  // No SpO2 without a confirmed heart rate
+  PulseSignal noPulse;
+  noPulse.bpm = 75;
+  noPulse.amplitude = 0;
+  CHECK(runPulse(noPulse, 40).spo2Shown() == 0);
+}
+
+// Bench recordings of 14 Nov 2026 (firmware/tests/data): the estimator must reproduce
+// on this PC what was measured on the tester.
+static bool loadRecording(const char* name, std::vector<uint32_t>& ir, std::vector<uint32_t>& red) {
+  std::ifstream in(std::string("data/ppg_") + name + ".csv");
+  if (!in) return false;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    const size_t comma = line.find(',');
+    if (comma == std::string::npos) continue;
+    ir.push_back((uint32_t)std::strtoul(line.c_str(), nullptr, 10));
+    red.push_back((uint32_t)std::strtoul(line.c_str() + comma + 1, nullptr, 10));
+  }
+  return !ir.empty();
+}
+
+static PulseRun replayRecording(const char* name, bool& loaded) {
+  std::vector<uint32_t> ir, red;
+  loaded = loadRecording(name, ir, red);
+  PulseEstimator p;
+  PulseRun run;
+  for (size_t i = 0; i < ir.size(); i++) feedPulse(p, ir[i], red[i], run);
+  std::printf("    %-13s %3d estimates, %3d with a rate", name, (int)run.bpm.size(), run.shown());
+  int lo = 999, hi = 0;
+  for (int v : run.bpm) {
+    if (v != 0 && v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (run.shown() > 0) std::printf(" (%d to %d BPM)", lo, hi);
+  std::printf("\n");
+  return run;
+}
+
+static void testPulseRecordings() {
+  section("pulse: recordings of the bench measurements");
+  bool loaded = false;
+  {
+    // Fingertip, counted pulse 92: the library detector found 6 of about 92 beats here
+    const PulseRun run = replayRecording("finger", loaded);
+    CHECK(loaded);
+    CHECK(run.shown() * 100 >= (int)run.bpm.size() * 85);
+    CHECK(run.allWithin(82, 102));
+    CHECK(run.firstShownSample > 0 && run.firstShownSample <= 1500);
+    CHECK(run.spo2Shown() > 0 && run.spo2Within(96, 100));
+  }
+  {
+    // Inner side of the wrist, counted pulse 92
+    const PulseRun run = replayRecording("wrist_inside", loaded);
+    CHECK(loaded);
+    CHECK(run.shown() * 100 >= (int)run.bpm.size() * 60);
+    CHECK(run.allWithin(82, 102));
+  }
+  {
+    // Outer side of the wrist, counted pulse 93 (during seconds 20 to 80): the pulse is
+    // visible only for a short time. Few values, and none of them far off.
+    const PulseRun run = replayRecording("wrist_rest", loaded);
+    CHECK(loaded);
+    CHECK(run.allWithin(78, 103));
+    CHECK(run.shown() * 100 <= (int)run.bpm.size() * 30);
+  }
+  {
+    // Typing: the firmware of that day reported 53 to 175 BPM here. Now: no reading.
+    const PulseRun run = replayRecording("wrist_typing", loaded);
+    CHECK(loaded);
+    CHECK(run.shown() == 0);
+  }
 }
 
 int main() {
@@ -545,6 +824,13 @@ int main() {
   testPacketLimits();
   testPacketRejection();
   testVitalsFilter();
+  testPulseRange();
+  testPulseWeakSignal();
+  testPulseNoReading();
+  testPulseWithdrawal();
+  testPulseRateChange();
+  testPulseSpo2();
+  testPulseRecordings();
   testPacketHeaderCopies();
 
   std::printf("\n%d checks, %d failed\n", g_checks, g_failures);
