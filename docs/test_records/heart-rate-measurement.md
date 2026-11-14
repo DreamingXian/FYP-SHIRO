@@ -148,17 +148,32 @@ Server records (InfluxDB) of the evening: values during the three still recordin
 
 ## Round 3: short check after commit `b16faff`
 
+Wristband reflashed with commit `b16faff`. Worn from 00:30 to 01:00 on 15 Nov 2026.
+
 | Check | Result |
 | :--- | :--- |
-| Wristband reflashed. Serial Monitor, arm still: a passive measurement ends with `Vitals measurement ended after ... s: done (10 s with a heart rate)`. Seconds shown | |
-| Arm moving during a whole measurement: it ends after 90 s with `no steady pulse found` (Y/N) | |
-| Wristband taken off: the measurement ends after 5 s with `no skin contact` (Y/N) | |
-| Worn for 30 minutes of normal activity: number of 3-minute measurements with a heart rate in the vitals trend, out of about 8 | |
-| Vitals alarms during that time (expected 0) | |
-| Any value on the live map that was clearly wrong (for example half or double your pulse) (Y/N, value) | |
+| Serial Monitor, arm still: a passive measurement ends with `done (10 s with a heart rate)` | Y: `[POWER] Vitals measurement ended after 22 s: done (10 s with a heart rate).` |
+| Arm moving during a whole measurement: it ends after 90 s with `no steady pulse found` | Y |
+| Wristband taken off: the measurement ends after 5 s with `no skin contact` | Y |
+| Worn for 30 minutes of normal activity: number of 3-minute measurements with a heart rate in the vitals trend, out of about 8 | 8 |
+| Vitals alarms during that time (expected 0) | 0 |
+| Any value on the live map that was clearly wrong (for example half or double the pulse) | N |
+
+Server records of the same 30 minutes:
+
+| Record | Result |
+| :--- | :--- |
+| Passive measurements stored (InfluxDB), 00:32 to 00:57 | 8, each with about 10 seconds of heart rate |
+| Time from one measurement to the next | 3 min 23 s to 3 min 38 s (3 minutes of sleep plus the measurement) |
+| Heart rate over all 8 measurements | 75 to 82 BPM |
+| Largest spread inside one measurement | 5 BPM |
+| SpO2 over all 8 measurements | 94 to 100% |
+| Incidents stored (MariaDB) after the arm-drop fall of 23:34 | none |
+
+Before the 30 minutes, one measurement at about 00:29 stored no value (the measurements before and after it, at 00:25 and 00:32, did).
 
 ## Decision
 
 - [x] Round 2 confirms the PC results on the wristband (finding 7).
-- [ ] Round 3 check passed.
+- [x] Round 3 check passed.
 - [ ] Wearing position for the demonstration and the thesis: inner side / outer side of the wrist.
