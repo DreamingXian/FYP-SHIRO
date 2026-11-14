@@ -71,7 +71,7 @@ struct Trace {
   }
   // Canonical fall: rest, free-fall, impact, stillness
   Trace& fall(uint32_t freefallMs = 300, float freefallG = 0.15f, float impactG = 4.0f, float restG = 1.02f) {
-    return hold(1.0f, 1000).hold(freefallG, freefallMs).hold(impactG, 40).hold(restG, 2500);
+    return hold(1.0f, 1000).hold(freefallG, freefallMs).hold(impactG, 40).hold(restG, 3000);
   }
 };
 
@@ -113,7 +113,7 @@ static void testFreefallDuration() {
   }
   {
     Trace tr;  // one single low sample, as the old firmware accepted
-    tr.hold(1.0f, 1000).sample(0.3f).hold(4.0f, 40).hold(1.0f, 2500);
+    tr.hold(1.0f, 1000).sample(0.3f).hold(4.0f, 40).hold(1.0f, 3000);
     CHECK(tr.confirmations == 0);
   }
 }
@@ -151,12 +151,12 @@ static void testImpactWindow() {
   section("impact must follow the free-fall within 500 ms");
   {
     Trace tr;  // 480 ms of normal gravity between free-fall and impact
-    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(1.0f, 480).hold(4.0f, 40).hold(1.0f, 2500);
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(1.0f, 480).hold(4.0f, 40).hold(1.0f, 3000);
     CHECK(tr.confirmations == 1);
   }
   {
     Trace tr;  // 600 ms: too late, unrelated knock
-    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(1.0f, 600).hold(4.0f, 40).hold(1.0f, 2500);
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(1.0f, 600).hold(4.0f, 40).hold(1.0f, 3000);
     CHECK(tr.confirmations == 0);
   }
   {
@@ -168,24 +168,66 @@ static void testImpactWindow() {
 }
 
 static void testStillness() {
-  section("post-impact stillness: mean motion below 0.20 g for 2 s");
+  section("post-impact stillness: mean motion below 0.20 g for 2 s, after 0.5 s settling");
   {
     Trace tr;  // lying still but breathing/trembling slightly
-    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.10f, 400, 2500);
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.10f, 400, 3000);
     CHECK(tr.confirmations == 1);
   }
   {
     Trace tr;  // gets up and walks away: clear movement
-    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.60f, 400, 2500);
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.60f, 400, 3000);
     CHECK(tr.confirmations == 0);
     CHECK(!tr.detector.emergency());
   }
   {
-    Trace tr;  // not confirmed before the full 2 s have been observed
-    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).hold(1.0f, 1800);
+    Trace tr;  // not confirmed before settling plus the full 2 s have been observed
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).hold(1.0f, 2300);
     CHECK(tr.confirmations == 0);
     tr.hold(1.0f, 400);
     CHECK(tr.confirmations == 1);
+  }
+}
+
+static void testImpactSettling() {
+  section("the impact shock is not counted as post-impact movement");
+  {
+    // Bench finding of 14 Nov 2026: a hard landing lasts several samples and rings.
+    // Averaged into the stillness window this alone gave 0.36 g and hid the fall.
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.08f, 300).hold(13.0f, 80);
+    for (int i = 0; i < 8; i++) tr.sample(i % 2 == 0 ? 2.2f : 0.3f);  // 160 ms of ringing
+    tr.hold(1.02f, 3000);
+    CHECK(tr.confirmations == 1);
+    CHECK(nearly(tr.detector.peakImpactG(), 13.0f));
+    CHECK(tr.detector.stillnessG() < 0.05f);  // reports the lying still, not the landing
+  }
+  {
+    Trace tr;  // the highest value of the impact is kept even when it is not the first sample
+    tr.hold(1.0f, 1000).hold(0.15f, 300).sample(3.0f).sample(9.0f).sample(5.0f).hold(1.0f, 3000);
+    CHECK(tr.confirmations == 1);
+    CHECK(nearly(tr.detector.peakImpactG(), 9.0f));
+  }
+  {
+    Trace tr;  // still for the settling time only, then gets up: not a fall alarm
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).hold(1.0f, 500).swing(0.60f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // an object that keeps bouncing or rolling after landing is still rejected
+    tr.hold(1.0f, 1000).hold(0.10f, 300).hold(6.0f, 40);
+    for (int i = 0; i < 5; i++) tr.hold(0.3f, 200).hold(3.5f, 40).hold(1.0f, 300);
+    tr.swing(0.40f, 300, 2000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // the alarm is raised 2.5 s after the impact, not earlier and not later
+    tr.hold(1.0f, 1000).hold(0.15f, 300);
+    const uint32_t impactAt = tr.t;
+    tr.hold(4.0f, 40);
+    while (tr.confirmations == 0 && tr.t < impactAt + 10000) tr.sample(1.0f);
+    CHECK(tr.confirmations == 1);
+    CHECK(tr.t - 20 - impactAt == 2500);
   }
 }
 
@@ -248,7 +290,7 @@ static void testBadSamples() {
     CHECK(tr.detector.currentPhase() == FALL_PHASE_POST_IMPACT);
     tr.detector.cancelPending();
     CHECK(tr.detector.currentPhase() == FALL_PHASE_MONITORING);
-    tr.hold(1.0f, 2500);
+    tr.hold(1.0f, 3000);
     CHECK(tr.confirmations == 0);
   }
   {
@@ -273,7 +315,7 @@ static void testEverydayActivities() {
   }
   {
     Trace tr;  // sitting down hard: short dip, moderate bump
-    for (int i = 0; i < 10; i++) tr.hold(1.0f, 1500).hold(0.40f, 80).hold(2.9f, 40).hold(1.0f, 2500);
+    for (int i = 0; i < 10; i++) tr.hold(1.0f, 1500).hold(0.40f, 80).hold(2.9f, 40).hold(1.0f, 3000);
     CHECK(tr.confirmations == 0);
   }
   {
@@ -364,7 +406,7 @@ static void testPacketFallFlag() {
 static void testPacketLimits() {
   section("packet v2: out-of-range values are limited, never wrapped");
   shiro::Telemetry in = sampleTelemetry();
-  in.g = 13.86f;         // the largest value a +/-8 g sensor can report
+  in.g = 27.71f;         // the largest value a +/-16 g sensor can report
   in.impactG = 1000.0f;  // absurd: must saturate
   in.freefallG = 9.0f;   // one byte: saturates at 2.55
   in.stillG = std::nanf("");
@@ -373,7 +415,7 @@ static void testPacketLimits() {
 
   shiro::Telemetry out;
   CHECK(shiro::decodePacket(p, sizeof(p), out) == shiro::DECODE_OK);
-  CHECK(nearly(out.g, 13.86f));
+  CHECK(nearly(out.g, 27.71f));
   CHECK(nearly(out.impactG, 655.35f));
   CHECK(nearly(out.freefallG, 2.55f));
   CHECK(out.stillG == 0.0f);
@@ -474,6 +516,7 @@ int main() {
   testImpactThreshold();
   testImpactWindow();
   testStillness();
+  testImpactSettling();
   testHoldAndCounter();
   testHoldEndsWithoutSamples();
   testClockWrap();

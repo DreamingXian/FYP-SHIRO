@@ -57,8 +57,8 @@ module.exports = {
   },
 
   kinematics: {
-    // Acceleration above this is not physically plausible for the +/-8 g sensor
-    // range (sqrt(3) * 8 = 13.9 g) and is discarded.
-    maxPlausibleG: 16
+    // Acceleration above this cannot come from the +/-16 g sensor range
+    // (sqrt(3) * 16 = 27.7 g) and is discarded.
+    maxPlausibleG: 28
   }
 };

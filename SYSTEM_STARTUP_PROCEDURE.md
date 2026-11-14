@@ -182,7 +182,7 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 
 #### What the Serial Monitor shows at power-on (115200 baud):
 ```
-[OK] MPU-6050 ready: +/-8 g range, WHO_AM_I = 0x68.
+[OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x68.
 [SELF-TEST] Fall detector: PASS (fall: detected, short dip: ignored, movement: ignored)
 [OK] HW-605 (MAX30102) Initialized.
 [OK] Telemetry packet version 2, 15 bytes.

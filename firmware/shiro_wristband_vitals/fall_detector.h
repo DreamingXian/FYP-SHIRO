@@ -8,7 +8,8 @@
  *   A fall is confirmed when three phases follow each other:
  *     1. Free-fall : total acceleration stays below freefallG for at least freefallMinMs
  *     2. Impact    : total acceleration exceeds impactG within impactMaxMs of the free-fall
- *     3. Stillness : mean |acceleration - 1 g| over stillDurationMs stays below stillnessG
+ *     3. Stillness : after settleMs (the shock of the impact dying away), the mean
+ *                    |acceleration - 1 g| over stillDurationMs stays below stillnessG
  *
  *   Feed one sample per call to update(). Time is passed in, never read here.
  * =========================================================================================
@@ -25,11 +26,15 @@ struct FallConfig {
   float stillnessG;          // mean post-impact motion below this means "not moving"
   uint32_t freefallMinMs;    // free-fall must last at least this long
   uint32_t impactMaxMs;      // impact must follow the end of free-fall within this time
-  uint32_t stillDurationMs;  // length of the post-impact observation window
+  uint32_t settleMs;         // time after the impact that is not counted as movement
+  uint32_t stillDurationMs;  // length of the stillness observation window that follows
   uint32_t alertHoldMs;      // how long a confirmed fall stays flagged
 };
 
-// Thesis values (Chapter 4, Section 4.2.2 and Algorithm 3)
+// Thesis values (Chapter 4, Section 4.2.2 and Algorithm 3). settleMs comes from the
+// bench tests of 14 Nov 2026: without it the impact shock itself (several samples
+// far above 1 g, then ringing) was averaged into the "post-impact motion", so a
+// harder impact was less likely to be confirmed than a soft one.
 inline FallConfig defaultFallConfig() {
   FallConfig c;
   c.freefallG = 0.50f;
@@ -37,6 +42,7 @@ inline FallConfig defaultFallConfig() {
   c.stillnessG = 0.20f;
   c.freefallMinMs = 150;
   c.impactMaxMs = 500;
+  c.settleMs = 500;
   c.stillDurationMs = 2000;
   c.alertHoldMs = 45000;
   return c;
@@ -46,7 +52,7 @@ enum FallPhase {
   FALL_PHASE_MONITORING = 0,
   FALL_PHASE_FREEFALL = 1,      // below the free-fall threshold, duration not yet reached or still falling
   FALL_PHASE_AWAIT_IMPACT = 2,  // free-fall was long enough, waiting for the impact
-  FALL_PHASE_POST_IMPACT = 3,   // impact seen, measuring stillness
+  FALL_PHASE_POST_IMPACT = 3,   // impact seen: settling, then measuring stillness
   FALL_PHASE_CONFIRMED = 4      // fall confirmed, flag held for alertHoldMs
 };
 
@@ -108,9 +114,11 @@ class FallDetector {
 
       case FALL_PHASE_POST_IMPACT:
         if (smv > runPeakImpactG) runPeakImpactG = smv;
+        // The shock of the impact and its bounce are not movement of the person
+        if ((uint32_t)(nowMs - impactMs) < cfg.settleMs) break;
         stillnessSum += fabsf(smv - 1.0f);
         stillnessSamples++;
-        if ((uint32_t)(nowMs - impactMs) >= cfg.stillDurationMs) {
+        if ((uint32_t)(nowMs - impactMs) >= cfg.settleMs + cfg.stillDurationMs) {
           const float meanMotion = stillnessSamples > 0 ? stillnessSum / (float)stillnessSamples : 0.0f;
           if (meanMotion < cfg.stillnessG) {
             phase = FALL_PHASE_CONFIRMED;
@@ -246,7 +254,7 @@ inline FallSelfTestResult runFallSelfTest() {
     bool c = feed(d, t, 1.0f, 1000);
     c = feed(d, t, 0.15f, 300) || c;
     c = feed(d, t, 4.0f, 40) || c;
-    c = feed(d, t, 1.02f, 2500) || c;
+    c = feed(d, t, 1.02f, 3000) || c;
     r.fallDetected = c && d.emergency() && d.peakImpactG() > 3.9f && d.minFreefallG() < 0.2f;
   }
   {  // 2. A 60 ms dip followed by a knock: too short to be a fall
@@ -255,7 +263,7 @@ inline FallSelfTestResult runFallSelfTest() {
     bool c = feed(d, t, 1.0f, 1000);
     c = feed(d, t, 0.2f, 60) || c;
     c = feed(d, t, 4.0f, 40) || c;
-    c = feed(d, t, 1.0f, 2500) || c;
+    c = feed(d, t, 1.0f, 3000) || c;
     r.shortDipIgnored = !c && !d.emergency();
   }
   {  // 3. Free-fall and impact, then the person keeps moving: not incapacitated
@@ -264,7 +272,7 @@ inline FallSelfTestResult runFallSelfTest() {
     bool c = feed(d, t, 1.0f, 1000);
     c = feed(d, t, 0.15f, 300) || c;
     c = feed(d, t, 4.0f, 40) || c;
-    c = feedMovement(d, t, 2500) || c;
+    c = feedMovement(d, t, 3000) || c;
     r.movementIgnored = !c && !d.emergency();
   }
   return r;

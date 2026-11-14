@@ -28,7 +28,7 @@ The wristband broadcasts 15 bytes as BLE manufacturer data, about every 100 to 1
 | 10 | Fall counter | uint8 | Identifies the most recent confirmed fall. Starts at a random value at power-on, increases by 1 per fall, wraps from 255 to 0. |
 | 11 to 12 | Peak impact | uint16 | Highest acceleration of the most recent fall, in g multiplied by 100. `0` until the first fall. |
 | 13 | Free-fall minimum | uint8 | Lowest acceleration during the free-fall of the most recent fall, in g multiplied by 100 (0 to 2.55 g). |
-| 14 | Post-impact motion | uint8 | Mean of \|acceleration − 1 g\| during the 2 seconds after impact, in g multiplied by 100 (0 to 2.55 g). |
+| 14 | Post-impact motion | uint8 | Mean of \|acceleration − 1 g\| during the 2 seconds that follow a 0.5-second settling time after the impact, in g multiplied by 100 (0 to 2.55 g). |
 
 Flags (byte 7):
 
@@ -121,7 +121,7 @@ An anchor tracks up to 16 wristbands and frees the slot of a wristband that has 
 - Heart rate outside 30 to 220, SpO2 outside 70 to 100, and `0` become `null`.
 - With `imu_fault`, acceleration and motion become `null`. With `ppg_fault`, heart rate and SpO2 become `null`.
 - Fall measurements are kept only while `fall` is true and the impact is greater than 0.
-- Acceleration above 16 g is discarded as implausible for a ±8 g sensor.
+- Acceleration above 28 g is discarded as implausible for a ±16 g sensor (each axis is limited to 16 g, so the total cannot exceed 27.7 g).
 - Messages without `v` (firmware older than version 2) are still accepted, without a fall counter or fall measurements.
 
 Alarm rules use the normalised values and the limits in `edge_server/config/clinical_thresholds.js`:

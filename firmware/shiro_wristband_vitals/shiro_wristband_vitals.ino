@@ -44,10 +44,12 @@
 #define MPU_REG_ACCEL_XOUT_H 0x3B
 #define MPU_REG_PWR_MGMT_1   0x6B
 #define MPU_REG_WHO_AM_I     0x75
-#define MPU_ACCEL_RANGE_8G   0x10       // AFS_SEL = 2
-const float MPU_LSB_PER_G = 4096.0f;    // sensitivity at +/-8 g
+#define MPU_ACCEL_RANGE_16G  0x18       // AFS_SEL = 3
+const float MPU_LSB_PER_G = 2048.0f;    // sensitivity at +/-16 g
 // The default +/-2 g range clips each axis at 2 g, so a 2.5 g impact could not
-// be measured reliably. +/-8 g covers falls with room to spare.
+// be measured at all. In the bench tests of 14 Nov 2026 the +/-8 g range still
+// clipped: most recorded impacts sat on its ceiling values (8.0, 11.3, 13.9 g).
+// +/-16 g is the widest range of the sensor; one step is still below 0.001 g.
 
 // Battery Sensing Configuration (XIAO ESP32-C6: 100k/100k Divider on BAT+ to D0)
 #define BATTERY_ADC_PIN     D0
@@ -325,7 +327,7 @@ bool mpuRead(uint8_t reg, uint8_t* buffer, uint8_t count) {
   return true;
 }
 
-// Wakes the sensor, selects the +/-8 g range and reads the setting back.
+// Wakes the sensor, selects the +/-16 g range and reads the setting back.
 // Returns false when the sensor does not answer or did not accept the range.
 bool initMPU6050() {
   uint8_t who = 0;
@@ -334,11 +336,11 @@ bool initMPU6050() {
 
   if (!mpuWrite(MPU_REG_PWR_MGMT_1, 0x00)) return false;   // wake from sleep
   delay(30);
-  if (!mpuWrite(MPU_REG_ACCEL_CONFIG, MPU_ACCEL_RANGE_8G)) return false;
+  if (!mpuWrite(MPU_REG_ACCEL_CONFIG, MPU_ACCEL_RANGE_16G)) return false;
 
   uint8_t accelConfig = 0;
   if (!mpuRead(MPU_REG_ACCEL_CONFIG, &accelConfig, 1)) return false;
-  return (accelConfig & 0x18) == MPU_ACCEL_RANGE_8G;
+  return (accelConfig & 0x18) == MPU_ACCEL_RANGE_16G;
 }
 
 // Reads the total acceleration in g. Returns false when the read failed; the
@@ -382,10 +384,10 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
 
-  // 2. Initialize MPU-6050 (+/-8 g) and verify that it answers
+  // 2. Initialize MPU-6050 (+/-16 g) and verify that it answers
   imuFault = !initMPU6050();
   if (!imuFault) {
-    Serial.printf("[OK] MPU-6050 ready: +/-8 g range, WHO_AM_I = 0x%02X.\n", mpuWhoAmI);
+    Serial.printf("[OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x%02X.\n", mpuWhoAmI);
     if (mpuWhoAmI != 0x68 && mpuWhoAmI != 0x70 && mpuWhoAmI != 0x71 && mpuWhoAmI != 0x72 && mpuWhoAmI != 0x98) {
       Serial.println("[WARN] Unexpected WHO_AM_I value: check the readings of this sensor before trusting them.");
     }
