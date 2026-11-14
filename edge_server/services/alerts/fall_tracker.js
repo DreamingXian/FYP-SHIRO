@@ -21,7 +21,9 @@ function createFallTracker({ sessionTtlMs = thresholds.fall.sessionTtlMs, now = 
   /**
    * @param {string} key  wristband identity
    * @param {number|null} seq  fall counter from the wristband, null for old firmware
-   * @returns {{ isNew: boolean, session: object }}
+   * @returns {{ isNew: boolean, session: object, firstSighting: boolean }}
+   *   firstSighting: this tracker holds no earlier fall of the wristband at all,
+   *   which right after a server start means "unknown", not "no fall before".
    */
   function observe(key, seq = null) {
     const t = now();
@@ -35,13 +37,13 @@ function createFallTracker({ sessionTtlMs = thresholds.fall.sessionTtlMs, now = 
       if (sameFall) {
         existing.lastSeen = t;
         if (existing.seq === null && seq !== null) existing.seq = seq;
-        return { isNew: false, session: existing };
+        return { isNew: false, session: existing, firstSighting: false };
       }
     }
 
     const session = { seq, startedAt: t, lastSeen: t, incidentId: null, acknowledged: false };
     sessions.set(key, session);
-    return { isNew: true, session };
+    return { isNew: true, session, firstSighting: !existing };
   }
 
   /** Marks the session of an incident as acknowledged. Returns true when found. */

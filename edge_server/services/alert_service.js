@@ -13,11 +13,34 @@ const timeSeriesService = require('./time_series_service');
 const { nextIncidentId } = require('./alerts/incident_id');
 const { createFallTracker } = require('./alerts/fall_tracker');
 const { createVitalsEvaluator } = require('./alerts/vitals_evaluator');
+const thresholds = require('../config/clinical_thresholds');
 
 // One open fall session per wristband: see alerts/fall_tracker.js
 const fallTracker = createFallTracker();
 // Vitals verification state per wristband: see alerts/vitals_evaluator.js
 const vitalsEvaluator = createVitalsEvaluator();
+
+// The fall tracker lives in memory. For one session lifetime after a start it
+// cannot know whether a wristband that is flagging a fall was already handled
+// before the restart, so the audit log is asked (see evaluateTelemetry).
+const serviceStartedAt = Date.now();
+
+async function findOpenFallIncident(wristbandMac) {
+  if (!wristbandMac) return null;
+  try {
+    const [rows] = await getPool().query(`
+      SELECT incident_id FROM emergency_incident_logs
+      WHERE wristband_mac = ? AND incident_category = 'FALL_ACCIDENT' AND is_simulated = 0
+        AND trigger_timestamp >= (NOW() - INTERVAL ? SECOND)
+      ORDER BY trigger_timestamp DESC LIMIT 1
+    `, [wristbandMac, Math.ceil(thresholds.fall.sessionTtlMs / 1000)]);
+    return rows.length > 0 ? rows[0].incident_id : null;
+  } catch (err) {
+    // When in doubt the alarm is raised: a duplicate is better than a missed fall
+    console.warn('[ALERT SERVICE] Could not check for an earlier incident of this fall:', err.message);
+    return null;
+  }
+}
 
 // Recorded as the acknowledging person until clinician login exists.
 const UNVERIFIED_CLINICIAN = 'Unverified dashboard user';
@@ -218,8 +241,19 @@ async function evaluateTelemetry(telemetry, detectedTag, tagMac) {
   if (telemetry.fall) {
     // Registered synchronously, before any database work: the packets of the
     // other anchors that arrive in the same instant find the session open.
-    const { isNew, session } = fallTracker.observe(key, telemetry.fallSeq);
+    const { isNew, session, firstSighting } = fallTracker.observe(key, telemetry.fallSeq);
     if (!isNew) return null;
+
+    // Shortly after a server start, a fall that is still being flagged may already
+    // have its incident from before the restart: continue that one.
+    if (firstSighting && Date.now() - serviceStartedAt < thresholds.fall.sessionTtlMs) {
+      const earlierIncidentId = await findOpenFallIncident(tagMac);
+      if (earlierIncidentId) {
+        session.incidentId = earlierIncidentId;
+        console.log(`[FALL] ${detectedTag} is still flagging the fall of incident ${earlierIncidentId} (raised before this server start). No new incident.`);
+        return null;
+      }
+    }
 
     const impact = telemetry.impactG !== null ? `${telemetry.impactG} g` : 'not reported';
     console.warn(`[EMERGENCY DETECTED] On-chip fall alarm from ${detectedTag} (${tagMac}), fall #${telemetry.fallSeq ?? 'n/a'}, impact ${impact}`);

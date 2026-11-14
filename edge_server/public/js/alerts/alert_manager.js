@@ -165,7 +165,7 @@ class EmergencyAlertManager {
                 <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-bpm">-- BPM</span>
               </div>
               <div>
-                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Oxygen (SpO2):</span>
+                <span style="font-size: 11px; font-weight: 700; color: #64748B;" title="Not calibrated: shown for information, does not raise alarms.">SpO2 (indicative):</span>
                 <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-spo2">--%</span>
               </div>
             </div>

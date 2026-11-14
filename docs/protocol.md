@@ -127,7 +127,10 @@ An anchor tracks up to 16 wristbands and frees the slot of a wristband that has 
 Alarm rules use the normalised values and the limits in `edge_server/config/clinical_thresholds.js`:
 
 - **Fall:** the first message with `fall` true for a wristband and fall counter opens one incident. Repeats within 90 seconds belong to the same incident.
-- **Vitals:** judged only with skin contact. Extreme readings must persist for 5 seconds. Abnormal readings must be seen in two measurement cycles, or continuously for 30 seconds.
+- **Fall after a server restart:** for 90 seconds after start-up, a wristband that is still flagging a fall is matched to the incident already stored for it, so a restart does not raise the same fall twice.
+- **Heart rate:** judged only with skin contact. An extreme rate must persist for 5 seconds. An abnormal rate must be confirmed (5 seconds without a break) in two measurement cycles, or last 30 seconds without a break. A silence of more than 10 seconds, or a reading that is not abnormal, ends a series.
+- **SpO2:** stored and displayed, but it raises no alarm (`spo2AlarmsEnabled: false` in `config/clinical_thresholds.js`). The wristband's SpO2 formula is not calibrated: in the bench tests of 14 Nov 2026, 68% of the readings on a healthy tester were below 90%. The switch may be turned on after validation against a reference pulse oximeter.
+- **Wristband heart rate:** reported only after three beat intervals have been measured (median), and withdrawn (`0`) when no valid beat has been detected for 6 seconds.
 
 ## 4. Changing the protocol
 

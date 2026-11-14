@@ -485,6 +485,23 @@ static void testVitalsFilter() {
   CHECK(medianOfNonZero(realChange, 4) == 38);
   const uint8_t high[4] = {220, 220, 219, 221};     // values above 127 must not overflow
   CHECK(medianOfNonZero(high, 4) == 220);
+
+  // Bench finding of 14 Nov 2026: the first interval of a measurement was reported
+  // as the heart rate (35 BPM on a healthy wrist). Three intervals are needed now.
+  const uint8_t firstBeat[4] = {35, 0, 0, 0};
+  CHECK(medianOfNonZero(firstBeat, 4, BPM_MIN_BEATS) == 0);
+  const uint8_t twoBeats[4] = {35, 72, 0, 0};
+  CHECK(medianOfNonZero(twoBeats, 4, BPM_MIN_BEATS) == 0);
+  const uint8_t threeBeats[4] = {35, 72, 74, 0};      // the wrong first interval is outvoted
+  CHECK(medianOfNonZero(threeBeats, 4, BPM_MIN_BEATS) == 72);
+  const uint8_t realSlow[4] = {36, 35, 37, 0};        // a real slow rate still gets through
+  CHECK(medianOfNonZero(realSlow, 4, BPM_MIN_BEATS) == 36);
+
+  // A value with no recent beat behind it is withdrawn
+  CHECK(!isBeatStale(10000, 10000 - BPM_STALE_MS));
+  CHECK(isBeatStale(10000, 10000 - BPM_STALE_MS - 1));
+  CHECK(!isBeatStale(500, 0xFFFFFFFFu - 1000u));      // millis() wrap: 1.5 s apart
+  CHECK(60000u / BPM_STALE_MS < (uint32_t)BPM_VALID_MIN);  // the slowest valid rate beats faster than the limit
 }
 
 static std::string readFile(const char* path) {

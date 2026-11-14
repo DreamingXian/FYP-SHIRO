@@ -99,6 +99,35 @@ describe('alarm path', () => {
     assert.equal((await incidentsFor(mac)).length, 2);
   });
 
+  test('a fall that already has its incident from before a server restart is not raised again', async () => {
+    // Bench finding of 14 Nov 2026: restarting the server during the 45-second fall
+    // hold created a second incident for the same fall.
+    const mac = 'IT:FA:11:00:00:09';
+    await pool.query(`
+      INSERT INTO emergency_incident_logs (incident_id, wristband_mac, incident_category, kinematic_impact_force, resolution_status)
+      VALUES ('INC-BEFORE-RESTART', ?, 'FALL_ACCIDENT', 6.1, 'PENDING')
+    `, [mac]);
+
+    // This process has never seen the wristband, exactly like a freshly started server
+    assert.equal(await alertService.evaluateTelemetry(fall(77), 'IT-WB-9', mac), null);
+    assert.equal(await alertService.evaluateTelemetry(fall(77), 'IT-WB-9', mac), null);
+    assert.equal((await incidentsFor(mac)).length, 1);
+
+    // The next fall of the same wristband is a new incident again
+    assert.ok(await alertService.evaluateTelemetry(fall(78), 'IT-WB-9', mac));
+    assert.equal((await incidentsFor(mac)).length, 2);
+  });
+
+  test('an old incident of the same wristband does not swallow a new fall after a restart', async () => {
+    const mac = 'IT:FA:11:00:00:10';
+    await pool.query(`
+      INSERT INTO emergency_incident_logs (incident_id, wristband_mac, incident_category, trigger_timestamp, resolution_status)
+      VALUES ('INC-LONG-AGO', ?, 'FALL_ACCIDENT', NOW() - INTERVAL 10 MINUTE, 'ACKNOWLEDGED')
+    `, [mac]);
+    assert.ok(await alertService.evaluateTelemetry(fall(5), 'IT-WB-10', mac));
+    assert.equal((await incidentsFor(mac)).length, 2);
+  });
+
   test('extreme vitals alarm after they persist, and a fall right afterwards is not delayed', async (t) => {
     const mac = 'IT:FA:11:00:00:05';
     t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
@@ -128,6 +157,18 @@ describe('alarm path', () => {
     const noContact = telemetry({ bpm: 185, spo2: 97, touch: 0 });
     for (let i = 0; i < 20; i++) {
       assert.equal(await alertService.evaluateTelemetry(noContact, 'IT-WB-6', mac), null);
+      t.mock.timers.tick(1000);
+    }
+    assert.equal((await incidentsFor(mac)).length, 0);
+  });
+
+  test('low SpO2 alone raises no incident while the measurement is not calibrated', async (t) => {
+    const mac = 'IT:FA:11:00:00:11';
+    assert.equal(thresholds.vitals.spo2AlarmsEnabled, false);
+    t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+    const lowSpo2 = telemetry({ bpm: 74, spo2: 78 });
+    for (let i = 0; i < 120; i++) {
+      assert.equal(await alertService.evaluateTelemetry(lowSpo2, 'IT-WB-11', mac), null);
       t.mock.timers.tick(1000);
     }
     assert.equal((await incidentsFor(mac)).length, 0);

@@ -26,14 +26,26 @@ module.exports = {
       maxGapMs: 10000 // a longer silence between extreme readings restarts the timer
     },
 
-    // Tier 2: abnormal. Alarms when seen in requiredCycles separate measurement
-    // cycles within cycleWindowMs, or continuously for sustainedMs in one stream.
+    // SpO2 is shown but does not raise alarms. Reason (bench data of 14 Nov 2026,
+    // docs/test_records/phase-3-bench-test.md): on a healthy tester 68% of 66,698
+    // SpO2 readings were below 90% and 33% below 85%. The wristband's SpO2 formula
+    // is not calibrated, so its value is indicative only. Set to true only after
+    // the measurement has been validated against a reference pulse oximeter.
+    spo2AlarmsEnabled: false,
+
+    // Tier 2: abnormal. Judged on unbroken series of abnormal readings: a silence
+    // longer than maxGapMs, or a reading that is not abnormal, ends a series.
+    // Alarms when a series lasts sustainedMs (continuous stream), or when a series
+    // of at least cycleConfirmMs is seen in requiredCycles separate measurement
+    // cycles within cycleWindowMs (15-second measurement every 3 minutes).
     moderate: {
       bpmHigh: 120,
       bpmLow: 50,
       spo2Low: 90,
+      maxGapMs: 10000,
       requiredCycles: 2,
-      cycleGapMs: 60000,      // readings further apart than this belong to different cycles
+      cycleConfirmMs: 5000,
+      cycleGapMs: 60000,      // series further apart than this belong to different cycles
       cycleWindowMs: 600000,  // cycles further apart than this are unrelated
       sustainedMs: 30000
     },

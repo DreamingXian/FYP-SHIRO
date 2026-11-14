@@ -268,8 +268,10 @@ function initLiveLabListeners() {
         if (d.spo2 && d.spo2 > 70) {
           if (valSpo2) valSpo2.innerHTML = `${d.spo2} <span class="metric-unit">%</span>`;
           if (spo2Badge) {
-            spo2Badge.innerText = (d.spo2 >= 95) ? '● Optimal' : '● Mild Hypoxia';
-            spo2Badge.className = (d.spo2 >= 95) ? 'badge badge-live' : 'badge badge-alert';
+            // Not calibrated: no "optimal" or "hypoxia" verdict is shown for this value
+            spo2Badge.innerText = '● Indicative only';
+            spo2Badge.className = 'badge badge-info';
+            spo2Badge.title = 'The SpO2 measurement is not calibrated and does not raise alarms.';
           }
         } else {
           if (valSpo2) valSpo2.innerHTML = `<span style="font-size:32px; color: var(--primary);">Reading...</span>`;

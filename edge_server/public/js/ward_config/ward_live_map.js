@@ -372,7 +372,10 @@
 
     if (spo2El) {
       spo2El.innerText = vitals.spo2 > 0 ? vitals.spo2 : '--';
-      spo2El.style.color = (vitals.spo2 && vitals.spo2 < 94) ? '#DC2626' : '#166534';
+      // SpO2 is indicative only (not calibrated, raises no alarms): shown in a
+      // neutral colour so the screen makes no "normal" or "low" claim about it.
+      spo2El.style.color = '#475569';
+      spo2El.title = 'Indicative only: the SpO2 measurement is not calibrated and does not raise alarms.';
     }
 
     if (batteryEl) {

@@ -66,6 +66,7 @@ const byte RATE_SIZE = 4;
 byte rates[RATE_SIZE];
 byte rateSpot = 0;
 long lastBeat = 0;
+unsigned long lastValidBeatMs = 0;   // 0 = no beat collected since the last reset
 float beatsPerMinute = 0;
 int beatAvg = 0;
 
@@ -601,6 +602,14 @@ void loop() {
   if (maxReady && !maxSensorSleeping) {
     particleSensor.check();
 
+    // A heart rate with no recent beat behind it is withdrawn, not kept on air
+    if (lastValidBeatMs != 0 && isBeatStale(now, lastValidBeatMs)) {
+      beatAvg = 0;
+      rateSpot = 0;
+      for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
+      lastValidBeatMs = 0;
+    }
+
     while (particleSensor.available()) {
       uint32_t irVal  = particleSensor.getFIFOIR();
       uint32_t redVal = particleSensor.getFIFORed();
@@ -623,8 +632,11 @@ void loop() {
             rates[rateSpot++] = (byte)bpm;
             rateSpot %= RATE_SIZE;
 
-            // Median of the last beats: one missed or doubled beat does not move it
-            beatAvg = medianOfNonZero(rates, RATE_SIZE);
+            // Median of the last beats: one missed or doubled beat does not move it.
+            // Nothing is reported before BPM_MIN_BEATS intervals have been measured.
+            beatAvg = medianOfNonZero(rates, RATE_SIZE, BPM_MIN_BEATS);
+            lastValidBeatMs = millis();
+            if (lastValidBeatMs == 0) lastValidBeatMs = 1;
           }
         }
 

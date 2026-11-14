@@ -27,13 +27,18 @@ function isNormal(bpm, spo2, limits) {
 }
 
 function createVitalsEvaluator({ config = thresholds.vitals, now = () => Date.now() } = {}) {
-  // key (wristband) -> { extremeSince, extremeLast, streak, lastAlertAt }
+  // key (wristband) -> {
+  //   extremeSince, extremeLast,          Tier 1 timer
+  //   run: { start, last, counted },      unbroken series of abnormal readings (Tier 2)
+  //   cycles: { count, lastSeen },        measurement cycles in which a run was confirmed
+  //   lastAlertAt
+  // }
   const states = new Map();
 
   function getState(key) {
     let s = states.get(key);
     if (!s) {
-      s = { extremeSince: null, extremeLast: 0, streak: null, lastAlertAt: 0 };
+      s = { extremeSince: null, extremeLast: 0, run: null, cycles: null, lastAlertAt: 0 };
       states.set(key, s);
     }
     return s;
@@ -46,14 +51,26 @@ function createVitalsEvaluator({ config = thresholds.vitals, now = () => Date.no
    */
   function evaluate(key, reading) {
     const bpm = reading && Number.isFinite(reading.bpm) ? reading.bpm : null;
-    const spo2 = reading && Number.isFinite(reading.spo2) ? reading.spo2 : null;
-    if (bpm === null && spo2 === null) return null; // no valid reading: nothing to judge
+    const reportedSpo2 = reading && Number.isFinite(reading.spo2) ? reading.spo2 : null;
+    // SpO2 takes part in alarm decisions only when the deployment says the
+    // measurement can be trusted (see spo2AlarmsEnabled in clinical_thresholds.js).
+    const spo2 = config.spo2AlarmsEnabled ? reportedSpo2 : null;
+    if (bpm === null && spo2 === null) return null; // nothing that may be judged
 
     const t = now();
     const s = getState(key);
 
     // Quiet period after an alarm for this wristband
     if (s.lastAlertAt && t - s.lastAlertAt < config.alertDebounceMs) return null;
+
+    function raise(severity, reason) {
+      s.extremeSince = null;
+      s.run = null;
+      s.cycles = null;
+      s.lastAlertAt = t;
+      // The alarm reports the SpO2 that was measured, whether or not it was judged
+      return { severity, reason, bpm, spo2: reportedSpo2 };
+    }
 
     // ----- Tier 1: extreme, must persist -----
     const extremeReason = classifyExtreme(bpm, spo2, config.extreme);
@@ -63,44 +80,55 @@ function createVitalsEvaluator({ config = thresholds.vitals, now = () => Date.no
       }
       s.extremeLast = t;
       if (t - s.extremeSince >= config.extreme.persistMs) {
-        s.extremeSince = null;
-        s.streak = null;
-        s.lastAlertAt = t;
-        return { severity: 'EXTREME', reason: extremeReason, bpm, spo2 };
+        return raise('EXTREME', extremeReason);
       }
     } else {
       s.extremeSince = null;
     }
 
-    // ----- Tier 2: abnormal, verified over separate cycles or a sustained stream -----
+    // ----- Tier 2: abnormal, verified by an unbroken series of readings -----
     // An extreme reading is also abnormal, so it counts here while Tier 1 waits.
     const moderateReason = classifyModerate(bpm, spo2, config.moderate);
-    if (moderateReason) {
-      const st = s.streak;
-      if (!st || t - st.lastSeen > config.moderate.cycleWindowMs) {
-        s.streak = { count: 1, cycleStart: t, lastSeen: t };
-      } else {
-        if (t - st.lastSeen >= config.moderate.cycleGapMs) {
-          st.count++;
-          st.cycleStart = t;
-        }
-        st.lastSeen = t;
-      }
+    if (!moderateReason) {
+      // Any judged reading that is not abnormal ends the series
+      s.run = null;
+      if (isNormal(bpm, spo2, config.normal)) s.cycles = null;
+      return null;
+    }
 
-      const streak = s.streak;
-      const verifiedByCycles = streak.count >= config.moderate.requiredCycles;
-      const verifiedByDuration = t - streak.cycleStart >= config.moderate.sustainedMs;
-      if (verifiedByCycles || verifiedByDuration) {
-        const how = verifiedByCycles
-          ? `seen in ${streak.count} measurement cycles`
-          : `sustained for ${Math.round((t - streak.cycleStart) / 1000)} s`;
-        s.streak = null;
-        s.extremeSince = null;
-        s.lastAlertAt = t;
-        return { severity: 'SUSTAINED', reason: `${moderateReason}, ${how}`, bpm, spo2 };
+    // A series is unbroken while abnormal readings follow each other closely.
+    // A silence (sleeping sensor, fall being handled, lost contact) ends it:
+    // two readings far apart say nothing about the time in between.
+    if (!s.run || t - s.run.last > config.moderate.maxGapMs) {
+      s.run = { start: t, last: t, counted: false };
+    } else {
+      s.run.last = t;
+    }
+    const runMs = t - s.run.start;
+
+    // Rule A: abnormal without a break for sustainedMs (continuous 1 Hz stream)
+    if (runMs >= config.moderate.sustainedMs) {
+      return raise('SUSTAINED', `${moderateReason}, sustained for ${Math.round(runMs / 1000)} s`);
+    }
+
+    // Rule B: confirmed in requiredCycles separate measurement cycles. A cycle
+    // counts once its series has lasted cycleConfirmMs, not on a single reading.
+    if (s.run.counted && s.cycles) {
+      s.cycles.lastSeen = t;
+    } else if (runMs >= config.moderate.cycleConfirmMs) {
+      s.run.counted = true;
+      const previous = s.cycles;
+      const gap = previous ? s.run.start - previous.lastSeen : null;
+      if (previous && gap >= config.moderate.cycleGapMs && gap <= config.moderate.cycleWindowMs) {
+        s.cycles = { count: previous.count + 1, lastSeen: t };
+      } else if (previous && gap < config.moderate.cycleGapMs) {
+        s.cycles = { count: previous.count, lastSeen: t }; // same cycle, briefly interrupted
+      } else {
+        s.cycles = { count: 1, lastSeen: t };
       }
-    } else if (isNormal(bpm, spo2, config.normal)) {
-      s.streak = null;
+      if (s.cycles.count >= config.moderate.requiredCycles) {
+        return raise('SUSTAINED', `${moderateReason}, seen in ${s.cycles.count} measurement cycles`);
+      }
     }
 
     return null;
@@ -112,7 +140,7 @@ function createVitalsEvaluator({ config = thresholds.vitals, now = () => Date.no
     if (!s) return null;
     return {
       extremePending: s.extremeSince !== null,
-      cycles: s.streak ? s.streak.count : 0
+      cycles: s.cycles ? s.cycles.count : 0
     };
   }
 

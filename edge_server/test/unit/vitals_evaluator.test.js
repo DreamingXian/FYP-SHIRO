@@ -8,10 +8,15 @@ const { createVitalsEvaluator, classifyExtreme, classifyModerate } = require('..
 const V = thresholds.vitals;
 const NORMAL = { bpm: 72, spo2: 98 };
 
-function setup() {
+function setup(overrides = {}) {
   const clock = { t: 1_000_000 };
-  const evaluator = createVitalsEvaluator({ now: () => clock.t });
+  const evaluator = createVitalsEvaluator({ config: { ...V, ...overrides }, now: () => clock.t });
   return { clock, evaluator };
+}
+
+/** An evaluator for a deployment whose SpO2 measurement has been validated. */
+function setupWithSpo2Alarms() {
+  return setup({ spo2AlarmsEnabled: true });
 }
 
 /** Feeds the same reading once per second for `seconds`; returns the first alarm, or null. */
@@ -99,8 +104,8 @@ describe('extreme readings (Tier 1)', () => {
     assert.equal(evaluator.evaluate('TAG-1', { bpm: 35, spo2: 98 }), null, 'two readings far apart are not "persisting"');
   });
 
-  test('low SpO2 alarms even when the heart rate is unknown', () => {
-    const { clock, evaluator } = setup();
+  test('low SpO2 alarms even when the heart rate is unknown (SpO2 alarms switched on)', () => {
+    const { clock, evaluator } = setupWithSpo2Alarms();
     const out = feed(evaluator, clock, { bpm: null, spo2: 80 }, 30);
     assert.equal(out.result.severity, 'EXTREME');
     assert.match(out.result.reason, /Desaturation/);
@@ -118,6 +123,7 @@ describe('extreme readings (Tier 1)', () => {
 
 describe('abnormal readings (Tier 2)', () => {
   const ABNORMAL = { bpm: 130, spo2: 97 };
+  const IN_BETWEEN = { bpm: 110, spo2: 97 }; // neither abnormal nor inside the normal band
 
   test('many packets of one short measurement cycle do not alarm', () => {
     const { clock, evaluator } = setup();
@@ -128,14 +134,25 @@ describe('abnormal readings (Tier 2)', () => {
     }
   });
 
-  test('alarms when the anomaly is seen again in the next measurement cycle', () => {
+  test('alarms when the anomaly is confirmed again in the next measurement cycle', () => {
     const { clock, evaluator } = setup();
     assert.equal(feed(evaluator, clock, ABNORMAL, 15), null);
     clock.t += 165000; // the wristband sleeps until its next 3-minute cycle
-    const result = evaluator.evaluate('TAG-1', ABNORMAL);
-    assert.ok(result);
-    assert.equal(result.severity, 'SUSTAINED');
-    assert.match(result.reason, /2 measurement cycles/);
+    const out = feed(evaluator, clock, ABNORMAL, 15);
+    assert.ok(out);
+    assert.equal(out.result.severity, 'SUSTAINED');
+    assert.match(out.result.reason, /2 measurement cycles/);
+    assert.equal(out.afterMs, V.moderate.cycleConfirmMs, 'the second cycle must be confirmed too, not just glimpsed');
+  });
+
+  test('single abnormal readings in two cycles do not alarm', () => {
+    const { clock, evaluator } = setup();
+    for (let cycle = 0; cycle < 5; cycle++) {
+      assert.equal(evaluator.evaluate('TAG-1', ABNORMAL), null);
+      clock.t += 1000;
+      assert.equal(evaluator.evaluate('TAG-1', IN_BETWEEN), null);
+      clock.t += 179000;
+    }
   });
 
   test('a normal cycle in between clears the verification', () => {
@@ -144,14 +161,14 @@ describe('abnormal readings (Tier 2)', () => {
     clock.t += 165000;
     assert.equal(evaluator.evaluate('TAG-1', NORMAL), null);
     clock.t += 180000;
-    assert.equal(evaluator.evaluate('TAG-1', ABNORMAL), null, 'counting starts again at cycle 1');
+    assert.equal(feed(evaluator, clock, ABNORMAL, 15), null, 'counting starts again at cycle 1');
   });
 
   test('cycles further apart than the window are unrelated', () => {
     const { clock, evaluator } = setup();
-    assert.equal(evaluator.evaluate('TAG-1', ABNORMAL), null);
+    assert.equal(feed(evaluator, clock, ABNORMAL, 15), null);
     clock.t += V.moderate.cycleWindowMs + 1;
-    assert.equal(evaluator.evaluate('TAG-1', ABNORMAL), null);
+    assert.equal(feed(evaluator, clock, ABNORMAL, 15), null);
   });
 
   test('alarms when the anomaly is sustained in one continuous stream', () => {
@@ -159,6 +176,62 @@ describe('abnormal readings (Tier 2)', () => {
     const out = feed(evaluator, clock, ABNORMAL, 120);
     assert.ok(out);
     assert.equal(out.result.severity, 'SUSTAINED');
+    assert.equal(out.afterMs, V.moderate.sustainedMs);
+  });
+
+  test('two readings with a long silence in between are not "sustained"', () => {
+    // Bench finding of 14 Nov 2026: a reading before a fall and one after its
+    // 45-second hold were reported as "sustained for 57 s".
+    const { clock, evaluator } = setup();
+    assert.equal(feed(evaluator, clock, ABNORMAL, 3), null);
+    clock.t += 45000;
+    assert.equal(evaluator.evaluate('TAG-1', ABNORMAL), null);
+    clock.t += 1000;
+    assert.equal(evaluator.evaluate('TAG-1', ABNORMAL), null);
+  });
+
+  test('a reading that is not abnormal breaks the series', () => {
+    const { clock, evaluator } = setup();
+    // 20 s abnormal, one in-between reading, 20 s abnormal: never 30 s without a break
+    assert.equal(feed(evaluator, clock, ABNORMAL, 20), null);
+    assert.equal(evaluator.evaluate('TAG-1', IN_BETWEEN), null);
+    clock.t += 1000;
+    assert.equal(feed(evaluator, clock, ABNORMAL, 20), null);
+  });
+});
+
+describe('SpO2 alarm switch', () => {
+  test('SpO2 alarms are off by default: the measurement is not calibrated', () => {
+    assert.equal(V.spo2AlarmsEnabled, false);
+  });
+
+  test('with the switch off, low SpO2 never raises an alarm', () => {
+    const { clock, evaluator } = setup();
+    assert.equal(feed(evaluator, clock, { bpm: 72, spo2: 75 }, 600), null);
+    assert.equal(feed(evaluator, clock, { bpm: null, spo2: 75 }, 600), null);
+  });
+
+  test('with the switch off, a heart-rate alarm still reports the SpO2 that was measured', () => {
+    const { clock, evaluator } = setup();
+    const out = feed(evaluator, clock, { bpm: 190, spo2: 82 }, 30);
+    assert.match(out.result.reason, /Tachycardia/);
+    assert.equal(out.result.spo2, 82);
+  });
+
+  test('with the switch off, a low SpO2 does not keep a heart-rate verification alive', () => {
+    const { clock, evaluator } = setup();
+    assert.equal(feed(evaluator, clock, { bpm: 130, spo2: 80 }, 15), null);
+    clock.t += 165000;
+    // Heart rate back to normal, SpO2 still low: the verification is cleared
+    assert.equal(evaluator.evaluate('TAG-1', { bpm: 72, spo2: 80 }), null);
+    assert.equal(evaluator.getProgress('TAG-1').cycles, 0);
+  });
+
+  test('with the switch on, sustained low SpO2 alarms', () => {
+    const { clock, evaluator } = setupWithSpo2Alarms();
+    const out = feed(evaluator, clock, { bpm: 72, spo2: 88 }, 120);
+    assert.equal(out.result.severity, 'SUSTAINED');
+    assert.match(out.result.reason, /Hypoxia/);
     assert.equal(out.afterMs, V.moderate.sustainedMs);
   });
 });
