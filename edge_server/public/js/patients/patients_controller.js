@@ -189,8 +189,9 @@ function handlePhotoFileUpload(event) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
 
-  if (!file.type.startsWith('image/')) {
-    if (window.showToast) window.showToast('Please select a valid image file (JPG, PNG, WebP).', 'warning');
+  // The server stores PNG, JPEG and WebP only
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    if (window.showToast) window.showToast('Please select a JPG, PNG or WebP image.', 'warning');
     return;
   }
 
@@ -635,9 +636,12 @@ async function handlePatientAdmission(event) {
               body: JSON.stringify({ patient_id: id, image_data: photoUrl })
             });
             const uploadData = await uploadRes.json();
-            if (uploadData.success && uploadData.photo_url) {
-              photoUrl = uploadData.photo_url;
+            if (!uploadData.success || !uploadData.photo_url) {
+              // Without a stored photo the admission is not sent: the patient is not admitted with a broken picture
+              if (window.showToast) window.showToast(`Photo upload failed: ${uploadData.error || 'unknown error'}`, 'danger');
+              return;
             }
+            photoUrl = uploadData.photo_url;
           }
 
           // Submit admission to API
@@ -987,8 +991,9 @@ async function editPatientInfo(patientId) {
       const file = event.target.files && event.target.files[0];
       if (!file) return;
 
-      if (!file.type.startsWith('image/')) {
-        if (window.showToast) window.showToast('Please select a valid image file (JPG, PNG, WebP).', 'warning');
+      // The server stores PNG, JPEG and WebP only
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+        if (window.showToast) window.showToast('Please select a JPG, PNG or WebP image.', 'warning');
         return;
       }
 
@@ -1032,7 +1037,7 @@ async function editPatientInfo(patientId) {
           
           <!-- Photo Re-upload / Preset Select Bar -->
           <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <input type="file" id="edit-patient-photo-file" accept="image/*" style="display:none;" onchange="handleEditPhotoFileUpload(event)">
+            <input type="file" id="edit-patient-photo-file" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="handleEditPhotoFileUpload(event)">
             <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('edit-patient-photo-file').click()" style="font-size:11px; padding:3px 9px;">
               📷 Re-upload Photo
             </button>
@@ -1123,9 +1128,11 @@ async function editPatientInfo(patientId) {
                     body: JSON.stringify({ patient_id: p.patient_id, image_data: updatedPhoto })
                   });
                   const uploadData = await uploadRes.json();
-                  if (uploadData.success && uploadData.photo_url) {
-                    updatedPhoto = uploadData.photo_url;
+                  if (!uploadData.success || !uploadData.photo_url) {
+                    if (window.showToast) window.showToast(`Photo upload failed: ${uploadData.error || 'unknown error'}`, 'danger');
+                    return;
                   }
+                  updatedPhoto = uploadData.photo_url;
                 }
 
                 const updateRes = await fetch('/api/patients/update', {
