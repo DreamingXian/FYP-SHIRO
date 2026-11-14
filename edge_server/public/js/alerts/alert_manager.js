@@ -118,7 +118,7 @@ class EmergencyAlertManager {
                   CRITICAL FALL DETECTED
                 </div>
                 <div style="font-size: 13px; color: #64748B; font-weight: 600;" id="em-modal-id">
-                  Incident ID: INC-20261108-0000
+                  Incident ID: --
                 </div>
               </div>
             </div>
@@ -132,29 +132,41 @@ class EmergencyAlertManager {
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
               <div>
                 <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748B;">Target Patient</div>
-                <div style="font-size: 17px; font-weight: 800; color: #0F172A; margin-top: 2px;" id="em-patient-name">Tan Ah Kow</div>
-                <div style="font-size: 12px; color: #64748B;" id="em-patient-id">ID: P-001 | Risk: HIGH</div>
+                <div style="font-size: 17px; font-weight: 800; color: #0F172A; margin-top: 2px;" id="em-patient-name">--</div>
+                <div style="font-size: 12px; color: #64748B;" id="em-patient-id">Patient ID: --</div>
               </div>
 
               <div>
                 <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748B;">Ward & Spatial Location</div>
-                <div style="font-size: 17px; font-weight: 800; color: #0F172A; margin-top: 2px;" id="em-location">WARD-001 (Bed 1)</div>
-                <div style="font-size: 12px; font-family: monospace; color: #1E60F2; font-weight: 700;" id="em-coords">Coordinates: (2.45m, 1.82m)</div>
+                <div style="font-size: 17px; font-weight: 800; color: #0F172A; margin-top: 2px;" id="em-location">--</div>
+                <div style="font-size: 12px; font-family: monospace; color: #1E60F2; font-weight: 700;" id="em-coords">Grid Location: --</div>
               </div>
             </div>
 
-            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; gap: 24px;">
+            <!-- Fall measurements reported by the wristband (shown for fall incidents only) -->
+            <div id="em-fall-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; flex-wrap: wrap; gap: 8px 24px;">
+              <div>
+                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Free-fall Min:</span>
+                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-freefall">--</span>
+              </div>
               <div>
                 <span style="font-size: 11px; font-weight: 700; color: #64748B;">Impact Force:</span>
-                <span style="font-size: 13px; font-weight: 800; color: #DC2626; margin-left: 4px;" id="em-impact">3.42g</span>
+                <span style="font-size: 13px; font-weight: 800; color: #DC2626; margin-left: 4px;" id="em-impact">--</span>
               </div>
+              <div>
+                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Post-impact Motion:</span>
+                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-stillness">--</span>
+              </div>
+            </div>
+
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; flex-wrap: wrap; gap: 8px 24px;">
               <div>
                 <span style="font-size: 11px; font-weight: 700; color: #64748B;">Heart Rate:</span>
-                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-bpm">88 BPM</span>
+                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-bpm">-- BPM</span>
               </div>
               <div>
-                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Oxygen (SpO2):</span>
-                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-spo2">97%</span>
+                <span style="font-size: 11px; font-weight: 700; color: #64748B;" title="Not calibrated: shown for information, does not raise alarms.">SpO2 (indicative):</span>
+                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-spo2">--%</span>
               </div>
             </div>
           </div>
@@ -189,8 +201,14 @@ class EmergencyAlertManager {
         const incident = this.currentModalIncident;
         this.hideEmergencyModal();
 
-        const targetWard = incident?.ward_id || 'WARD-005';
-        const targetTag = incident?.device_id || incident?.patient_id || 'TAG-002';
+        const targetWard = incident?.ward_id || null;
+        const targetTag = incident?.device_id || incident?.patient_id || null;
+        if (!targetWard) {
+          if (typeof showToast === 'function') {
+            showToast('The ward of this incident is unknown, so it cannot be shown on the live map.', 'warning');
+          }
+          return;
+        }
 
         if (typeof window.navigateToWardLiveMap === 'function') {
           window.navigateToWardLiveMap(targetWard, targetTag);
@@ -307,14 +325,30 @@ class EmergencyAlertManager {
       iconEl.innerText = '📍';
     }
 
-    document.getElementById('em-modal-id').innerText = `Incident ID: ${incident.incident_id || 'PENDING'}`;
-    document.getElementById('em-patient-name').innerText = incident.patient_name || 'Tan Ah Kow';
-    document.getElementById('em-patient-id').innerText = `Patient ID: ${incident.patient_id || 'P-001'}`;
-    document.getElementById('em-location').innerText = `${incident.ward_id || 'WARD-001'} (${incident.bed_id || 'Bed 1'})`;
-    document.getElementById('em-coords').innerText = `Grid Location: (${incident.pos_x || 2.40}m, ${incident.pos_y || 1.80}m)`;
-    document.getElementById('em-impact').innerText = `${incident.kinematic_impact_force || 3.42}g`;
-    document.getElementById('em-bpm').innerText = `${incident.heart_rate || '--'} BPM`;
-    document.getElementById('em-spo2').innerText = `${incident.spo2 || '--'}%`;
+    // Unknown values are shown as unknown. Nothing is filled in on the screen.
+    const known = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+    const simulated = incident.is_simulated === true || incident.is_simulated === 1;
+    if (simulated) catEl.innerText = `[SIMULATION] ${catEl.innerText}`;
+
+    document.getElementById('em-modal-id').innerText =
+      `Incident ID: ${incident.incident_id || 'PENDING'}${simulated ? ' (simulated test alarm)' : ''}`;
+    document.getElementById('em-patient-name').innerText = incident.patient_name || 'Unknown patient';
+    document.getElementById('em-patient-id').innerText = `Patient ID: ${incident.patient_id || 'not assigned'}`;
+    document.getElementById('em-location').innerText = incident.ward_id
+      ? `${incident.ward_id}${incident.bed_id ? ` (${incident.bed_id})` : ''}`
+      : 'Ward unknown';
+    document.getElementById('em-coords').innerText = (known(incident.pos_x) && known(incident.pos_y))
+      ? `Grid Location: (${Number(incident.pos_x).toFixed(2)}m, ${Number(incident.pos_y).toFixed(2)}m)`
+      : 'Grid Location: unknown';
+    // The three values of the wristband's fall check, exactly as it measured them
+    const gValue = (v) => known(v) ? `${Number(v).toFixed(2)}g` : 'not reported';
+    document.getElementById('em-fall-row').style.display =
+      incident.incident_category === 'FALL_ACCIDENT' ? 'flex' : 'none';
+    document.getElementById('em-freefall').innerText = gValue(incident.freefall_min_g);
+    document.getElementById('em-impact').innerText = gValue(incident.kinematic_impact_force);
+    document.getElementById('em-stillness').innerText = gValue(incident.post_impact_stillness);
+    document.getElementById('em-bpm').innerText = known(incident.heart_rate) ? `${incident.heart_rate} BPM` : '-- BPM';
+    document.getElementById('em-spo2').innerText = known(incident.spo2) ? `${incident.spo2}%` : '--%';
     document.getElementById('em-alert-msg').innerText = incident.alert_message || 'Clinical safety event detected.';
 
     backdrop.style.display = 'flex';
@@ -333,7 +367,9 @@ class EmergencyAlertManager {
 
     if (this.activeAlerts.length > 0) {
       const topAlert = this.activeAlerts[0];
-      bannerText.innerText = `🚨 EMERGENCY: ${topAlert.incident_category.replace('_', ' ')} on ${topAlert.patient_name} in ${topAlert.ward_id}! Click to inspect.`;
+      const simulatedTag = (topAlert.is_simulated === true || topAlert.is_simulated === 1) ? '[SIMULATION] ' : '';
+      const bannerWard = topAlert.ward_id ? ` in ${topAlert.ward_id}` : ' (ward unknown)';
+      bannerText.innerText = `🚨 ${simulatedTag}EMERGENCY: ${String(topAlert.incident_category || 'INCIDENT').replace('_', ' ')} on ${topAlert.patient_name || 'unknown patient'}${bannerWard}! Click to inspect.`;
       banner.style.display = 'block';
     } else {
       banner.style.display = 'none';

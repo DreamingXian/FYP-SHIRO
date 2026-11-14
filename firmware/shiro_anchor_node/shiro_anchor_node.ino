@@ -1,12 +1,14 @@
 /*
  * =========================================================================================
- *   SHIRO Anchor Node - Combined RSSI Localization & Vitals Gateway (V3 - Path 2)
+ *   SHIRO Anchor Node - Combined RSSI Localization & Vitals Gateway (V4 - Protocol 2)
  *   Hardware: ESP32-WROOM-32E (or generic ESP32)
  *   Function: Continuously scans for SHIRO-WRISTBAND BLE broadcasts, records raw RSSI
  *             for IPS multilateration, unpacks physiological/kinematic telemetry,
  *             and streams unified telemetry packets to the Edge Server over Wi-Fi/MQTT.
  *   Note:     UNIVERSAL FIRMWARE - Flash the EXACT same code to all anchor boards!
  *             Device Identifiers are auto-assigned by the Central Edge Server.
+ *   Protocol: Telemetry packet version 2 (shiro_packet.h, docs/protocol.md).
+ *             The wristband and ALL anchors must run the same version: flash them together.
  *   Project:  MR-Patient Connect (SHIRO) - Final Year Project (RSWG7)
  * =========================================================================================
  */
@@ -17,6 +19,9 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "shiro_packet.h"
 
 // =============================================================================
 // 1. Wi-Fi & MQTT Server Configuration
@@ -46,26 +51,31 @@ WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 BLEScan* pBLEScan = nullptr;
 
-// Real-time tracking table for multiple concurrent wristband tags
+// This anchor's own MAC address as text, read once at start-up
+char anchorMac[18] = {0};
+
+// =============================================================================
+// 2. Tracking table for the wristbands this anchor can hear
+// =============================================================================
+// The BLE scan callback (Bluetooth task) writes this table while loop() (Arduino
+// task) reads it. Every access goes through tagTableMutex. Entries hold plain
+// data only, so a copy taken under the lock can be used after releasing it.
 struct HeardTag {
-  String mac;
+  char mac[18];
   int rssi;
-  unsigned long timestamp;
-  bool pending;
-  // Embedded Physiological & Kinematic Vitals
-  int bpm;
-  int spo2;
-  int battery;
-  bool isCharging;
-  int touch;
-  bool active;
-  float g;
-  String motion;
+  unsigned long lastHeardMs;
+  bool pending;             // heard since the last publish
+  bool telemetryFresh;      // a decodable telemetry packet arrived since the last publish
+  bool unsupportedPacket;   // a SHIRO packet of another version arrived since the last publish
+  shiro::Telemetry telemetry;
 };
 
-const int MAX_TRACKED_TAGS = 8;
+const int MAX_TRACKED_TAGS = 16;
+const unsigned long TAG_EVICT_AFTER_MS = 30000;  // a silent wristband frees its slot after 30 s
 HeardTag trackedTags[MAX_TRACKED_TAGS];
 int trackedTagCount = 0;
+SemaphoreHandle_t tagTableMutex = nullptr;
+volatile uint32_t droppedPackets = 0;            // table full or lock busy
 
 volatile bool pendingCmd = false;
 char pendingTargetMac[24] = {0};
@@ -74,90 +84,97 @@ unsigned long lastPublishTime = 0;
 unsigned long lastPacketHeard = 0;
 const unsigned long PUBLISH_INTERVAL = 150; // Publish ~6-7 times per second (every 150 ms)
 
+// The largest telemetry message is about 330 characters
+const size_t PAYLOAD_BUFFER_SIZE = 512;
+const uint16_t MQTT_BUFFER_SIZE = 768;      // payload + topic + MQTT header
+
+// Finds a tag by MAC. Call only while holding tagTableMutex.
+int findTagIndex(const char* mac) {
+  for (int i = 0; i < trackedTagCount; i++) {
+    if (strcasecmp(trackedTags[i].mac, mac) == 0) return i;
+  }
+  return -1;
+}
+
+// Removes wristbands that have been silent too long. Call only while holding tagTableMutex.
+void evictSilentTags(unsigned long now) {
+  int kept = 0;
+  for (int i = 0; i < trackedTagCount; i++) {
+    if (now - trackedTags[i].lastHeardMs <= TAG_EVICT_AFTER_MS) {
+      if (kept != i) trackedTags[kept] = trackedTags[i];
+      kept++;
+    }
+  }
+  trackedTagCount = kept;
+}
+
 // -----------------------------------------------------------------------------
 // BLE Advertised Device Callback (Triggers whenever an RF packet is heard)
 // -----------------------------------------------------------------------------
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     bool isWristband = false;
+    bool decoded = false;
+    bool unsupported = false;
+    shiro::Telemetry telemetry;
 
-    // Match by Device Name, Service UUID, or Manufacturer Header
-    if (advertisedDevice.haveName() && advertisedDevice.getName() == "SHIRO-WRISTBAND") {
-      isWristband = true;
-    } else if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
-      isWristband = true;
-    } else if (advertisedDevice.haveManufacturerData()) {
+    // 1. Telemetry packet in the manufacturer data
+    if (advertisedDevice.haveManufacturerData()) {
       String mfg = advertisedDevice.getManufacturerData();
-      if (mfg.length() >= 9 && (uint8_t)mfg[0] == 0x53 && (uint8_t)mfg[1] == 0x48) {
+      shiro::DecodeResult result = shiro::decodePacket((const uint8_t*)mfg.c_str(), mfg.length(), telemetry);
+      if (result == shiro::DECODE_OK) {
+        isWristband = true;
+        decoded = true;
+      } else if (result != shiro::DECODE_NOT_SHIRO) {
+        // A SHIRO wristband with another packet version: track its position,
+        // but do not guess its telemetry.
+        isWristband = true;
+        unsupported = true;
+      }
+    }
+
+    // 2. Otherwise match by device name or service UUID (RSSI only)
+    if (!isWristband) {
+      if (advertisedDevice.haveName() && advertisedDevice.getName() == "SHIRO-WRISTBAND") {
+        isWristband = true;
+      } else if (advertisedDevice.haveServiceUUID() && advertisedDevice.isAdvertisingService(serviceUUID)) {
         isWristband = true;
       }
     }
 
-    if (isWristband) {
-      String tagMac = advertisedDevice.getAddress().toString();
-      int rssi = advertisedDevice.getRSSI();
-      unsigned long now = millis();
+    if (!isWristband) return;
 
-      int bpm = 0;
-      int spo2 = 0;
-      int battery = 100;
-      bool isCharging = false;
-      int touch = 0;
-      bool isActiveStreaming = false;
-      float g = 1.0f;
-      String motion = "STATIONARY";
+    String tagMac = advertisedDevice.getAddress().toString();
+    int rssi = advertisedDevice.getRSSI();
+    unsigned long now = millis();
 
-      // Unpack 9-byte binary telemetry from Manufacturer Data
-      if (advertisedDevice.haveManufacturerData()) {
-        String mfg = advertisedDevice.getManufacturerData();
-        if (mfg.length() >= 9 && (uint8_t)mfg[0] == 0x53 && (uint8_t)mfg[1] == 0x48) {
-          bpm = (uint8_t)mfg[2];
-          spo2 = (uint8_t)mfg[3];
-
-          uint8_t mCode = (uint8_t)mfg[4];
-          if (mCode == 1) motion = "HAND_MOVEMENT";
-          else if (mCode == 2) motion = "WALKING";
-          else if (mCode == 3) motion = "FALL_EMERGENCY";
-          else motion = "STATIONARY";
-
-          battery = (uint8_t)mfg[5];
-          uint8_t flags = (uint8_t)mfg[6];
-          isCharging = (flags & 0x01) != 0;
-          touch = (flags & 0x02) != 0 ? 1 : 0;
-          bool isEmergencyFall = (flags & 0x04) != 0;
-          isActiveStreaming = (flags & 0x08) != 0;
-          if (isEmergencyFall) motion = "FALL_EMERGENCY";
-
-          int16_t gScaled = ((int16_t)(int8_t)mfg[7] << 8) | (uint8_t)mfg[8];
-          g = gScaled / 100.0f;
-        }
-      }
-
-      // Find or allocate tag entry in tracking table
-      int foundIdx = -1;
-      for (int i = 0; i < trackedTagCount; i++) {
-        if (trackedTags[i].mac.equalsIgnoreCase(tagMac)) {
-          foundIdx = i;
-          break;
-        }
-      }
-
-      int targetIdx = foundIdx >= 0 ? foundIdx : (trackedTagCount < MAX_TRACKED_TAGS ? trackedTagCount++ : -1);
-      if (targetIdx >= 0) {
-        trackedTags[targetIdx].mac = tagMac;
-        trackedTags[targetIdx].rssi = rssi;
-        trackedTags[targetIdx].timestamp = now;
-        trackedTags[targetIdx].pending = true;
-        trackedTags[targetIdx].bpm = bpm;
-        trackedTags[targetIdx].spo2 = spo2;
-        trackedTags[targetIdx].battery = battery;
-        trackedTags[targetIdx].isCharging = isCharging;
-        trackedTags[targetIdx].touch = touch;
-        trackedTags[targetIdx].active = isActiveStreaming;
-        trackedTags[targetIdx].g = g;
-        trackedTags[targetIdx].motion = motion;
-      }
+    if (xSemaphoreTake(tagTableMutex, pdMS_TO_TICKS(20)) != pdTRUE) {
+      droppedPackets = droppedPackets + 1;
+      return;
     }
+
+    int idx = findTagIndex(tagMac.c_str());
+    if (idx < 0 && trackedTagCount < MAX_TRACKED_TAGS) {
+      idx = trackedTagCount++;
+      memset(&trackedTags[idx], 0, sizeof(HeardTag));
+      strncpy(trackedTags[idx].mac, tagMac.c_str(), sizeof(trackedTags[idx].mac) - 1);
+    }
+
+    if (idx >= 0) {
+      HeardTag& tag = trackedTags[idx];
+      tag.rssi = rssi;
+      tag.lastHeardMs = now;
+      tag.pending = true;
+      if (decoded) {
+        tag.telemetry = telemetry;
+        tag.telemetryFresh = true;
+      }
+      if (unsupported) tag.unsupportedPacket = true;
+    } else {
+      droppedPackets = droppedPackets + 1; // table full: every slot holds a wristband heard in the last 30 s
+    }
+
+    xSemaphoreGive(tagTableMutex);
   }
 };
 
@@ -184,13 +201,22 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
     if (strlen(targetMac) >= 12) {
       // Connect only if this anchor heard the target tag within 3.5s with strong RSSI (>= -82 dBm)
-      for (int i = 0; i < trackedTagCount; i++) {
-        if (trackedTags[i].mac.equalsIgnoreCase(targetMac) && (millis() - trackedTags[i].timestamp < 3500) && trackedTags[i].rssi >= -82) {
-          strncpy(pendingTargetMac, targetMac, sizeof(pendingTargetMac) - 1);
-          pendingCmd = true;
-          Serial.printf("\n[ANCHOR] Nearest to tag %s (RSSI: %d). Queued 1 Hz Active Mode Escalation!\n", targetMac, trackedTags[i].rssi);
-          break;
+      bool inRange = false;
+      int heardRssi = 0;
+      if (xSemaphoreTake(tagTableMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        int idx = findTagIndex(targetMac);
+        if (idx >= 0 && (millis() - trackedTags[idx].lastHeardMs < 3500) && trackedTags[idx].rssi >= -82) {
+          inRange = true;
+          heardRssi = trackedTags[idx].rssi;
         }
+        xSemaphoreGive(tagTableMutex);
+      }
+
+      if (inRange) {
+        strncpy(pendingTargetMac, targetMac, sizeof(pendingTargetMac) - 1);
+        pendingTargetMac[sizeof(pendingTargetMac) - 1] = '\0';
+        pendingCmd = true;
+        Serial.printf("\n[ANCHOR] Nearest to tag %s (RSSI: %d). Queued 1 Hz Active Mode Escalation!\n", targetMac, heardRssi);
       }
     }
   }
@@ -255,7 +281,7 @@ void setupWifi() {
 // -----------------------------------------------------------------------------
 void reconnectMQTT() {
   while (!mqttClient.connected()) {
-    Serial.printf("[ANCHOR %s] Connecting to MQTT Broker on %s... ", WiFi.macAddress().c_str(), mqtt_server);
+    Serial.printf("[ANCHOR %s] Connecting to MQTT Broker on %s... ", anchorMac, mqtt_server);
     String macClean = WiFi.macAddress();
     macClean.replace(":", "");
     char clientId[50];
@@ -273,6 +299,52 @@ void reconnectMQTT() {
 }
 
 // -----------------------------------------------------------------------------
+// Builds the JSON message for one wristband. Fields are specified in docs/protocol.md.
+// Returns the length, or 0 when the message does not fit the buffer.
+// -----------------------------------------------------------------------------
+size_t buildTelemetryJson(const HeardTag& tag, unsigned long now, char* out, size_t outSize) {
+  int n = snprintf(out, outSize,
+                   "{\"anchor_mac\":\"%s\",\"tag_mac\":\"%s\",\"rssi\":%d",
+                   anchorMac, tag.mac, tag.rssi);
+  if (n < 0 || (size_t)n >= outSize) return 0;
+
+  // "v": 2 = telemetry follows; 0 = the wristband sends a packet version this
+  // anchor cannot read. No "v" at all = heard, but no telemetry packet this time.
+  if (tag.telemetryFresh || tag.unsupportedPacket) {
+    int v = snprintf(out + n, outSize - n, ",\"v\":%u",
+                     (unsigned)(tag.telemetryFresh ? shiro::PACKET_VERSION : 0));
+    if (v < 0 || (size_t)(n + v) >= outSize) return 0;
+    n += v;
+  }
+
+  // Telemetry is included only when a packet was decoded since the last publish:
+  // an old or unreadable packet is never replaced by default values.
+  if (tag.telemetryFresh) {
+    const shiro::Telemetry& t = tag.telemetry;
+    int m = snprintf(out + n, outSize - n,
+                     ",\"bpm\":%u,\"spo2\":%u,\"battery\":%u,\"charging\":%s,\"motion\":\"%s\",\"g\":%.2f,"
+                     "\"touch\":%d,\"active\":%s,\"fall\":%s,\"fall_seq\":%u,"
+                     "\"impact_g\":%.2f,\"freefall_g\":%.2f,\"still_g\":%.2f,"
+                     "\"imu_fault\":%s,\"ppg_fault\":%s",
+                     (unsigned)t.bpm, (unsigned)t.spo2, (unsigned)t.battery,
+                     t.charging ? "true" : "false",
+                     shiro::motionName(t.motion), t.g,
+                     t.contact ? 1 : 0,
+                     t.active ? "true" : "false",
+                     t.fall ? "true" : "false", (unsigned)t.fallSeq,
+                     t.impactG, t.freefallG, t.stillG,
+                     t.imuFault ? "true" : "false",
+                     t.ppgFault ? "true" : "false");
+    if (m < 0 || (size_t)(n + m) >= outSize) return 0;
+    n += m;
+  }
+
+  int k = snprintf(out + n, outSize - n, ",\"ts\":%lu}", now);
+  if (k < 0 || (size_t)(n + k) >= outSize) return 0;
+  return (size_t)(n + k);
+}
+
+// -----------------------------------------------------------------------------
 // Arduino Setup
 // -----------------------------------------------------------------------------
 void setup() {
@@ -280,16 +352,27 @@ void setup() {
   delay(1500);
 
   Serial.println("\n==========================================================");
-  Serial.println("  SHIRO Wall Anchor - Dual RSSI & Telemetry Gateway (V3)");
+  Serial.println("  SHIRO Wall Anchor - Dual RSSI & Telemetry Gateway (V4)");
   Serial.println("  Universal Firmware - Identity Managed by Edge Server");
+  Serial.printf("  Telemetry packet version %u\n", (unsigned)shiro::PACKET_VERSION);
   Serial.println("==========================================================");
+
+  tagTableMutex = xSemaphoreCreateMutex();
+  if (tagTableMutex == nullptr) {
+    Serial.println("[FATAL] Could not create the tag table lock. Restarting...");
+    delay(2000);
+    ESP.restart();
+  }
 
   // 1. Connect to Wi-Fi
   setupWifi();
+  strncpy(anchorMac, WiFi.macAddress().c_str(), sizeof(anchorMac) - 1);
 
   // 2. Configure MQTT Client
   mqttClient.setServer(mqtt_server, mqtt_port);
-  mqttClient.setBufferSize(384);
+  if (!mqttClient.setBufferSize(MQTT_BUFFER_SIZE)) {
+    Serial.println("[WARN] Could not allocate the MQTT buffer: large messages will be dropped.");
+  }
   mqttClient.setCallback(mqttCallback);
 
   // 3. Initialize BLE Radio Scanner
@@ -328,41 +411,66 @@ void loop() {
   if (now - lastPublishTime >= PUBLISH_INTERVAL) {
     lastPublishTime = now;
 
-    bool anyPublished = false;
-    if (mqttClient.connected()) {
-      for (int i = 0; i < trackedTagCount; i++) {
-        if (trackedTags[i].pending) {
-          trackedTags[i].pending = false;
-          anyPublished = true;
-          lastPacketHeard = now;
+    // Copy what needs publishing while holding the lock, publish after releasing it:
+    // the network must never block the Bluetooth task.
+    static HeardTag toPublish[MAX_TRACKED_TAGS];
+    int publishCount = 0;
+    const bool linkUp = mqttClient.connected();
 
-          char payload[280];
-          snprintf(payload, sizeof(payload),
-                   "{\"anchor_mac\":\"%s\",\"tag_mac\":\"%s\",\"rssi\":%d,\"bpm\":%d,\"spo2\":%d,\"battery\":%d,\"charging\":%s,\"motion\":\"%s\",\"g\":%.2f,\"touch\":%d,\"active\":%s,\"ts\":%lu}",
-                   WiFi.macAddress().c_str(), trackedTags[i].mac.c_str(), trackedTags[i].rssi,
-                   trackedTags[i].bpm, trackedTags[i].spo2, trackedTags[i].battery,
-                   trackedTags[i].isCharging ? "true" : "false",
-                   trackedTags[i].motion.c_str(), trackedTags[i].g, trackedTags[i].touch,
-                   trackedTags[i].active ? "true" : "false", now);
-
-          mqttClient.publish(mqtt_topic, payload);
-          Serial.printf("[ANCHOR %s STREAM] -> %s\n", WiFi.macAddress().c_str(), payload);
+    if (xSemaphoreTake(tagTableMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      evictSilentTags(now);
+      if (linkUp) {
+        for (int i = 0; i < trackedTagCount; i++) {
+          if (trackedTags[i].pending) {
+            toPublish[publishCount++] = trackedTags[i];
+            trackedTags[i].pending = false;
+            trackedTags[i].telemetryFresh = false;
+            trackedTags[i].unsupportedPacket = false;
+          }
         }
+      }
+      xSemaphoreGive(tagTableMutex);
+    }
+
+    if (linkUp) {
+      static char payload[PAYLOAD_BUFFER_SIZE];
+
+      for (int i = 0; i < publishCount; i++) {
+        lastPacketHeard = now;
+        size_t length = buildTelemetryJson(toPublish[i], now, payload, sizeof(payload));
+        if (length == 0) {
+          Serial.printf("[ANCHOR %s] Message for %s does not fit the buffer: not sent.\n", anchorMac, toPublish[i].mac);
+          continue;
+        }
+        if (!mqttClient.publish(mqtt_topic, payload)) {
+          Serial.printf("[ANCHOR %s] MQTT publish failed (%u bytes).\n", anchorMac, (unsigned)length);
+          continue;
+        }
+        Serial.printf("[ANCHOR %s STREAM] -> %s\n", anchorMac, payload);
       }
 
       // Standby Heartbeat when no wristbands are heard
-      if (!anyPublished && (now - lastPacketHeard >= 2000)) {
+      if (publishCount == 0 && (now - lastPacketHeard >= 2000)) {
         lastPacketHeard = now;
 
-        char payload[130];
         snprintf(payload, sizeof(payload),
                  "{\"anchor_mac\":\"%s\",\"status\":\"STANDBY\",\"rssi\":0,\"ts\":%lu}",
-                 WiFi.macAddress().c_str(), now);
+                 anchorMac, now);
 
         mqttClient.publish(mqtt_topic, payload);
-        Serial.printf("[ANCHOR %s STANDBY] -> %s\n", WiFi.macAddress().c_str(), payload);
+        Serial.printf("[ANCHOR %s STANDBY] -> %s\n", anchorMac, payload);
       }
     }
+  }
+
+  // 4. Report dropped Bluetooth packets, at most every 10 seconds
+  static unsigned long lastDropReport = 0;
+  static uint32_t reportedDrops = 0;
+  if (droppedPackets != reportedDrops && (now - lastDropReport >= 10000)) {
+    lastDropReport = now;
+    Serial.printf("[ANCHOR %s] %lu wristband packets dropped so far (table full or busy).\n",
+                  anchorMac, (unsigned long)droppedPackets);
+    reportedDrops = droppedPackets;
   }
 
   delay(10); // Yield for background Wi-Fi and FreeRTOS tasks

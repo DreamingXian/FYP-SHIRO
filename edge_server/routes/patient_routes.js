@@ -69,7 +69,8 @@ async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
     const timeSeriesService = require('../services/time_series_service');
     const { getPool } = require('../database/db');
     const patientId = parsedUrl.searchParams.get('id') || 'P-001';
-    const range = parsedUrl.searchParams.get('range') || '-24h';
+    // Only the ranges the service knows are answered; anything else gets the default
+    const { range, window } = timeSeriesService.resolveHistoryRange(parsedUrl.searchParams.get('range'));
     try {
       let wristbandMac = null;
       let deviceId = null;
@@ -98,8 +99,9 @@ async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
         patient_id: patientId, 
         device_id: deviceId,
         wristband_mac: wristbandMac,
-        range, 
-        count: vitals.length, 
+        range,
+        window,
+        count: vitals.length,
         vitals 
       }));
     } catch (err) {

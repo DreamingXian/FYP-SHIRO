@@ -156,7 +156,11 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 
 * **Physical Hardware:** Seeed Studio XIAO ESP32-C6 Microcontroller
 * **Sensors Attached:** HW-605 (MAX30102 PPG Optical Sensor) + MPU-6050 (6-DOF IMU) + 100k/100k battery divider on `D0`
-* **Firmware Location:** `firmware/shiro_wristband_vitals/shiro_wristband_vitals.ino`
+* **Firmware Location:** `firmware/shiro_wristband_vitals/shiro_wristband_vitals.ino` (the `.h` files in the same folder open as tabs and are compiled with it)
+* **Telemetry packet:** version 2, defined in `docs/protocol.md`
+
+> [!IMPORTANT]
+> The wristband and **all** anchors must run the same packet version. After a protocol change, flash the wristband and every anchor in one session. An anchor that hears a wristband with another version still tracks its position but forwards no vitals or fall alerts, and the edge server prints a `[PROTOCOL]` warning.
 
 #### Hardware Wiring Diagram:
 | Sensor Pin / Signal | XIAO ESP32-C6 Pin | Function |
@@ -175,6 +179,18 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 3. Select **Tools --> Port** (COM port for XIAO).
 4. Select **Tools --> Upload Speed --> "921600"**.
 5. Click **Upload** (`Ctrl + U`).
+
+#### What the Serial Monitor shows at power-on (115200 baud):
+```
+[OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x68.
+[SELF-TEST] Fall detector: PASS (fall: detected, short dip: ignored, movement: ignored)
+[OK] HW-605 (MAX30102) Initialized.
+[OK] Telemetry packet version 2, 15 bytes.
+```
+A `[FAIL]` line for a sensor means that sensor is reported as faulty in every packet and shown as **SENSOR FAULT** on the dashboard; the wristband keeps running with the sensors that work.
+
+> [!NOTE]
+> The "firm shake starts 1 Hz active mode" shortcut is now a bench-test option. It is off by default; set `SHIRO_DEBUG_SHAKE_WAKE` to `1` at the top of the sketch to use it. Start active mode from the dashboard instead.
 
 ---
 
@@ -368,6 +384,10 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Symptom / Error | Root Cause | Immediate Resolution |
 | :--- | :--- | :--- |
 | `rc=-4` or `rc=-2` in Anchor Serial Monitor | Board cannot reach Laptop MQTT broker. | 1. Check laptop IP via `ipconfig` and ensure `SHIRO_MQTT_SERVER` in `secrets.h` matches.<br>2. Ensure Windows Firewall allows incoming TCP port `1883`.<br>3. Verify `npm start` is running. |
+| Edge server prints `[PROTOCOL] Wristband … sends a packet version this system does not support` | Wristband and anchors run different firmware versions. | Flash the wristband and all anchors from the same commit. |
+| Live map shows **SENSOR FAULT** | The wristband reports that its accelerometer or pulse sensor does not answer. | Check the sensor wiring (SDA `D4`, SCL `D5`, 3.3 V, GND) and restart the wristband. The Serial Monitor names the failed sensor. |
+| Live map shows **NO SIGNAL** | No packet from the wristband for 5 seconds. | Check that the wristband is powered and in range of at least one online anchor. |
+| Live Lab simulation button answers "Simulation is disabled" | `ENABLE_SIMULATION=false` in `edge_server/.env`. | Set it to `true` and restart the server. Simulated incidents are always marked as simulated. |
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | Fixed in v2.0: Single persistent connection per headset serial (`QUEST3-001`) with heartbeats. Ensure only one Unity instance is playing. |

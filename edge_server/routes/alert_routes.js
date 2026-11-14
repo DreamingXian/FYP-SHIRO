@@ -2,6 +2,7 @@
 // SHIRO Hospital Edge Server - Emergency & Incident Alert Routes
 // =============================================================================
 const alertService = require('../services/alert_service');
+const config = require('../config/app_config');
 
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, { 'Content-Type': 'application/json' });
@@ -42,7 +43,7 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
       }
       const result = await alertService.acknowledgeIncident(
         data.incident_id,
-        data.attending_clinician || 'DOC-8821 (Dr. Tan)',
+        data.attending_clinician || alertService.UNVERIFIED_CLINICIAN,
         data.notes || ''
       );
       sendJson(res, 200, result);
@@ -52,8 +53,14 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
-  // 4. POST /api/alerts/trigger-simulation - Manual test trigger bench
+  // 4. POST /api/alerts/trigger-simulation - Manual test trigger bench.
+  // The values below are test inputs, and every incident created here is stored
+  // with is_simulated = 1 so it can never be mistaken for a real alarm.
   if (pathname === '/api/alerts/trigger-simulation' && req.method === 'POST') {
+    if (!config.ENABLE_SIMULATION) {
+      sendJson(res, 403, { success: false, error: 'Simulation is disabled on this server (ENABLE_SIMULATION=false).' });
+      return true;
+    }
     try {
       const data = JSON.parse(body || '{}');
       const category = data.category || 'FALL_ACCIDENT';
@@ -72,7 +79,8 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
         post_impact_stillness: 0.08,
         heart_rate: data.heart_rate !== undefined ? parseInt(data.heart_rate, 10) : 88,
         spo2: data.spo2 !== undefined ? parseFloat(data.spo2) : 97.0,
-        alert_message: data.message || ''
+        alert_message: data.message || '',
+        is_simulated: true
       };
 
       if (category === 'CRITICAL_VITALS' && !data.heart_rate && !data.spo2) {

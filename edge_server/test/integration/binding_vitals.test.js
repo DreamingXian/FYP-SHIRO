@@ -100,8 +100,8 @@ describe('vitals history belongs to the patient, not the wristband (InfluxDB)', 
     await timeSeries.flushBuffer();
     await sleep(300);
 
-    const historyA = await timeSeries.queryVitalsHistory(PATIENT_A, '-10m');
-    const historyB = await timeSeries.queryVitalsHistory(PATIENT_B, '-10m');
+    const historyA = await timeSeries.queryVitalsHistory(PATIENT_A, '-10m', { raw: true });
+    const historyB = await timeSeries.queryVitalsHistory(PATIENT_B, '-10m', { raw: true });
 
     assert.deepEqual(historyA.map(p => p.heart_rate), [70, 71, 72]);
     assert.deepEqual(historyB.map(p => p.heart_rate), [90, 91]);
@@ -111,7 +111,38 @@ describe('vitals history belongs to the patient, not the wristband (InfluxDB)', 
     if (!available) return t.skip('InfluxDB is not configured or not running');
     // Covered by the assertions above (3 and 2 points written within one batch each);
     // this test states the requirement explicitly for the report.
-    const historyA = await timeSeries.queryVitalsHistory(PATIENT_A, '-10m');
+    const historyA = await timeSeries.queryVitalsHistory(PATIENT_A, '-10m', { raw: true });
     assert.equal(historyA.length, 3);
+  });
+
+  test('readings of two sampling modes come back as one series in time order', async (t) => {
+    if (!available) return t.skip('InfluxDB is not configured or not running');
+
+    // A wristband stores passive bursts and active streaming as separate series.
+    // Bench test of 14 Nov 2026: the history returned them as two blocks and
+    // only the oldest readings of each.
+    for (const bpm of [80, 81, 82]) {
+      timeSeries.logVitals({ patientId: PATIENT_A, wristbandMac: MAC, bpm, spo2: 97, mode: 'ITEST2' });
+    }
+    await timeSeries.flushBuffer();
+    await sleep(300);
+
+    const raw = await timeSeries.queryVitalsHistory(PATIENT_A, '-10m', { raw: true });
+    assert.deepEqual(raw.map(p => p.heart_rate), [70, 71, 72, 80, 81, 82]);
+  });
+
+  test('the trend gives one median point per window, up to the newest reading', async (t) => {
+    if (!available) return t.skip('InfluxDB is not configured or not running');
+
+    const trend = await timeSeries.queryVitalsHistory(PATIENT_A, '-1h');
+    // Six readings written within a few seconds: one or two 10-second windows
+    assert.ok(trend.length >= 1 && trend.length <= 2, `unexpected number of trend points: ${trend.length}`);
+    const times = trend.map(p => Date.parse(p.time));
+    assert.deepEqual(times, [...times].sort((a, b) => a - b), 'trend points must be in time order');
+    assert.ok(Date.now() - times[times.length - 1] < 60000, 'the newest window must be part of the trend');
+    for (const p of trend) {
+      assert.ok(p.heart_rate >= 70 && p.heart_rate <= 82, `heart rate ${p.heart_rate}`);
+      assert.ok(p.spo2 >= 97 && p.spo2 <= 98, `SpO2 ${p.spo2}`);
+    }
   });
 });

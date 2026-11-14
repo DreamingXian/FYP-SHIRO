@@ -71,6 +71,10 @@ async function applySchema() {
   await migrateDeviceAvailability();
   const { migrate: migrateAnchorCalibration } = require('./migrate_anchor_calibration');
   await migrateAnchorCalibration();
+  const { migrate: migrateIncidentSimulation } = require('./migrate_incident_simulation');
+  await migrateIncidentSimulation();
+  const { migrate: migrateIncidentFreefall } = require('./migrate_incident_freefall');
+  await migrateIncidentFreefall();
 }
 
 /**

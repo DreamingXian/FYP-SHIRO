@@ -1343,11 +1343,11 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
         </div>
 
         <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;">
-          <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">📊 Recorded Influx Samples</div>
+          <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">📊 Trend Points</div>
           <div style="font-size: 20px; font-weight: 800; color: var(--text-primary); margin-top: 2px;">
             ${vitals.length} <span style="font-size: 11px; font-weight: 500;">points</span>
           </div>
-          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">Query Range: ${range}</div>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" title="Each point is the median of the readings stored in one interval. Intervals without a reading have no point.">Range: ${data.range || range} · median per ${data.window || 'interval'}</div>
         </div>
 
         <div style="background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; padding: 10px 12px;">
@@ -1386,7 +1386,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
       <!-- Compact Recent Point Log -->
       <details style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">
         <summary style="cursor: pointer; font-weight: 600; padding: 4px 0; color: var(--primary);">
-          📋 View Most Recent Telemetry Sample Rows (${Math.min(vitals.length, 10)} of ${vitals.length})
+          📋 View Most Recent Trend Points (${Math.min(vitals.length, 10)} of ${vitals.length})
         </summary>
         <div style="max-height: 140px; overflow-y: auto; margin-top: 6px; border: 1px solid var(--border); border-radius: 6px;">
           <table style="width: 100%; border-collapse: collapse; font-size: 11px;">

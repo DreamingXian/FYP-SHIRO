@@ -39,6 +39,10 @@ module.exports = {
   // Secret: set INFLUX_TOKEN in edge_server/.env. Empty disables time-series logging.
   INFLUX_TOKEN: process.env.INFLUX_TOKEN || '',
   INFLUX_ORG: process.env.INFLUX_ORG || 'shiro_org',
-  INFLUX_BUCKET: process.env.INFLUX_BUCKET || 'shiro_telemetry'
+  INFLUX_BUCKET: process.env.INFLUX_BUCKET || 'shiro_telemetry',
+
+  // Live Lab test bench: lets the dashboard raise simulated alarms (always marked as simulated).
+  // Set ENABLE_SIMULATION=false in edge_server/.env to switch the endpoint off.
+  ENABLE_SIMULATION: String(process.env.ENABLE_SIMULATION || 'true').toLowerCase() !== 'false'
 };
 

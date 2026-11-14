@@ -22,8 +22,10 @@
 
   // Localized Tag Positions: tagId -> { x, y, targetX, targetY, confidence, anchors: [], lastSeen }
   const liveTagPositions = new Map();
-  // Live Vitals Cache: tagId -> { bpm, spo2, battery, lastSeen }
+  // Live Vitals Cache: tagId -> { bpm, spo2, battery, imuFault, ppgFault, lastSeen }
   const liveVitals = new Map();
+  // A wristband that has sent nothing for this long is shown as "NO SIGNAL"
+  const NO_SIGNAL_AFTER_MS = 5000;
 
   let canvas = null;
   let ctx = null;
@@ -310,6 +312,10 @@
     const vitals = liveVitals.get(selectedTagId) || {};
     const pos = liveTagPositions.get(selectedTagId) || null;
     const isOffline = pos ? (pos.status === 'OFFLINE' || (Date.now() - (pos.lastSeen || 0) > 6000)) : false;
+    // No telemetry packet for 5 seconds: the numbers on screen are no longer live
+    const silentMs = vitals.lastSeen ? Date.now() - vitals.lastSeen : null;
+    const noSignal = silentMs !== null && silentMs > NO_SIGNAL_AFTER_MS;
+    const sensorFault = [vitals.imuFault ? 'motion sensor' : null, vitals.ppgFault ? 'pulse sensor' : null].filter(Boolean);
 
     const bpmEl = document.getElementById('live-map-val-bpm');
     const spo2El = document.getElementById('live-map-val-spo2');
@@ -326,6 +332,18 @@
         vitalsStatusEl.style.background = '';
         vitalsStatusEl.style.color = '';
         vitalsStatusEl.style.border = '';
+      } else if (noSignal) {
+        vitalsStatusEl.innerText = `● NO SIGNAL (${Math.round(silentMs / 1000)} s)`;
+        vitalsStatusEl.className = 'badge badge-alert';
+        vitalsStatusEl.style.background = '';
+        vitalsStatusEl.style.color = '';
+        vitalsStatusEl.style.border = '';
+      } else if (sensorFault.length > 0) {
+        vitalsStatusEl.innerText = `⚠ SENSOR FAULT (${sensorFault.join(', ')})`;
+        vitalsStatusEl.className = 'badge badge-alert';
+        vitalsStatusEl.style.background = '#FEF3C7';
+        vitalsStatusEl.style.color = '#B45309';
+        vitalsStatusEl.style.border = '1px solid #F59E0B';
       } else if (vitals.motion === 'FALL_EMERGENCY') {
         vitalsStatusEl.innerText = '🚨 1 Hz EMERGENCY STREAM';
         vitalsStatusEl.className = 'badge badge-alert';
@@ -348,13 +366,16 @@
     }
 
     if (bpmEl) {
-      bpmEl.innerText = vitals.bpm !== undefined ? vitals.bpm : '--';
+      bpmEl.innerText = vitals.bpm > 0 ? vitals.bpm : '--';
       bpmEl.style.color = (vitals.bpm && (vitals.bpm < 50 || vitals.bpm > 110)) ? '#DC2626' : '#991B1B';
     }
 
     if (spo2El) {
-      spo2El.innerText = vitals.spo2 !== undefined ? vitals.spo2 : '--';
-      spo2El.style.color = (vitals.spo2 && vitals.spo2 < 94) ? '#DC2626' : '#166534';
+      spo2El.innerText = vitals.spo2 > 0 ? vitals.spo2 : '--';
+      // SpO2 is indicative only (not calibrated, raises no alarms): shown in a
+      // neutral colour so the screen makes no "normal" or "low" claim about it.
+      spo2El.style.color = '#475569';
+      spo2El.title = 'Indicative only: the SpO2 measurement is not calibrated and does not raise alarms.';
     }
 
     if (batteryEl) {
@@ -1200,6 +1221,8 @@
   function updateClock() {
     const el = document.getElementById('live-map-clock');
     if (el) el.innerText = new Date().toLocaleTimeString();
+    // Refresh the status card every second so "NO SIGNAL" appears even when no packet arrives
+    if (isLiveMapActive) updateTelemetryCard();
     if (isLiveMapActive) setTimeout(updateClock, 1000);
   }
 
@@ -1976,6 +1999,8 @@
       if (data.motion !== undefined) {
         current.motion = data.motion;
       }
+      current.imuFault = data.imu_fault === true;
+      current.ppgFault = data.ppg_fault === true;
       current.lastSeen = Date.now();
       liveVitals.set(tagId, current);
 
