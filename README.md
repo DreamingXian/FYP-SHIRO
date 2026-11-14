@@ -111,6 +111,8 @@ Unified packets are published directly over Wi-Fi to the central Edge Server's e
   * **Patient Inpatient Directory:** Full admission lifecycle, fall risk scoring, medical history, bed allocation, and wristband tag binding.
   * **Live Lab & Diagnostics:** Real-time 5 Hz PPG absorption waveform, dual-channel RSSI Kalman filter comparison, and raw MQTT packet inspector.
 * **Clinical Emergency Audit Logging:** Dedicated MySQL emergency log schema (`init_emergency_logs.sql`), alert service, and InfluxDB time-series integration for clinical incidents.
+* **Only the Project's Devices Are Accepted:** The MQTT broker requires the anchor login and an anchor client ID, limits each anchor to its own topics and locks out an address after 10 failed logins. MySQL and InfluxDB listen on the server PC only, the server uses a limited MySQL account, and the firewall opens only the dashboard and MQTT ports on private networks. What is protected, and the known limits (no TLS, unauthenticated BLE, shared anchor login), are in [docs/security.md](docs/security.md).
+* **One Anchor per 1 Hz Command:** The server sends the 1 Hz vitals command through the anchor that hears the wristband most strongly, so two anchors never compete for the same BLE connection.
 
 ### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
 * **Color Passthrough Digital Twin:** Real-time 3D ward generation (`WardVisualizer.cs`) matching real-world architectural dimensions, walls, doors, obstacles, and hospital beds.
@@ -156,8 +158,8 @@ The HW-605 (MAX30102) and MPU-6050 share the hardware I2C bus, with battery sens
 
 Detailed step-by-step instructions are documented in [SYSTEM_STARTUP_PROCEDURE.md](file:///d:/RSW/FYP/Code/SYSTEM_STARTUP_PROCEDURE.md).
 
-0. **First-time configuration:** Copy `edge_server/.env.example` to `edge_server/.env`, and `firmware/shiro_anchor_node/secrets.example.h` to `secrets.h`, then fill in your own values. Both files are git-ignored; credentials are never stored in this repository.
-1. **Start MySQL Database:** Open XAMPP Control Panel and start MySQL on port `3306`.
+0. **First-time configuration:** Copy `edge_server/.env.example` to `edge_server/.env`, and `firmware/shiro_anchor_node/secrets.example.h` to `secrets.h`, then fill in your own values. Both files are git-ignored; credentials are never stored in this repository. Then do the one-time security setup (MQTT anchor login, MySQL account, databases on this PC only, firewall) in Section 3.2 of the startup guide.
+1. **Start the databases:** Open XAMPP Control Panel and start MySQL on port `3306`. Start InfluxDB with `edge_server\tools\start_influxdb.bat`.
 2. **Launch Edge Server:**
    ```powershell
    cd d:\RSW\FYP\Code\edge_server
@@ -177,8 +179,8 @@ Run from `edge_server/`:
 
 | Command | What it runs | Needs |
 | :--- | :--- | :--- |
-| `npm test` | Unit tests (filters, positioning maths, incident IDs, binding cache, alarm thresholds, fall de-duplication, telemetry validation, firmware/server contract, input validation, request limits, photo upload, WebSocket and MQTT message checks, and a check that every value the dashboard places into HTML is escaped) | Nothing. They cannot reach a database: `test/unit/no_database.js` points them at a closed port |
-| `npm run test:integration` | Database start-up, restart safety, bindings, incident log, alarm path, the full MQTT-to-dashboard pipeline, and refused requests, commands and messages, with a real server on spare ports | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
+| `npm test` | Unit tests (filters, positioning maths, incident IDs, binding cache, alarm thresholds, fall de-duplication, telemetry validation, firmware/server contract, input validation, request limits, photo upload, WebSocket and MQTT message checks, MQTT login and topic rules, choice of the anchor for the 1 Hz command, and a check that every value the dashboard places into HTML is escaped) | Nothing. They cannot reach a database: `test/unit/no_database.js` points them at a closed port |
+| `npm run test:integration` | Database start-up, restart safety, bindings, incident log, alarm path, the full MQTT-to-dashboard pipeline, refused requests, commands and messages, and MQTT access (no login, wrong login, forbidden topics, lockout), with a real server on spare ports | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
 
 Firmware logic (fall state machine, telemetry packet, heart-rate and SpO2 estimation against recorded pulse signals) is tested on the PC, without a board:
 
@@ -196,7 +198,7 @@ The wristband also runs a short self-test of the fall state machine at every pow
 Code/
 ├── .gitignore                      # Git exclusion rules (Node, Unity, firmware)
 ├── README.md                       # Master project overview & feature guide
-├── docs/                           # protocol.md (telemetry definition), test_records/
+├── docs/                           # protocol.md (telemetry definition), security.md (protections and limits), test_records/
 ├── SYSTEM_STARTUP_PROCEDURE.md     # Step-by-step operations & troubleshooting guide
 ├── firmware/                       # Embedded Arduino C++ firmware
 │   ├── shiro_wristband_vitals/     # XIAO ESP32-C6 PPG + IMU wearable firmware
@@ -209,12 +211,13 @@ Code/
 ├── edge_server/                    # Central Node.js edge server & web portal
 │   ├── server.js                   # Server entrypoint (HTTP, WebSocket, MQTT)
 │   ├── package.json                # Server dependencies & scripts
-│   ├── .env.example                # Template for git-ignored .env (ports, MySQL, InfluxDB token)
+│   ├── .env.example                # Template for git-ignored .env (ports, MQTT anchor login, MySQL, InfluxDB token)
 │   ├── test/                       # Automated tests (`npm test`)
+│   ├── tools/                      # start_influxdb.bat (InfluxDB on this PC only)
 │   ├── config/                     # Application, network, and calibration configs
 │   ├── database/                   # Connection pool, schema/ (tables), seed/ (sample data), migrations
 │   ├── controllers/                # Express controllers (Wards, Patients, Devices)
-│   ├── services/                   # MQTT, WebSocket, IPS EKF, and Alert services
+│   ├── services/                   # MQTT (with mqtt_access.js: login and topic rules), WebSocket, IPS EKF, and Alert services
 │   ├── routes/                     # Express REST API routes
 │   ├── utils/                      # Request helpers (size limit, JSON, errors) and input validation
 │   └── public/                     # Single Page Application frontend (HTML/CSS/JS)

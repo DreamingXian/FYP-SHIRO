@@ -5,7 +5,8 @@ This document is the single definition of the data that travels from the wristba
 | Hop | Transport | Format | Defined in code by |
 | :--- | :--- | :--- | :--- |
 | Wristband to anchor | BLE advertisement, manufacturer data | Binary packet, version 2 | `firmware/*/shiro_packet.h` |
-| Anchor to edge server | MQTT over Wi-Fi, topic `shiro/ward-A1/anchor/telemetry` | JSON | `buildTelemetryJson()` in `shiro_anchor_node.ino` |
+| Anchor to edge server | MQTT over Wi-Fi, topic `shiro/ward-A1/anchor/telemetry`, anchor login required | JSON | `buildTelemetryJson()` in `shiro_anchor_node.ino` |
+| Edge server to anchors | MQTT, topic `shiro/control/mode` | JSON | `handleActiveMode()` in `websocket_service.js` |
 | Inside the edge server | Function call | Normalised object | `edge_server/services/telemetry/normalize.js` |
 
 One rule applies at every hop: **a value that was not measured is reported as unknown, never replaced by a default.**
@@ -114,12 +115,42 @@ When no wristband has been heard for 2 seconds, the anchor publishes a heartbeat
 
 An anchor tracks up to 16 wristbands and frees the slot of a wristband that has been silent for 30 seconds.
 
-## 3. What the server does with it
+### Broker access
+
+The broker accepts a connection only with the anchor login (`MQTT_ANCHOR_USER` and `MQTT_ANCHOR_PASSWORD` in `edge_server/.env`, the same values as `SHIRO_MQTT_USER` and `SHIRO_MQTT_PASSWORD` in the anchor's `secrets.h`) and the client ID `SHIRO_Anchor_` followed by the anchor's Wi-Fi MAC address without colons (`SHIRO_Anchor_A4CF1201F82C`). Rules, in `edge_server/services/mqtt_access.js`:
+
+| | Allowed | Otherwise |
+| :--- | :--- | :--- |
+| Connect | Anchor login and anchor client ID | Refused: return code 4 (bad username or password) or 2 (identifier rejected) |
+| Publish | `shiro/<ward>/anchor/telemetry`, `shiro/discovery` | The connection is closed |
+| Subscribe | Topics under `shiro/control/` | That subscription is refused (`0x80`); the connection stays open |
+| Repeated failures | | 10 failed logins from one address within a minute lock that address out for 60 seconds (return code 5) |
+
+Refused logins are logged once per address every 10 seconds, without the password.
+
+## 3. Edge server to anchors: 1 Hz command
+
+When a clinician selects a patient on the live map, the server asks that wristband to stream its vitals at 1 Hz for `duration` seconds. Every anchor receives the command; only the anchor named in `target_anchor` carries it out.
+
+```json
+{ "cmd": "SET_ACTIVE", "target_tag": "TAG-002", "target_mac": "54:32:04:AB:CD:EF", "target_anchor": "A4:CF:12:01:F8:2C", "duration": 60 }
+```
+
+| Field | Meaning |
+| :--- | :--- |
+| `target_tag` | Device ID of the wristband, or its MAC address when it is not enrolled |
+| `target_mac` | BLE address of the wristband |
+| `target_anchor` | Wi-Fi MAC of the anchor that heard the wristband most strongly: the median of its last 5 readings within 3.5 seconds (`services/telemetry/tag_hearing.js`) |
+| `duration` | Seconds, 5 to 600 |
+
+Only one anchor connects, because two anchors opening a BLE connection to the same wristband at the same time make both attempts fail. When no anchor has heard the wristband within 3.5 seconds, the server sends nothing and answers the dashboard with an error. The chosen anchor still checks that it has heard the wristband within 3.5 seconds at -82 dBm or stronger before it connects. An anchor ignores a command without `target_anchor`.
+
+## 4. What the server does with anchor messages
 
 Every MQTT message is first checked by `checkAnchorMessage()` (`edge_server/services/telemetry/anchor_message.js`). A message that fails is ignored and logged, at most once per client and reason every 10 seconds:
 
 - The payload must be a JSON object of at most 2048 bytes.
-- `anchor_mac` must be a MAC address.
+- `anchor_mac` must be a MAC address, and the MAC address in the sender's client ID: an anchor cannot report under another anchor's address.
 - `rssi` must be a number from -120 to 0 (0 marks the standby heartbeat).
 - `tag_mac` must be a MAC address. When it is not, the wristband part of the message is dropped and only the anchor's presence is recorded.
 
@@ -142,7 +173,7 @@ Alarm rules use the normalised values and the limits in `edge_server/config/clin
 - **Wristband heart rate:** estimated once per second from the last 8 seconds of the pulse signal (`pulse_estimator.h`). A value is reported only when the signal is clearly periodic and three estimates in a row agree; it is the median of the last five. It is withdrawn (`0`) after 4 seconds without a new confirmation. With movement, a loose strap or a weak pulse the wristband therefore reports no heart rate instead of a wrong one. The first value of a measurement takes about 13 seconds. A passive measurement (every 3 minutes) runs until it has delivered a heart rate for 10 seconds, at most 90 seconds, and ends after 5 seconds when the sensor sees no skin.
 - **Wristband SpO2:** reported together with a heart rate, from the red and infrared pulse amplitudes of the same 8 seconds. The conversion line is not calibrated for this hardware.
 
-## 4. Changing the protocol
+## 5. Changing the protocol
 
 1. Change `shiro_packet.h` in the wristband folder and copy it over the anchor's copy. For an incompatible change, raise `PACKET_VERSION`.
 2. Update this document and the reference packet.
