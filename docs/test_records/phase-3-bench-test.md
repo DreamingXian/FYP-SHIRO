@@ -4,14 +4,14 @@ Purpose: measure how the wristband's fall detection behaves on real hardware aft
 
 | | Round 1 | Round 2 | Round 3 (short check) |
 | :--- | :--- | :--- | :--- |
-| Date | 14 Nov 2026 | 14 Nov 2026 | |
-| Tester | | | |
+| Date | 14 Nov 2026 | 14 Nov 2026 | 14 Nov 2026 |
+| Tester | Tan Shou Xian | Tan Shou Xian | Tan Shou Xian |
 | Wristband firmware | V5, packet version 2, commit `7d582ca` | V5, packet version 2, commit `e09175c` | commit `8452374` |
 | Accelerometer range | ±8 g | ±16 g | ±16 g |
 | Stillness check | 2 s, starting at the impact | 2 s, starting 0.5 s after the impact | as Round 2 |
 | Heart rate reporting | first beat interval onwards | as Round 1 | after 3 beat intervals, withdrawn after 6 s without a beat |
 | Thresholds (all rounds) | Free-fall < 0.50 g for ≥ 150 ms, impact > 2.50 g within 500 ms, post-impact motion < 0.20 g | same | same |
-| Landing surface | | | |
+| Landing surface | wooden table | wooden table | wooden table |
 
 ## Method
 
@@ -225,16 +225,57 @@ Taken from the 10 drops above and from all 41 falls the server recorded up to 08
 
 ## Round 3: short check after commit `8452374`
 
-The fall detector is unchanged, so drops are not repeated in full. This round checks the vitals changes.
+The fall detector is unchanged, so drops are not repeated in full. This round checks the vitals changes. The wristband was worn from 15:22 to 15:58.
 
 | Check | Result |
 | :--- | :--- |
-| Edge server restarted and wristband reflashed | |
-| Wear the wristband for 20 minutes of normal activity (sitting, typing, walking). Number of vitals alarms (expected 0) | |
-| Heart rate shown on the live map while sitting still is plausible (compare with a manual pulse count): shown ____ BPM, counted ____ BPM | |
-| SpO2 on the live map is shown in grey, and Live Lab shows "Indicative only" | |
-| 3 arm drops: each gives one fall pop-up with three values, and no vitals alarm follows within 2 minutes | |
-| Restart the edge server within 30 seconds after a fall pop-up: no second incident for the same fall | |
+| Edge server restarted and wristband reflashed | Y |
+| Wear the wristband for 20 minutes of normal activity (sitting, typing, walking), 15:22 to 15:42. Number of vitals alarms (expected 0) | 0 |
+| Heart rate shown while sitting still is plausible (compare with a manual pulse count): counted 94 BPM, shown 53 to 130 BPM within one minute, mean 96 BPM | Not stable (finding 15) |
+| SpO2 on the live map is shown in grey, and Live Lab shows "Indicative only" | Y |
+| 3 arm drops: each gives one fall pop-up with three values, and no vitals alarm follows within 2 minutes | Y |
+| Restart the edge server within 30 seconds after a fall pop-up: no second incident for the same fall | Y (finding 16) |
+
+Observations of the tester:
+
+- The vitals trend of the patient (P-006) showed readings only from 15:22 to 15:28, although the Serial Monitor showed a measurement burst every 3 minutes for the whole 20 minutes. See finding 14.
+- After a server restart there was no second pop-up when the alarm had been acknowledged before the restart. An alarm that had not been acknowledged yet popped up again after the restart. See finding 16.
+
+### Server records of the round
+
+Read from the alert history and from InfluxDB after the test.
+
+| Measure | Value |
+| :--- | :--- |
+| Vitals alarms raised, 15:03 to 15:58 | 0 |
+| Fall incidents | 4 (INC-20261114-0249 to 0252, at 15:54:03, 15:55:15, 15:56:14 and 15:57:11): the 3 arm drops and the drop for the restart check. One incident per fall. |
+| Values of the 4 falls | free-fall minimum 0.22, 0.32, 0.31, 0.35 g; impact 18.48, 10.12, 15.80, 13.57 g; post-impact motion 0.03 g each |
+| Passive measurement bursts stored | every 3 minutes: 15:22, 15:25, 15:28, 15:31, 15:35, 15:38, 15:41, 15:44, about one minute each |
+| Readings stored, 15:22 to 15:58 | 5,603, of which 3,295 (59%) carry a heart rate |
+| The same readings replayed through the alarm rules | 0 alarms |
+| Heart-rate readings above 120 BPM / below 50 BPM | 10% / 5% |
+| Longest unbroken series of abnormal heart-rate readings | 11.8 s, directly after an arm drop (an alarm needs 30 s, or two confirmed series with no normal reading between them) |
+
+### Heart rate against a manual pulse count
+
+Sitting still, active streaming, about one minute. The complete Serial Monitor log (298 broadcast lines) is in `phase-3-round3-serial-log.txt`.
+
+| Measure | Value |
+| :--- | :--- |
+| Manual pulse count | 94 BPM |
+| Heart-rate values shown, in order | 115, 103, 85, 62, 53, 60, 78, 96, 105, 96, 101, 130, none (26 lines), 106, 104, 91, 80, 91, 90, 85, 77, 87, 93, 103, 96, 80 |
+| Lowest and highest value | 53 and 130 BPM |
+| Mean and median of the lines with a heart rate | 96 and 96 BPM |
+| Lines within ±10 BPM of the count | 48% |
+| Lines within ±20 BPM of the count | 72% |
+| Lines before the first heart rate | 68 of 298 (about 14 seconds) |
+| SpO2 during the same minute | 85 to 93%, median 89% |
+
+## Findings from Round 3
+
+14. **The vitals trend showed only the oldest readings.** All readings were stored (a burst every 3 minutes, see the table above). The history query kept the first 500 points of each stored series, which are the oldest of the selected range, and returned the passive and the active readings as two blocks instead of in time order. Fixed in commit `de46bce`: the trend shows one point per interval (the median of the readings in it: 10 s for 1 hour, 1 min for 6 hours, 5 min for 24 hours, 30 min for 7 days, 2 h for 30 days), so every range is shown completely. Checked against the stored readings of this round: the 1-hour trend now runs from 15:22 to 15:58.
+15. **The alarm rules hold, but the heart rate itself is not stable.** No vitals alarm was raised in 36 minutes of wear, live and in the replay. The heart rate behind it is noisy: sitting still with a counted pulse of 94 BPM, the wristband showed values from 53 to 130 BPM within one minute. The average is right (96 BPM), single values are not. The first value took about 14 seconds, and one value (130) stayed until it was withdrawn after 6 seconds without a beat. Cause: on the wrist the beat detection misses beats and detects extra ones, and a median of four beats does not absorb that. This is a limit of the measurement, not of the alarm path. It is open and is handled as a separate task (heart-rate measurement quality), with recorded beat intervals as the basis.
+16. **An unacknowledged alarm is shown again after a server restart. This is intended.** No second incident is created: the history holds one incident per fall. When the dashboard reconnects it asks the server for the alarms that are still open and shows them again. An alarm that nobody has acknowledged must not disappear because the server was restarted.
 
 ## Decision
 
@@ -242,4 +283,5 @@ The fall detector is unchanged, so drops are not repeated in full. This round ch
 - [x] Measurement changed after Round 1: stillness is observed for 2 s starting 0.5 s after the impact (finding 2), and the accelerometer range is ±16 g (finding 3). Round 2 repeated on 14 Nov 2026.
 - [x] Round 2 accepted for fall detection: detection not worse than Round 1 (18 / 20 against 9 / 10), no false alarm in B1 to B6. B7 recorded as a known limit (finding 12).
 - [x] After Round 2: SpO2 raises no alarm until it is calibrated; heart-rate alarm rules and heart-rate reporting corrected (finding 10).
-- [ ] Round 3 check passed.
+- [x] Round 3 accepted for the alarm path: no false vitals alarm, one incident per fall, no second incident after a server restart.
+- [ ] Open, outside Phase 3: stability of the heart-rate value (finding 15).
