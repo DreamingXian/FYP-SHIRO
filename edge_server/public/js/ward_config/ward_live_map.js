@@ -1907,6 +1907,19 @@
       return;
     }
 
+    // 0. 1 Hz activation: which anchor carries it, or why it was refused
+    window.wsClient.on('ACTIVE_MODE_ENGAGED', (msg) => {
+      if (window.showToast && msg.tag_id === selectedTagId) {
+        window.showToast(`1 Hz vitals stream requested for ${msg.tag_id} through anchor ${msg.via_anchor || msg.anchor_mac}.`, 'success');
+      }
+    });
+    window.wsClient.on('ERROR', (msg) => {
+      if (msg.action !== 'SET_ACTIVE_MODE') return;
+      // Refused: allow the next selection to try again at once
+      lastActiveTriggers.clear();
+      if (window.showToast) window.showToast(`1 Hz vitals stream not started: ${msg.error}`, 'warning');
+    });
+
     // 1. Ghost Tag / Deleted Tag Purge event
     window.wsClient.on('IPS_TAG_PURGE', (msg) => {
       const targets = [msg.tag_id, msg.canonical_id, msg.mac].filter(Boolean);

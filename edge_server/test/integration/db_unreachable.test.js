@@ -24,7 +24,9 @@ test('exits with code 1 and a clear message when MySQL is unreachable', async ()
     DB_PORT: '1',          // nothing listens here
     DB_NAME: 'shiro_test',
     HTTP_PORT: '3997',     // never reached; kept away from a running server
-    MQTT_PORT: '1887'
+    MQTT_PORT: '1887',
+    MQTT_ANCHOR_USER: 'itest-anchor',  // a valid login, so the database is the only fault
+    MQTT_ANCHOR_PASSWORD: 'itest-password-0123456789'
   });
   assert.equal(code, 1, `expected exit code 1, got ${code}\n${output}`);
   assert.match(output, /FATAL STARTUP ERROR/);

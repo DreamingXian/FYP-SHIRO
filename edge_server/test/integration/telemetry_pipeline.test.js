@@ -4,7 +4,7 @@
 // Time-series logging is off for this file, so nothing is written to InfluxDB.
 process.env.INFLUX_TOKEN = '';
 
-const { db, freshDatabase, startServer, connectMqtt } = require('./helper');
+const { db, freshDatabase, startServer, connectMqtt, anchorClientId } = require('./helper');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
@@ -28,7 +28,8 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
   const ANCHORS = ['A0:00:00:00:00:01', 'A0:00:00:00:00:02', 'A0:00:00:00:00:03'];
   let server;
   let ws;
-  let mqtt;
+  let mqtt;           // anchor ANCHORS[0]
+  let anchorClients;  // one connection per anchor, in the order of ANCHORS
   let pool;
   const received = [];
 
@@ -44,11 +45,14 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
     ws.on('message', (data) => { received.push(JSON.parse(data.toString())); });
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
 
-    mqtt = await connectMqtt(MQTT_PORT, 'SHIRO_Anchor_A00000000001');
+    // Each anchor sends under its own client ID: the server refuses an anchor_mac
+    // that is not the MAC address in the sender's client ID.
+    anchorClients = await Promise.all(ANCHORS.map(mac => connectMqtt(MQTT_PORT, anchorClientId(mac))));
+    mqtt = anchorClients[0];
   });
 
   after(async () => {
-    if (mqtt) mqtt.close();
+    if (anchorClients) anchorClients.forEach(c => c.close());
     if (ws) ws.close();
     if (server) await server.stop();
     await db.closePool();
@@ -87,7 +91,7 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
     const fall = { fall: true, motion: 'FALL_EMERGENCY', active: true, fall_seq: 41, impact_g: 4.37, freefall_g: 0.12, still_g: 0.06, bpm: 0, spo2: 0, touch: 0 };
     // Ten rounds of all three anchors, as fast as the socket takes them
     for (let round = 0; round < 10; round++) {
-      for (const anchor of ANCHORS) mqtt.publish(anchorMessage(anchor, tag, fall));
+      ANCHORS.forEach((anchor, i) => anchorClients[i].publish(anchorMessage(anchor, tag, fall)));
     }
     await sleep(800);
 
