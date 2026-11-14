@@ -37,7 +37,8 @@ module.exports = {
     // longer than maxGapMs, or a reading that is not abnormal, ends a series.
     // Alarms when a series lasts sustainedMs (continuous stream), or when a series
     // of at least cycleConfirmMs is seen in requiredCycles separate measurement
-    // cycles within cycleWindowMs (15-second measurement every 3 minutes).
+    // cycles within cycleWindowMs (a measurement every 3 minutes that ends once it has
+    // delivered a heart rate for 10 seconds).
     moderate: {
       bpmHigh: 120,
       bpmLow: 50,

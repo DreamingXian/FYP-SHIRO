@@ -25,14 +25,24 @@
 #include "driver/usb_serial_jtag.h"
 #include "esp_random.h"
 #include "MAX30105.h"
-#include "heartRate.h"
 #include "fall_detector.h"
 #include "shiro_packet.h"
 #include "vitals_filter.h"
+#include "pulse_estimator.h"
 
 // Set to 1 for bench testing only: a firm shake (>= 1.8 g) then starts 1 Hz active
 // mode without the dashboard. Must be 0 on a wristband worn by a patient.
 #define SHIRO_DEBUG_SHAKE_WAKE 0
+
+// Bench measurements: recorder for the raw pulse signal, USB serial only.
+// Commands typed into the Serial Monitor (or sent by firmware/tools/record_ppg.bat),
+// each followed by Enter:
+//   rec [seconds]   record for 1 to 600 seconds (default 120)
+//   stop            end the recording now
+//   led <hex>       LED current for the next recording, 01 to FF (default 24)
+// Nothing of this is sent by radio, and the normal operation is not changed
+// while no recording runs.
+#define SHIRO_PPG_RECORDER 1
 
 // I2C Pin Configuration for Seeed Studio XIAO ESP32-C6
 #define I2C_SDA D4
@@ -58,29 +68,26 @@ const float VOLTAGE_DIVIDER_RATIO = 2.0f; // Halved by 100k:100k divider
 // Sensor Objects
 MAX30105 particleSensor;
 bool maxReady = false;
+const uint8_t PPG_LED_CURRENT = 0x24;   // red and infrared LED current, about 7 mA
+
+// Raw pulse-signal recorder (see SHIRO_PPG_RECORDER above)
+bool ppgRecording = false;
+#if SHIRO_PPG_RECORDER
+unsigned long ppgRecEndMs = 0;
+uint32_t ppgSampleNo = 0;
+uint8_t ppgLedLevel = PPG_LED_CURRENT;
+char ppgCmd[24];
+uint8_t ppgCmdLen = 0;
+#endif
 
 // -----------------------------------------------------------------------------
-// Heart Rate (BPM) State Variables
+// Heart rate and SpO2: measured by pulse_estimator.h from the raw sensor signal.
+// 0 = no reading (no skin contact, movement, or a pulse too weak to be sure).
 // -----------------------------------------------------------------------------
-const byte RATE_SIZE = 4;
-byte rates[RATE_SIZE];
-byte rateSpot = 0;
-long lastBeat = 0;
-unsigned long lastValidBeatMs = 0;   // 0 = no beat collected since the last reset
-float beatsPerMinute = 0;
+PulseEstimator pulse;
 int beatAvg = 0;
-
-// -----------------------------------------------------------------------------
-// SpO2 Calculation State Variables
-// -----------------------------------------------------------------------------
 int spo2Avg = 0;
-const byte SPO2_SIZE = 4;
-byte spo2Buffer[SPO2_SIZE];
-byte spo2Spot = 0;
-
-uint32_t irMax = 0, irMin = 0xFFFFFF;
-uint32_t redMax = 0, redMin = 0xFFFFFF;
-int spo2SampleCount = 0;
+const uint32_t PPG_CONTACT_MIN = 50000;   // infrared level with skin in front of the sensor
 
 long latestIR = 0;
 long latestRed = 0;
@@ -120,7 +127,16 @@ unsigned long burstStartTime = 0;
 unsigned long activeModeEndTime = 0;
 
 const unsigned long PASSIVE_CYCLE_INTERVAL = 180000; // 3 Minutes (180s)
-const unsigned long BURST_MEASURE_DURATION = 15000;  // 15 Seconds
+// A passive measurement runs until it has delivered a heart rate for 10 seconds, which
+// takes about 22 s with a still arm (the first value needs about 12 s). When the arm
+// moves or the signal is poor it keeps trying, for 90 s at most. It ends after 5 s when
+// the sensor sees no skin at all (wristband not worn).
+// Bench test of 14 Nov 2026: with a fixed length of 30 s, nine measurements in a row
+// ended without a single value while the tester was using the keyboard.
+const unsigned long BURST_MAX_DURATION     = 90000;  // 90 Seconds
+const unsigned long BURST_NO_SKIN_TIMEOUT  = 5000;   // 5 Seconds
+const uint8_t       BURST_READINGS_WANTED  = 10;     // seconds with a heart rate
+uint8_t burstReadings = 0;
 const unsigned long ACTIVE_STREAM_TIMEOUT  = 60000;  // 60 Seconds when triggered
 
 // Kinematic Vector & Motion Classifier
@@ -369,6 +385,76 @@ bool readMPU6050TotalG(float& totalG) {
   return true;
 }
 
+#if SHIRO_PPG_RECORDER
+// -----------------------------------------------------------------------------
+// Raw pulse-signal recorder (bench measurements over USB serial)
+//
+// Lines written while a recording runs:
+//   P,<sample>,<infrared>,<red>,<g x 100>     every sample (100 per second)
+//   E,<sample>,<rate>,<strength x 100>,<BPM reported>,<SpO2 reported>,<microseconds>   every estimate (one per second)
+//   T,<sample>,<millis>                       every 100 samples, to check the sample rate
+// -----------------------------------------------------------------------------
+void ppgSetLed(uint8_t level) {
+  if (!maxReady) return;
+  particleSensor.setPulseAmplitudeIR(level);
+  particleSensor.setPulseAmplitudeRed(level);
+  ppgLedLevel = level;
+}
+
+void ppgStop(const char* reason) {
+  if (!ppgRecording) return;
+  ppgRecording = false;
+  Serial.printf("[PPG-REC] end samples=%lu reason=%s\n", (unsigned long)ppgSampleNo, reason);
+  // A changed LED current applies to one recording only
+  if (ppgLedLevel != PPG_LED_CURRENT) ppgSetLed(PPG_LED_CURRENT);
+}
+
+void ppgHandleCommand(const char* cmd) {
+  if (strncmp(cmd, "rec", 3) == 0) {
+    if (!maxReady) {
+      Serial.println("[PPG-REC] error: the pulse sensor is not available");
+      return;
+    }
+    long seconds = atol(cmd + 3);
+    if (seconds <= 0) seconds = 120;
+    if (seconds > 600) seconds = 600;
+    unsigned long now = millis();
+    ppgRecEndMs = now + (unsigned long)seconds * 1000UL;
+    activeModeEndTime = ppgRecEndMs + 1000;   // keeps the pulse sensor awake for the recording
+    ppgSampleNo = 0;
+    ppgRecording = true;
+    Serial.printf("[PPG-REC] start seconds=%ld led=0x%02X sample_hz=100\n", seconds, (unsigned)ppgLedLevel);
+  } else if (strncmp(cmd, "stop", 4) == 0) {
+    ppgStop("command");
+  } else if (strncmp(cmd, "led", 3) == 0) {
+    long level = strtol(cmd + 3, NULL, 16);
+    if (level < 1 || level > 255) {
+      Serial.println("[PPG-REC] error: led needs a hex value from 01 to FF");
+      return;
+    }
+    ppgSetLed((uint8_t)level);
+    Serial.printf("[PPG-REC] led=0x%02X\n", (unsigned)ppgLedLevel);
+  } else {
+    Serial.println("[PPG-REC] commands: rec [seconds] | stop | led <hex 01..FF>");
+  }
+}
+
+void ppgPollSerial() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (ppgCmdLen > 0) {
+        ppgCmd[ppgCmdLen] = '\0';
+        ppgCmdLen = 0;
+        ppgHandleCommand(ppgCmd);
+      }
+    } else if (ppgCmdLen < sizeof(ppgCmd) - 1) {
+      ppgCmd[ppgCmdLen++] = c;
+    }
+  }
+}
+#endif  // SHIRO_PPG_RECORDER
+
 // -----------------------------------------------------------------------------
 // Arduino Setup
 // -----------------------------------------------------------------------------
@@ -407,8 +493,9 @@ void setup() {
 
   // 4. Initialize HW-605 (MAX30102)
   if (particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
-    particleSensor.setup(0x24, 4, 2, 400, 411, 4096);
-    particleSensor.setPulseAmplitudeRed(0x24);
+    // 400 samples per second averaged by 4 = 100 samples per second, red + infrared
+    particleSensor.setup(PPG_LED_CURRENT, 4, 2, 400, 411, 4096);
+    particleSensor.setPulseAmplitudeRed(PPG_LED_CURRENT);
     particleSensor.setPulseAmplitudeGreen(0);
     maxReady = true;
     Serial.println("[OK] HW-605 (MAX30102) Initialized.");
@@ -469,6 +556,11 @@ void setup() {
 // -----------------------------------------------------------------------------
 void loop() {
   unsigned long now = millis();
+
+#if SHIRO_PPG_RECORDER
+  ppgPollSerial();
+  if (ppgRecording && (long)(now - ppgRecEndMs) >= 0) ppgStop("time");
+#endif
 
   // 1. High-Frequency Kinematic Sampling (~50 Hz) for Algorithm 3 Fall Detection
   static unsigned long lastImuTime = 0;
@@ -557,10 +649,7 @@ void loop() {
       beatAvg = 0;
       spo2Avg = 0;
       touchState = 0;
-      rateSpot = 0;
-      spo2Spot = 0;
-      for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
-      for (byte j = 0; j < SPO2_SIZE; j++) spo2Buffer[j] = 0;
+      pulse.reset();
       if (!maxSensorSleeping && maxReady) {
         particleSensor.shutDown();
         maxSensorSleeping = true;
@@ -572,27 +661,32 @@ void loop() {
       if (now - lastVitalsBurstTime >= PASSIVE_CYCLE_INTERVAL) {
         vitalsMode = MODE_PASSIVE_BURST;
         burstStartTime = now;
+        burstReadings = 0;
         if (maxSensorSleeping && maxReady) {
           particleSensor.wakeUp();
           maxSensorSleeping = false;
-          Serial.println("[POWER] Waking MAX30102 for scheduled 15s vitals measurement.");
+          Serial.println("[POWER] Waking MAX30102 for a scheduled vitals measurement (up to 90 s).");
         }
       }
     } else if (vitalsMode == MODE_PASSIVE_BURST) {
-      if (now - burstStartTime >= BURST_MEASURE_DURATION) {
+      const unsigned long burstElapsed = now - burstStartTime;
+      const bool enoughReadings = burstReadings >= BURST_READINGS_WANTED;
+      const bool notWorn = burstElapsed >= BURST_NO_SKIN_TIMEOUT && touchState == 0;
+      if (enoughReadings || notWorn || burstElapsed >= BURST_MAX_DURATION) {
+        Serial.printf("[POWER] Vitals measurement ended after %lu s: %s (%u s with a heart rate).\n",
+                      burstElapsed / 1000UL,
+                      enoughReadings ? "done" : (notWorn ? "no skin contact" : "no steady pulse found"),
+                      (unsigned)burstReadings);
         vitalsMode = MODE_PASSIVE_SLEEP;
         lastVitalsBurstTime = now;
         beatAvg = 0;
         spo2Avg = 0;
         touchState = 0;
-        rateSpot = 0;
-        spo2Spot = 0;
-        for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
-        for (byte j = 0; j < SPO2_SIZE; j++) spo2Buffer[j] = 0;
+        pulse.reset();
         if (!maxSensorSleeping && maxReady) {
           particleSensor.shutDown();
           maxSensorSleeping = true;
-          Serial.println("[POWER] 15s vitals sample completed. MAX30102 sleeping for 3 minutes. Vitals reset to 0.");
+          Serial.println("[POWER] MAX30102 sleeping for 3 minutes. Vitals reset to 0.");
         }
       }
     }
@@ -602,14 +696,6 @@ void loop() {
   if (maxReady && !maxSensorSleeping) {
     particleSensor.check();
 
-    // A heart rate with no recent beat behind it is withdrawn, not kept on air
-    if (lastValidBeatMs != 0 && isBeatStale(now, lastValidBeatMs)) {
-      beatAvg = 0;
-      rateSpot = 0;
-      for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
-      lastValidBeatMs = 0;
-    }
-
     while (particleSensor.available()) {
       uint32_t irVal  = particleSensor.getFIFOIR();
       uint32_t redVal = particleSensor.getFIFORed();
@@ -618,80 +704,41 @@ void loop() {
       latestIR  = irVal;
       latestRed = redVal;
 
-      if (irVal > 50000) {
+#if SHIRO_PPG_RECORDER
+      if (ppgRecording) {
+        if (ppgSampleNo % 100 == 0) Serial.printf("T,%lu,%lu\n", (unsigned long)ppgSampleNo, (unsigned long)millis());
+        Serial.printf("P,%lu,%lu,%lu,%d\n", (unsigned long)ppgSampleNo, (unsigned long)irVal,
+                      (unsigned long)redVal, (int)(currentG * 100.0f + 0.5f));
+        ppgSampleNo++;
+      }
+#endif
+
+      // Skin contact: lost only after 3.5 s without it, so a short slip does not flicker
+      if (irVal > PPG_CONTACT_MIN) {
         touchState = 1;
         lastValidContactTime = now;
-
-        if (checkForBeat(irVal) == true) {
-          long delta = millis() - lastBeat;
-          lastBeat = millis();
-
-          float bpm = 60.0f / (delta / 1000.0f);
-          // Wide range on purpose (vitals_filter.h): dangerous rates must reach the server
-          if (isValidBpm(bpm)) {
-            rates[rateSpot++] = (byte)bpm;
-            rateSpot %= RATE_SIZE;
-
-            // Median of the last beats: one missed or doubled beat does not move it.
-            // Nothing is reported before BPM_MIN_BEATS intervals have been measured.
-            beatAvg = medianOfNonZero(rates, RATE_SIZE, BPM_MIN_BEATS);
-            lastValidBeatMs = millis();
-            if (lastValidBeatMs == 0) lastValidBeatMs = 1;
-          }
-        }
-
-        if (irVal > irMax)   irMax = irVal;
-        if (irVal < irMin)   irMin = irVal;
-        if (redVal > redMax) redMax = redVal;
-        if (redVal < redMin) redMin = redVal;
-
-        spo2SampleCount++;
-        if (spo2SampleCount >= 100) {
-          float acIR  = (float)(irMax - irMin);
-          float dcIR  = (float)irMin;
-          float acRed = (float)(redMax - redMin);
-          float dcRed = (float)redMin;
-
-          if (dcIR > 0 && dcRed > 0 && acIR > 0) {
-            float R = (acRed / dcRed) / (acIR / dcIR);
-            // Uncalibrated linear approximation: SpO2 values are indicative only
-            float calculatedSpo2 = 110.0f - (25.0f * R);
-
-            if (isValidSpo2(calculatedSpo2)) {
-              spo2Buffer[spo2Spot++] = (byte)calculatedSpo2;
-              spo2Spot %= SPO2_SIZE;
-
-              int spo2Sum = 0;
-              byte spo2Count = 0;
-              for (byte y = 0; y < SPO2_SIZE; y++) {
-                if (spo2Buffer[y] > 0) {
-                  spo2Sum += spo2Buffer[y];
-                  spo2Count++;
-                }
-              }
-              if (spo2Count > 0) spo2Avg = spo2Sum / spo2Count;
-            }
-          }
-
-          irMax = 0; irMin = 0xFFFFFF;
-          redMax = 0; redMin = 0xFFFFFF;
-          spo2SampleCount = 0;
-        }
-      } else {
-        // Debounce contact loss: only wipe vitals if contact lost continuously for > 3.5 seconds
-        if (now - lastValidContactTime > 3500) {
-          touchState = 0;
-          beatAvg = 0;
-          spo2Avg = 0;
-          rateSpot = 0;
-          spo2Spot = 0;
-          irMax = 0; irMin = 0xFFFFFF;
-          redMax = 0; redMin = 0xFFFFFF;
-          spo2SampleCount = 0;
-          for (byte i = 0; i < RATE_SIZE; i++) rates[i] = 0;
-          for (byte j = 0; j < SPO2_SIZE; j++) spo2Buffer[j] = 0;
-        }
+      } else if (now - lastValidContactTime > 3500) {
+        touchState = 0;
       }
+
+      // Heart rate and SpO2 (pulse_estimator.h). The estimator restarts by itself
+      // when the sensor sees no skin or is at its ceiling for half a second.
+#if SHIRO_PPG_RECORDER
+      const unsigned long estimateStartUs = micros();
+#endif
+      const bool newEstimate = pulse.addSample(irVal, redVal);
+      beatAvg = pulse.bpm();
+      spo2Avg = pulse.spo2();
+      if (newEstimate && beatAvg != 0 && burstReadings < 255) burstReadings++;   // one estimate per second
+#if SHIRO_PPG_RECORDER
+      if (ppgRecording && newEstimate) {
+        // The last number is the time the estimate took, in microseconds
+        Serial.printf("E,%lu,%d,%d,%d,%d,%lu\n", (unsigned long)ppgSampleNo, (int)(pulse.candidateBpm() + 0.5f),
+                      (int)(pulse.strength() * 100.0f), beatAvg, spo2Avg, (unsigned long)(micros() - estimateStartUs));
+      }
+#else
+      (void)newEstimate;
+#endif
     }
   }
 
@@ -713,12 +760,15 @@ void loop() {
     lastBleTransmitTime = now;
     updateBleAdvertisement();
 
-    Serial.printf("[BROADCAST %s] BPM: %d | SpO2: %d%% | Bat: %d%%%s | G: %.2f | Motion: %s [%s]%s%s\n",
-                  BLEDevice::getAddress().toString().c_str(),
-                  beatAvg, spo2Avg, currentBatteryPct,
-                  isCharging ? " (⚡ CHG)" : "", currentG, currentMotion,
-                  vitalsMode == MODE_ACTIVE_STREAM ? "1Hz ACTIVE" : (vitalsMode == MODE_PASSIVE_BURST ? "3m BURST" : "3m SLEEP"),
-                  imuFault ? " | IMU FAULT" : "", !maxReady ? " | PPG FAULT" : "");
+    // The status line is left out while a raw recording runs (it would sit between the samples)
+    if (!ppgRecording) {
+      Serial.printf("[BROADCAST %s] BPM: %d | SpO2: %d%% | Bat: %d%%%s | G: %.2f | Motion: %s [%s]%s%s\n",
+                    BLEDevice::getAddress().toString().c_str(),
+                    beatAvg, spo2Avg, currentBatteryPct,
+                    isCharging ? " (⚡ CHG)" : "", currentG, currentMotion,
+                    vitalsMode == MODE_ACTIVE_STREAM ? "1Hz ACTIVE" : (vitalsMode == MODE_PASSIVE_BURST ? "3m BURST" : "3m SLEEP"),
+                    imuFault ? " | IMU FAULT" : "", !maxReady ? " | PPG FAULT" : "");
+    }
   }
 
   delay(5);
