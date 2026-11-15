@@ -1,6 +1,7 @@
 // =============================================================================
 // Ward Configuration Controller
 // =============================================================================
+const logger = require('../utils/logger');
 const wardService = require('../services/ward_service');
 const { broadcastToClients } = require('../services/websocket_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
@@ -269,7 +270,7 @@ async function saveSpatialAnchor(req, res, body) {
     const [result] = await getPool().query('UPDATE ward_rooms SET spatial_anchor_uuid = ? WHERE ward_id = ?', [uuid, wardId]);
     if (result.affectedRows === 0) throw new HttpError(404, 'Ward not found');
 
-    console.log(`[WARD SPATIAL ANCHOR] Saved anchor reference "${uuid}" for ${wardId}`);
+    logger.info(`[WARD SPATIAL ANCHOR] Saved anchor reference "${uuid}" for ${wardId}`);
     sendJson(res, 200, { success: true, ward_id: wardId, spatial_anchor_uuid: uuid });
   } catch (err) {
     sendFailure(res, err, 'saveSpatialAnchor');

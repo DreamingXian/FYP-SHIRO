@@ -453,16 +453,16 @@ async function dischargePatient(patientId) {
       );
     }
 
-    // 2. Release any active wristband wearable tag back to AVAILABLE
-    try {
-      const [bindRows] = await conn.query('SELECT device_id FROM patient_bindings WHERE patient_id = ?', [patientId]);
-      if (bindRows && bindRows.length > 0) {
-        for (const b of bindRows) {
-          await conn.query(`UPDATE devices SET availability_status = 'AVAILABLE' WHERE device_id = ?`, [b.device_id]);
-        }
-        await conn.query('DELETE FROM patient_bindings WHERE patient_id = ?', [patientId]);
-      }
-    } catch (_) {}
+    // 2. Release any active wristband wearable tag back to AVAILABLE.
+    //    Part of the same transaction: if this fails, the whole discharge is
+    //    rolled back, so a discharged patient never keeps a wristband bound.
+    const [bindRows] = await conn.query('SELECT device_id FROM patient_bindings WHERE patient_id = ?', [patientId]);
+    for (const b of bindRows) {
+      await conn.query(`UPDATE devices SET availability_status = 'AVAILABLE' WHERE device_id = ?`, [b.device_id]);
+    }
+    if (bindRows.length > 0) {
+      await conn.query('DELETE FROM patient_bindings WHERE patient_id = ?', [patientId]);
+    }
 
     // 2. Mark patient as DISCHARGED
     await conn.query(

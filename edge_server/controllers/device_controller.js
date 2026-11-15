@@ -3,6 +3,7 @@
 // Handles REST APIs for Device Management, Discovery Radar & Remote Actions
 // =============================================================================
 
+const logger = require('../utils/logger');
 const deviceService = require('../services/device_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const { requireId, requireMac, requireOneOf, optionalOneOf, optionalText, optionalInt } = require('../utils/validate');
@@ -119,7 +120,7 @@ async function pingDevice(req, res, body) {
     const deviceId = requireId(payload.device_id, 'device_id');
 
     // In a live system, this sends an MQTT CMD_PING_LED to shiro/command/{device_id}
-    console.log(`[DEVICE ACTION] Dispatched PING_LED to ${deviceId}`);
+    logger.info(`[DEVICE ACTION] Dispatched PING_LED to ${deviceId}`);
     sendJson(res, 200, { success: true, message: `Ping command sent to ${deviceId}. Visual LED triggered!` });
   } catch (err) {
     sendFailure(res, err, 'pingDevice');

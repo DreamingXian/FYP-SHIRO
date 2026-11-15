@@ -1,6 +1,7 @@
 // =============================================================================
 // Ward Spatial Configuration Service (MySQL CRUD Operations)
 // =============================================================================
+const logger = require('../utils/logger');
 const { getPool } = require('../database/db');
 const fs = require('fs');
 const path = require('path');
@@ -287,7 +288,7 @@ async function saveWardConfig(data) {
     await conn.commit();
     // Refresh IPS engine anchor coordinates cache
     ipsService.reloadWardAnchorsCache().catch(err => {
-      console.warn('[WARD SERVICE] Error refreshing IPS cache:', err.message);
+      logger.warn('[WARD SERVICE] Error refreshing IPS cache:', err.message);
     });
     return { success: true, ward_id: wardId };
   } catch (err) {
@@ -441,7 +442,7 @@ async function saveWardAnchorCalibrations(wardId, calibrations) {
 
   // Reload IPS engine anchor cache so runtime localization uses calibrated values immediately
   ipsService.reloadWardAnchorsCache().catch(err => {
-    console.warn('[WARD SERVICE] Error refreshing IPS cache after calibration:', err.message);
+    logger.warn('[WARD SERVICE] Error refreshing IPS cache after calibration:', err.message);
   });
 
   return { success: true };
@@ -461,7 +462,7 @@ async function resetWardAnchorCalibrations(wardId) {
 
   // Reload IPS engine anchor cache so runtime localization immediately drops overrides
   ipsService.reloadWardAnchorsCache().catch(err => {
-    console.warn('[WARD SERVICE] Error refreshing IPS cache after calibration reset:', err.message);
+    logger.warn('[WARD SERVICE] Error refreshing IPS cache after calibration reset:', err.message);
   });
 
   return { success: true };

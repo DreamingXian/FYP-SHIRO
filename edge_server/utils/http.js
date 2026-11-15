@@ -4,6 +4,7 @@
 // parsing JSON, and deciding what an error may tell the client.
 // =============================================================================
 
+const logger = require('./logger');
 /** An error whose message is written for the client and is safe to send. */
 class HttpError extends Error {
   constructor(status, message) {
@@ -52,7 +53,7 @@ function isRuleError(err) {
 function sendFailure(res, err, context) {
   if (err instanceof HttpError) return sendError(res, err.status, err.message);
   if (isRuleError(err)) return sendError(res, 400, err.message);
-  console.error(`[HTTP ERROR] ${context}:`, err);
+  logger.error(`[HTTP ERROR] ${context}:`, err);
   sendError(res, 500, GENERIC_SERVER_ERROR);
 }
 

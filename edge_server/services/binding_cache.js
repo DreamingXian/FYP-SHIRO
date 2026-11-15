@@ -5,6 +5,7 @@
 // database query per packet.
 // =============================================================================
 
+const logger = require('../utils/logger');
 function normalise(deviceId) {
   return String(deviceId || '').trim().toUpperCase();
 }
@@ -45,7 +46,7 @@ function createBindingCache({ load, maxAgeMs = 15000, now = Date.now }) {
    */
   function getPatientIdForDevice(deviceId) {
     if (now() - lastRefresh > maxAgeMs) {
-      refresh().catch(err => console.warn('[BINDING CACHE] Refresh failed:', err.message));
+      refresh().catch(err => logger.warn('[BINDING CACHE] Refresh failed:', err.message));
     }
     return byDevice.get(normalise(deviceId)) || null;
   }

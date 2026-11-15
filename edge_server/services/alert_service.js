@@ -6,6 +6,7 @@
 // Rule for this module: a value that was not measured is stored as NULL.
 // The audit log must never contain a number the system made up.
 // =============================================================================
+const logger = require('../utils/logger');
 const { getPool } = require('../database/db');
 const { broadcastToClients } = require('./websocket_service');
 const ipsService = require('./ips_service');
@@ -37,7 +38,7 @@ async function findOpenFallIncident(wristbandMac) {
     return rows.length > 0 ? rows[0].incident_id : null;
   } catch (err) {
     // When in doubt the alarm is raised: a duplicate is better than a missed fall
-    console.warn('[ALERT SERVICE] Could not check for an earlier incident of this fall:', err.message);
+    logger.warn('[ALERT SERVICE] Could not check for an earlier incident of this fall:', err.message);
     return null;
   }
 }
@@ -118,7 +119,7 @@ async function recordIncident(incidentData) {
         bedId = bedId || rows[0].assigned_bed_id;
       }
     } catch (err) {
-      console.warn('[ALERT SERVICE] Could not resolve patient from binding:', err.message);
+      logger.warn('[ALERT SERVICE] Could not resolve patient from binding:', err.message);
     }
   }
 
@@ -135,7 +136,7 @@ async function recordIncident(incidentData) {
         wardId = devRows[0].assigned_ward_id;
       }
     } catch (err) {
-      console.warn('[ALERT SERVICE] Could not resolve ward from device:', err.message);
+      logger.warn('[ALERT SERVICE] Could not resolve ward from device:', err.message);
     }
   }
 
@@ -183,13 +184,13 @@ async function recordIncident(incidentData) {
         posX, posY, impactG, stillness, freefallMinG, bpm, spo2, alertMessage, isSimulated ? 1 : 0
       ]);
       persisted = true;
-      console.log(`[ALERT PERSISTED] Incident ${incidentId} logged in MySQL for ${patientName} (${category}${isSimulated ? ', simulated' : ''}).`);
+      logger.info(`[ALERT PERSISTED] Incident ${incidentId} logged in MySQL for ${patientName} (${category}${isSimulated ? ', simulated' : ''}).`);
     } catch (dbErr) {
       if (dbErr.code === 'ER_DUP_ENTRY' && !idWasSupplied && attempt < MAX_ID_ATTEMPTS) {
         incidentId = await nextIncidentId();
         continue;
       }
-      console.error('[ALERT DATABASE ERROR] Failed to save incident log:', dbErr.message);
+      logger.error('[ALERT DATABASE ERROR] Failed to save incident log:', dbErr.message);
       break;
     }
   }
@@ -250,13 +251,13 @@ async function evaluateTelemetry(telemetry, detectedTag, tagMac) {
       const earlierIncidentId = await findOpenFallIncident(tagMac);
       if (earlierIncidentId) {
         session.incidentId = earlierIncidentId;
-        console.log(`[FALL] ${detectedTag} is still flagging the fall of incident ${earlierIncidentId} (raised before this server start). No new incident.`);
+        logger.info(`[FALL] ${detectedTag} is still flagging the fall of incident ${earlierIncidentId} (raised before this server start). No new incident.`);
         return null;
       }
     }
 
     const impact = telemetry.impactG !== null ? `${telemetry.impactG} g` : 'not reported';
-    console.warn(`[EMERGENCY DETECTED] On-chip fall alarm from ${detectedTag} (${tagMac}), fall #${telemetry.fallSeq ?? 'n/a'}, impact ${impact}`);
+    logger.warn(`[EMERGENCY DETECTED] On-chip fall alarm from ${detectedTag} (${tagMac}), fall #${telemetry.fallSeq ?? 'n/a'}, impact ${impact}`);
 
     // Fall vector to InfluxDB (Table 4.10): only values the wristband measured
     timeSeriesService.logFallVector({
@@ -288,7 +289,7 @@ async function evaluateTelemetry(telemetry, detectedTag, tagMac) {
   if (!decision) return null;
 
   const label = decision.severity === 'EXTREME' ? 'CRITICAL PHYSIOLOGICAL EMERGENCY' : 'SUSTAINED PHYSIOLOGICAL ANOMALY';
-  console.warn(`[VITALS ALERT] ${label}: ${decision.reason} on ${detectedTag}`);
+  logger.warn(`[VITALS ALERT] ${label}: ${decision.reason} on ${detectedTag}`);
 
   return recordIncident({
     device_id: detectedTag,
@@ -321,7 +322,7 @@ async function acknowledgeIncident(incidentId, clinicianId, notes) {
       WHERE incident_id = ?
     `, [clinician, incidentNotes, incidentId]);
 
-    console.log(`[ALERT ACKNOWLEDGED] Incident ${incidentId} acknowledged by ${clinician}.`);
+    logger.info(`[ALERT ACKNOWLEDGED] Incident ${incidentId} acknowledged by ${clinician}.`);
 
     // The wristband keeps repeating its fall flag for a while: the open session stays
     // in place so those packets do not raise the same fall again.
@@ -337,7 +338,7 @@ async function acknowledgeIncident(incidentId, clinicianId, notes) {
 
     return { success: true, incident_id: incidentId, status: 'ACKNOWLEDGED' };
   } catch (err) {
-    console.error('[ALERT ACKNOWLEDGE ERROR]', err.message);
+    logger.error('[ALERT ACKNOWLEDGE ERROR]', err.message);
     throw err;
   }
 }
@@ -356,7 +357,7 @@ async function getActiveAlerts() {
     `);
     return rows;
   } catch (err) {
-    console.error('[GET ACTIVE ALERTS ERROR]', err.message);
+    logger.error('[GET ACTIVE ALERTS ERROR]', err.message);
     return [];
   }
 }
@@ -374,7 +375,7 @@ async function getIncidentHistory(limit = 50) {
     `, [parseInt(limit, 10)]);
     return rows;
   } catch (err) {
-    console.error('[GET INCIDENT HISTORY ERROR]', err.message);
+    logger.error('[GET INCIDENT HISTORY ERROR]', err.message);
     return [];
   }
 }

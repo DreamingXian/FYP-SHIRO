@@ -1,6 +1,7 @@
 // =============================================================================
 // Patient Directory & Admission Routes Dispatcher
 // =============================================================================
+const logger = require('../utils/logger');
 const patientController = require('../controllers/patient_controller');
 const { HttpError, sendJson, sendFailure } = require('../utils/http');
 const { requireId } = require('../utils/validate');
@@ -95,7 +96,7 @@ async function handlePatientRoutes(pathname, req, res, parsedUrl, body) {
           wristbandMac = rows[0].mac_address;
         }
       } catch (dbErr) {
-        console.warn('[PATIENT VITALS ROUTE] Could not resolve binding:', dbErr.message);
+        logger.warn('[PATIENT VITALS ROUTE] Could not resolve binding:', dbErr.message);
       }
 
       // History is matched on the patient ID only; the binding is returned for display.
