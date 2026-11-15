@@ -99,6 +99,8 @@ const TEST_MQTT_LOGIN = { username: 'itest-anchor', password: 'itest-password-01
 function startServer(extraEnv) {
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..', '..'),
+    // IPC channel: lets a test ask for a clean shutdown (Windows has no SIGINT for child processes)
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: {
       ...process.env,
       DB_NAME: process.env.DB_NAME,
@@ -125,6 +127,12 @@ function startServer(extraEnv) {
     if (child.exitCode !== null) return resolve();
     child.once('exit', resolve);
     child.kill();
+  });
+  /** Asks the server for a clean shutdown (as Ctrl+C does). Resolves with the exit code. */
+  state.shutdown = () => new Promise((resolve) => {
+    if (child.exitCode !== null) return resolve(child.exitCode);
+    child.once('exit', (code) => resolve(code));
+    child.send('shutdown');
   });
   return state;
 }

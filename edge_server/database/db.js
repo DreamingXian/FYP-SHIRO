@@ -1,6 +1,7 @@
 // =============================================================================
 // SHIRO Hospital Edge Server - MySQL Connection Pool & Database Initialisation
 // =============================================================================
+const logger = require('../utils/logger');
 require('../config/load_env');
 const mysql = require('mysql2/promise');
 const fs = require('fs');
@@ -28,11 +29,25 @@ if (!/^[A-Za-z0-9_]+$/.test(dbConfig.database)) {
 
 let pool = null;
 
+// Queries sent through the pool since start-up (for /api/system/stats and the load test)
+let queryCount = 0;
+
 function getPool() {
   if (!pool) {
     pool = mysql.createPool(dbConfig);
+    for (const method of ['query', 'execute']) {
+      const original = pool[method].bind(pool);
+      pool[method] = (...args) => {
+        queryCount++;
+        return original(...args);
+      };
+    }
   }
   return pool;
+}
+
+function getQueryCount() {
+  return queryCount;
 }
 
 async function closePool() {
@@ -123,7 +138,7 @@ async function initDatabase() {
   }
 
   try {
-    console.log('[DATABASE] Connected to MySQL server successfully.');
+    logger.info('[DATABASE] Connected to MySQL server successfully.');
     // 2. Ensure the configured database exists
     await connection.query(
       `CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`
@@ -134,12 +149,12 @@ async function initDatabase() {
 
   // 3. Create missing tables (wards, patients, devices, bindings, incident log)
   await applySchema();
-  console.log(`[DATABASE] Schema verified in "${dbConfig.database}".`);
+  logger.info(`[DATABASE] Schema verified in "${dbConfig.database}".`);
 
   // 4. Sample data only for a fresh, empty database
   if (await isDatabaseEmpty()) {
     await applySeed();
-    console.log('[DATABASE] Empty database detected: sample wards and patients loaded.');
+    logger.info('[DATABASE] Empty database detected: sample wards and patients loaded.');
   }
 
   return true;
@@ -147,6 +162,7 @@ async function initDatabase() {
 
 module.exports = {
   getPool,
+  getQueryCount,
   closePool,
   initDatabase,
   applySchema,

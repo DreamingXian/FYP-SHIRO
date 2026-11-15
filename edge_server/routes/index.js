@@ -1,6 +1,7 @@
 // =============================================================================
 // Central Master Router & Static Asset Handler
 // =============================================================================
+const logger = require('../utils/logger');
 const fs = require('fs');
 const path = require('path');
 const config = require('../config/app_config');
@@ -9,6 +10,7 @@ const { handlePatientRoutes } = require('./patient_routes');
 const { handleDeviceRoutes } = require('./device_routes');
 const { handleBindingRoutes } = require('./binding_routes');
 const { handleAlertRoutes } = require('./alert_routes');
+const { handleSystemRoutes } = require('./system_routes');
 const { HttpError, JSON_BODY_LIMIT, PHOTO_BODY_LIMIT, sendError, sendFailure, readBody, isCrossSiteRequest } = require('../utils/http');
 
 const MIME_TYPES = {
@@ -31,7 +33,8 @@ const API_ROUTERS = [
   ['/api/patients', handlePatientRoutes],
   ['/api/devices', handleDeviceRoutes],
   ['/api/bindings', handleBindingRoutes],
-  ['/api/alerts', handleAlertRoutes]
+  ['/api/alerts', handleAlertRoutes],
+  ['/api/system', handleSystemRoutes]
 ];
 
 /**
@@ -75,7 +78,7 @@ function serveStaticFile(req, res, pathname) {
         res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('404 Not Found');
       } else {
-        console.error(`[STATIC FILE ERROR] ${pathname}:`, err.message);
+        logger.error(`[STATIC FILE ERROR] ${pathname}:`, err.message);
         res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('500 Server Error');
       }

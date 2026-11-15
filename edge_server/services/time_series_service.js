@@ -2,6 +2,7 @@
 // SHIRO Hospital Edge Server - InfluxDB Time-Series Telemetry Service
 // Module: Continuous Biometric Logging & Spatial Trajectories (Table 4.10)
 // =============================================================================
+const logger = require('../utils/logger');
 const http = require('http');
 const config = require('../config/app_config');
 const { isId } = require('../utils/validate');
@@ -15,7 +16,7 @@ const bucket = config.INFLUX_BUCKET;
 // Without one, writes are skipped and history queries return no points.
 const enabled = Boolean(token);
 if (!enabled) {
-  console.warn('[INFLUXDB] INFLUX_TOKEN is not set. Time-series logging and vitals history are disabled.');
+  logger.warn('[INFLUXDB] INFLUX_TOKEN is not set. Time-series logging and vitals history are disabled.');
 }
 
 function isEnabled() {
@@ -26,6 +27,7 @@ function isEnabled() {
 let writeBuffer = [];
 let flushTimer = null;
 const BATCH_INTERVAL_MS = 1000; // Flush write buffer once every 1 second
+const WRITE_TIMEOUT_MS = 5000;
 
 /**
  * Execute HTTP Line Protocol Write to InfluxDB v2
@@ -52,14 +54,22 @@ function sendLineProtocol(lines) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(true);
         } else {
-          console.warn(`[INFLUXDB WRITE WARNING] HTTP ${res.statusCode}:`, data);
+          // At most one warning per status every 30 s while InfluxDB keeps refusing
+          if (logger.every(`influx-status-${res.statusCode}`, 30000)) {
+            logger.warn(`[INFLUXDB WRITE WARNING] HTTP ${res.statusCode}: ${lines.length} point(s) not stored.`, data.slice(0, 300));
+          }
           resolve(false);
         }
       });
     });
 
+    // A write that hangs must not hold up the next ones or a shutdown
+    req.setTimeout(WRITE_TIMEOUT_MS, () => req.destroy(new Error(`no answer within ${WRITE_TIMEOUT_MS / 1000} s`)));
+
     req.on('error', err => {
-      console.warn('[INFLUXDB WRITE ERROR] Could not connect to InfluxDB daemon:', err.message);
+      if (logger.every('influx-connect', 30000)) {
+        logger.warn(`[INFLUXDB WRITE ERROR] Could not reach InfluxDB (${err.message}): ${lines.length} point(s) not stored. Is it running?`);
+      }
       resolve(false);
     });
 
@@ -76,6 +86,17 @@ async function flushBuffer() {
   const batch = [...writeBuffer];
   writeBuffer = [];
   await sendLineProtocol(batch);
+}
+
+/** Shutdown: writes the points still waiting and stops the batch timer. */
+async function closeTimeSeries() {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  const pending = writeBuffer.length;
+  await flushBuffer();
+  return pending;
 }
 
 // Every point carries its own millisecond timestamp. Without one, InfluxDB
@@ -301,7 +322,7 @@ function queryVitalsHistory(patientId, range = DEFAULT_HISTORY_RANGE, options = 
       res.on('data', c => csvData += c);
       res.on('end', () => {
         if (res.statusCode !== 200) {
-          console.warn('[INFLUXDB QUERY WARNING] Status', res.statusCode, csvData);
+          logger.warn('[INFLUXDB QUERY WARNING] Status', res.statusCode, csvData);
           return resolve([]);
         }
 
@@ -312,7 +333,7 @@ function queryVitalsHistory(patientId, range = DEFAULT_HISTORY_RANGE, options = 
     });
 
     req.on('error', err => {
-      console.warn('[INFLUXDB QUERY ERROR]', err.message);
+      logger.warn('[INFLUXDB QUERY ERROR]', err.message);
       resolve([]);
     });
 
@@ -327,6 +348,7 @@ module.exports = {
   logFallVector,
   queryVitalsHistory,
   flushBuffer,
+  closeTimeSeries,
   isEnabled,
   buildVitalsHistoryQuery,
   resolveHistoryRange,

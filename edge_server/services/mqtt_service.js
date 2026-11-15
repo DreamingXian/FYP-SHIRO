@@ -1,6 +1,7 @@
 // =============================================================================
 // MQTT Broker & Telemetry Dispatch Service (Aedes)
 // =============================================================================
+const logger = require('../utils/logger');
 const { Aedes } = require('aedes');
 const net = require('net');
 const { KalmanFilter1D, calculateDistance, getCalibration } = require('./kalman_filter');
@@ -29,7 +30,7 @@ function warnUnsupportedPacket(tagMac) {
   const now = Date.now();
   if (now - (lastUnsupportedWarning.get(key) || 0) < UNSUPPORTED_WARNING_INTERVAL_MS) return;
   lastUnsupportedWarning.set(key, now);
-  console.warn(`[PROTOCOL] Wristband ${key} sends a packet version this system does not support. Position is tracked, vitals and fall alerts are NOT. Reflash the wristband.`);
+  logger.warn(`[PROTOCOL] Wristband ${key} sends a packet version this system does not support. Position is tracked, vitals and fall alerts are NOT. Reflash the wristband.`);
 }
 
 // Messages that are refused: one warning per client and reason every 10 seconds,
@@ -44,7 +45,7 @@ function warnRefusedMessage(client, topic, reason) {
   if (now - (lastRefusedWarning.get(key) || 0) < REFUSED_WARNING_INTERVAL_MS) return;
   if (lastRefusedWarning.size > 500) lastRefusedWarning.clear();
   lastRefusedWarning.set(key, now);
-  console.warn(`[MQTT] Message from "${clientId}" on "${String(topic).slice(0, 80)}" ignored: ${reason}.`);
+  logger.warn(`[MQTT] Message from "${clientId}" on "${String(topic).slice(0, 80)}" ignored: ${reason}.`);
 }
 
 // Dynamic Kalman filter registry per Anchor ID
@@ -74,14 +75,14 @@ async function startMqttBroker(port, credentials) {
     tcpServer.once('error', reject);
     tcpServer.listen(port, '0.0.0.0', () => {
       tcpServer.off('error', reject);
-      console.log(`[MQTT BROKER] Listening on 0.0.0.0:${port} (anchor login required)`);
+      logger.info(`[MQTT BROKER] Listening on 0.0.0.0:${port} (anchor login required)`);
       resolve();
     });
   });
 
   // Client lifecycle events. Only logged-in anchors get here.
   aedesInstance.on('client', (client) => {
-    console.log(`[MQTT CLIENT CONNECTED] ID: ${client.id}`);
+    logger.info(`[MQTT CLIENT CONNECTED] ID: ${client.id}`);
     const ip = client.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
     const mac = anchorMacFromClientId(client.id);
     if (mac) {
@@ -92,7 +93,7 @@ async function startMqttBroker(port, credentials) {
   });
 
   aedesInstance.on('clientDisconnect', (client) => {
-    console.log(`[MQTT CLIENT DISCONNECTED] ID: ${client.id}`);
+    logger.info(`[MQTT CLIENT DISCONNECTED] ID: ${client.id}`);
     // NOTE: We deliberately do NOT immediately broadcast status: 'OFFLINE' on socket drop.
     // Temporary TCP socket renegotiations or Wi-Fi reconnects (0.3s) cause false-positive OFFLINE flashes.
     // The server-side freshness watchdog (12-second timeout) reliably marks dead nodes offline when genuinely unplugged.
@@ -101,13 +102,13 @@ async function startMqttBroker(port, credentials) {
   aedesInstance.on('connectionError', (client, error) => {
     // Refused logins are already reported, once per address, by mqtt_access.js
     if (error && error.errorCode >= 2 && error.errorCode <= 5) return;
-    console.error(`[MQTT ERROR] Client: ${client ? client.id : 'unknown'}`, error.message);
+    logger.error(`[MQTT ERROR] Client: ${client ? client.id : 'unknown'}`, error.message);
   });
 
   aedesInstance.on('clientError', (client, error) => {
     // A refused publish ends the connection; mqtt_access.js has already said why
     if (error && /not allowed/.test(error.message)) return;
-    console.warn(`[MQTT CLIENT ERROR] ${client ? client.id : 'unknown'}: ${error.message}`);
+    logger.warn(`[MQTT CLIENT ERROR] ${client ? client.id : 'unknown'}: ${error.message}`);
   });
 
   // Intercept incoming publish packets
@@ -209,7 +210,7 @@ async function startMqttBroker(port, credentials) {
             // Evaluate Fall Anomaly & Critical Vitals Alarm Pipeline.
             // A failure here must be visible and must not stop telemetry processing.
             alertService.evaluateTelemetry(telemetry, detectedTag, tagMac).catch((err) => {
-              console.error(`[ALERT PIPELINE ERROR] ${detectedTag}: ${err.message}`);
+              logger.error(`[ALERT PIPELINE ERROR] ${detectedTag}: ${err.message}`);
             });
 
             // Broadcast live vitals for Patient Monitors, Live Map & VR Headsets.
@@ -282,12 +283,24 @@ async function startMqttBroker(port, credentials) {
   return { aedes: aedesInstance, tcpServer };
 }
 
+/** Shutdown: disconnects the anchors and stops listening. */
+async function stopMqttBroker() {
+  const broker = aedesInstance;
+  const server = tcpServer;
+  aedesInstance = null;
+  tcpServer = null;
+  // The broker first: it disconnects the anchors. A listening socket only
+  // finishes closing once no connection is left.
+  if (broker) await new Promise((resolve) => broker.close(() => resolve()));
+  if (server) await new Promise((resolve) => server.close(() => resolve()));
+}
+
 /**
  * Publish an MQTT message to connected nodes/anchors
  */
 function publishMqtt(topic, payload) {
   if (!aedesInstance) {
-    console.warn('[MQTT PUBLISH] Broker not started yet.');
+    logger.warn('[MQTT PUBLISH] Broker not started yet.');
     return false;
   }
   const message = typeof payload === 'string' ? payload : JSON.stringify(payload);
@@ -297,13 +310,14 @@ function publishMqtt(topic, payload) {
     qos: 0,
     retain: false
   }, (err) => {
-    if (err) console.error('[MQTT PUBLISH ERROR]', err.message);
+    if (err) logger.error('[MQTT PUBLISH ERROR]', err.message);
   });
   return true;
 }
 
 module.exports = {
   startMqttBroker,
+  stopMqttBroker,
   publishMqtt
 };
 
