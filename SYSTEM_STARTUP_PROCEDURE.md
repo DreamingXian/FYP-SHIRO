@@ -1,8 +1,8 @@
 # SHIRO: Spatial Health Interface & Real-Time Observer
 ## Master System Startup Procedure & Hardware/Software Operations Guide
 
-> **Document Version:** 2.1.0  
-> **Last Updated:** November 2026  
+> **Document Version:** 2.2.0  
+> **Last Updated:** 16 November 2026  
 > **Project:** Final Year Project (RSWG7) - MR-Patient Connect (SHIRO)  
 > **Maintainer:** Tan Shou Xian  
 > **Repository:** https://github.com/DreamingXian/FYP-SHIRO.git  
@@ -11,39 +11,38 @@
 
 ## 1. System Architecture & Topology Overview
 
-SHIRO uses a streamlined dual-role anchor architecture where **standalone gateway hardware is eliminated**. The stationary wall anchors perform both indoor localization multilateration (measuring raw BLE RSSI attenuation) and wireless telemetry gateway duties (unpacking BPM, SpO2 %, battery %, motion state, and fall detection events):
+SHIRO uses a dual-role anchor architecture with **no separate gateway hardware**. The stationary wall anchors measure the BLE signal strength (RSSI) of each wristband broadcast for positioning, and decode the telemetry the wristband places in that broadcast (heart rate, SpO2, battery, motion state, fall events, sensor faults):
 
 ```
 [ Tier 1: Patient Wearable ]
   Seeed Studio XIAO ESP32-C6 + HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) + Battery Divider
          │
-         └──(BLE 5.0 High-Rate Advertising Beacons @ 5–10 Hz)
-             │  [Contains: RSSI Beacons + Embedded Biometric & Kinematic Payload]
+         └──(BLE advertising, every 62.5–100 ms)
+             │  [Telemetry packet v2: vitals, motion, fall, battery, sensor faults]
              ▼
-[ Tier 1.5: Dual-Role Stationary Wall Anchors (Hybrid Anchor & Gateway) ]
-  3x ESP32-WROOM-32E (Universal Firmware - Auto-Provisioned via Edge Server)
-         │  - Measures raw RSSI attenuation for 2D/3D multilateration
-         │  - Unpacks BPM, SpO2 %, Battery %, G-force, Motion state, and Fall alerts
+[ Tier 1.5: Dual-Role Stationary Wall Anchors (Anchor & Gateway) ]
+  3x ESP32-WROOM-32E (one firmware for all, identity assigned by the edge server)
+         │  - Measures RSSI for multilateration
+         │  - Decodes the wristband's telemetry packet
          │
-         └──(Wi-Fi MQTT TCP:1883)──► [ Tier 2: Central Edge Server ]
-                                      Host PC / Laptop
+         └──(Wi-Fi, MQTT TCP:1883, anchor login)──► [ Tier 2: Central Edge Server ]
+                                      Host PC / Laptop (Node.js)
                                       - Embedded Aedes MQTT Broker (:1883)
                                       - HTTP REST API Server (:3000)
                                       - WebSocket Real-Time Event Server (:3000)
-                                      - 1D Extended Kalman Filter (EKF) Signal Conditioning
-                                      - Multi-Anchor Non-Linear Trilateration Engine
-                                      - 4-Anchor Quadruplet Combinatorial Solver
-                                      - MySQL Relational Database (XAMPP :3306)
-                                      - InfluxDB Time-Series Telemetry Engine
-                                      - Web Operations Management Dashboard
+                                      - 1D Kalman Filter on RSSI per anchor
+                                      - Weighted Least-Squares Multilateration
+                                      - MariaDB / MySQL Relational Database (XAMPP :3306)
+                                      - InfluxDB Time-Series Store (:8086, optional)
+                                      - Web Operations Dashboard
                                               │
                                               └──(WebSocket JSON:3000)──► [ Tier 3: MR Client ]
-                                                                          Meta Quest 3 (Unity 6 OpenXR)
+                                                                          Meta Quest 3 (Unity 6, Meta XR)
                                                                           - Color Passthrough Digital Twin
                                                                           - In-Situ Walking Patient Hologram
                                                                           - Bed Docking (Headboard/Bedside)
-                                                                          - 2-Point Door/Bed Spatial Calibration
-                                                                          - Wrist Radar Hand Slate HUD
+                                                                          - 2-Point Door Frame Calibration
+                                                                          - Hand Slate HUD
 ```
 
 ---
@@ -74,7 +73,7 @@ The ESP32 anchor nodes and Meta Quest 3 must know the exact local IP address of 
 Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, and REST APIs are listening before the hardware nodes or Quest 3 attempt to connect.
 
 ### 3.1 Software Prerequisites
-* **XAMPP** (Installed at `C:\xampp`) with **MySQL** and **Apache** modules.
+* **XAMPP** (Installed at `C:\xampp`) with **MySQL** and **Apache** modules. XAMPP's "MySQL" is MariaDB 10.4, which is MySQL-compatible.
 * **Node.js** v20.12 or newer (v24.x recommended).
 * Dependencies installed in `edge_server/` with `npm install` (`aedes`, `ws`, `mysql2`).
 * **Server configuration file** `edge_server/.env` (first-time setup only):
@@ -177,20 +176,23 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
    ======================================================
      SHIRO Edge Server & Clinical IoT Gateway (Booting...)
    ======================================================
-   [DATABASE] Connected to MySQL server successfully.
-   [DATABASE] Schema verified in "shiro_db".
-   [IPS ENGINE] Cached assigned anchors across wards.
-   [MQTT BROKER] Listening on 0.0.0.0:1883 (anchor login required)
+   2026-11-16 09:00:00.120 INFO  [DATABASE] Connecting to MySQL Database...
+   2026-11-16 09:00:00.150 INFO  [DATABASE] Connected to MySQL server successfully.
+   2026-11-16 09:00:00.180 INFO  [DATABASE] Schema verified in "shiro_db".
+   2026-11-16 09:00:00.210 INFO  [IPS ENGINE] Cached 3 assigned anchors across 2 wards.
+   2026-11-16 09:00:00.230 INFO  [MQTT BROKER] Listening on 0.0.0.0:1883 (anchor login required)
+
    ======================================================
      SHIRO Clinical Dashboard & Gateway Ready
    ======================================================
    [HTTP DASHBOARD] Accessible at:
      -> Localhost:  http://localhost:3000
-     -> Network IP: http://192.168.1.229:3000
+     -> Wi-Fi: http://192.168.1.229:3000
    [MQTT BROKER]  tcp://192.168.1.229:1883 (ESP32 Anchors)
    [WEBSOCKET]    ws://192.168.1.229:3000 (Web & Quest 3 HMD)
    ======================================================
    ```
+   The time stamps, counts and addresses are examples; the dashboard lists one line per network adapter of the PC. Then one `[MQTT CLIENT CONNECTED] ID: SHIRO_Anchor_…` line appears for each anchor that connects.
 
    Notes on database start-up:
    * Missing tables are created automatically. Existing data is never modified by a restart.
@@ -202,11 +204,11 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
    **Stopping the server:** press **Ctrl+C** once in its terminal. It disconnects the anchors and dashboards, writes the device status and InfluxDB points still in memory, closes the database and ends with `[SHUTDOWN] Done.` Closing the terminal window instead skips these steps; at most the last 5 seconds of "last seen" and battery values are then lost.
 
 3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`:
-   * **Ward Configuration Editor:** Architectural room dimensioning, obstacle cutouts, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and 3D ray-cast anchor suggestion.
-   * **Live Ward Map:** 2D real-time bird's-eye canvas with 45cm scaled human dot, motion trajectory, bed docking detection, and 1-click landmark empirical calibration ($A$ and $n$ parameter tuning).
-   * **Device Provisioning Radar:** Zero-configuration spectrum discovery for Seeed Studio XIAO and ESP32 nodes with 1-click enrollment.
-   * **Patient Admissions Directory:** Electronic health record (EHR) profiles, fall risk scores, bed allocation, and wristband tag binding.
-   * **Live Telemetry & Diagnostics Lab:** Rolling 5 Hz PPG absorption waveform, heart rate, SpO2 %, and dual-channel RSSI Kalman filter comparison.
+   * **Ward Configuration Editor:** Room dimensions, obstacle cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor placement suggestions with line-of-sight checks.
+   * **Live Ward Map:** 2D real-time bird's-eye canvas with a scaled patient marker, movement trail, bed docking detection, and landmark calibration of each anchor ($A$ and $n$ parameters).
+   * **Device Provisioning Radar:** Lists nearby anchors, wristbands and headsets that are not yet enrolled, with one-click enrollment.
+   * **Patient Admissions Directory:** Patient profiles, fall risk scores, bed allocation, wristband binding and discharge.
+   * **Live Telemetry & Diagnostics Lab:** Live heart rate, SpO2 (indicative), motion and sensor contact from the wristband, raw versus Kalman-filtered RSSI per anchor, and an MQTT telemetry inspector. The raw pulse waveform is not shown: the wristband sends only computed results.
    * **System Health:** live server state (uptime, memory, response delay, database queries per second) and the status of every enrolled anchor and headset, refreshed every 5 s.
 
 ---
@@ -241,8 +243,8 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
 | :--- | :--- | :--- |
 | **VCC / VIN** | **3.3V** | 3.3V Regulated Power |
 | **GND** | **GND** | Ground |
-| **SDA** | **D4** (GPIO 21) | I2C Data Line |
-| **SCL** | **D5** (GPIO 22) | I2C Clock Line |
+| **SDA** | **D4** (GPIO 22) | I2C Data Line |
+| **SCL** | **D5** (GPIO 23) | I2C Clock Line |
 | **BAT+ (via 100k/100k divider)** | **D0** (GPIO 0) | Analog Battery Voltage Monitor |
 
 *Both sensors share the same hardware I2C bus lines.*
@@ -330,19 +332,21 @@ For deploying anchors across a room without running multiple individual wall plu
 The Quest 3 client delivers the spatial hospital digital twin, in-situ floating vitals HUD, and room calibration tools directly overlaid in color Passthrough.
 
 ### 6.1 Project Location & Dependencies
-* **Project Folder:** `quest3_client/` (or `D:\RSW\FYP\VR\Shiro_Quest3_MR`)
+* **Project Folder:** `quest3_client/` in this repository. Always open this folder, so that what you test is what is in git. Older copies elsewhere on the PC are out of date.
 * **Engine Version:** Unity 6 (`6000.3.28f1`) Universal Render Pipeline (URP)
 * **Key Packages:** Meta XR Core SDK, Meta XR Building Blocks, `NativeWebSocket`, Unity New Input System.
 
 ### 6.2 Opening & Configuring the Project
-1. Open **Unity Hub** and click **Add** -> Select `quest3_client/` (or `D:\RSW\FYP\VR\Shiro_Quest3_MR`).
-2. Open the project with Unity `6000.3.28f1`.
-3. In the Project window, open `Assets/Scenes/MainMRScene.unity`.
-4. Inspect the `[SHIRO_MR_ROOT]` GameObject in the Hierarchy:
-   * **Server IP:** Set to your laptop IP (e.g., `192.168.1.229`).
+1. Open **Unity Hub** --> **Projects** --> **Add** --> **Add project from disk** --> select `d:\RSW\FYP\Code\quest3_client`.
+2. Open the project with Unity `6000.3.28f1`. The first opening imports all assets and takes a few minutes.
+3. First time only: **File --> Build Profiles --> Android --> Switch Platform**. The Unity title bar then ends in "Android".
+4. In the Project window, open `Assets/Scenes/SampleScene.unity`.
+5. Inspect the `SHIRO_MR_SYSTEM` GameObject in the Hierarchy:
+   * **Server IP:** Set to your laptop IP (e.g., `192.168.1.229`). It can also be changed on the hand slate's **System** tab.
    * **Server Port:** `3000`.
-   * **Target Ward ID:** `WARD-005` (or your active ward code).
+   * **Target Ward ID:** leave empty. The ward is chosen on the hand slate (Section 6.6) and remembered on the headset; no ward is assumed.
    * **Auto Connect on Start:** Enabled.
+6. **Enroll the headset (once per headset).** Press Play. The Unity Console shows `[SHIRO NET] This headset is QUEST3-…`. On the dashboard's **Devices** tab, the same ID appears as a device that is not enrolled yet: enroll it. The Unity editor on a PC and the app installed on the Quest have different IDs, so each is enrolled once.
 
 ### 6.3 Running the Client (Two Methods)
 
@@ -353,10 +357,12 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 4. Once inside the PC VR environment, look at your monitor and click **`▶ Play`** in the Unity Editor.
 5. Put the headset back on: You are now in color Passthrough with the live SHIRO MR system running!
 
-#### Method B: Wireless Standalone Deployment (Untethered APK)
-1. In Unity, go to **File --> Build Settings**.
-2. Select **Platform: Android** -> **Run Device: Meta Quest 3**.
-3. Click **Build and Run** to install `Shiro_MR.apk` wirelessly.
+#### Method B: Wireless Standalone Deployment (Untethered APK) — not yet tested
+1. In Unity, go to **File --> Build Profiles**.
+2. Select **Android** --> **Run Device: Meta Quest 3**.
+3. Click **Build and Run** to install the APK on the headset.
+
+The standalone build is planned (README, Section 7) and has not been tested yet. Use Method A for demonstrations.
 
 ---
 
@@ -365,27 +371,32 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 To align the digital twin ward with your physical room:
 
 ```
-[ Step 1: Launch Tool ]
+[ Step 1: Choose the Ward ]
   Turn your left palm up to open the Hand Slate HUD.
-  Click [🎯 Room Calibration] to enter Calibration Mode.
-  The laser pointer activates with hardware depth sensor raycasting.
+  Open the [🚪 Ward Setup] tab and pick the ward under "SWITCH HOSPITAL WARD"
+  (the list is loaded from the edge server). The choice is remembered.
 
-[ Step 2: Door Frame Calibration (Recommended) ]
+[ Step 2: Door Frame Calibration ]
+  On the same tab, click [🚪 Start Door Frame Calibration (L->R)].
   Point the laser reticle at the Bottom-Left corner of your physical door frame.
   Pinch index finger & thumb (or pull index trigger) -> Point 1 locks at the physical floor.
   Point the laser reticle at the Bottom-Right corner of the door frame.
   Pinch to lock Point 2.
-  Result: The 3D room boundaries, walls, and beds instantly snap into alignment!
+  Result: The 3D room boundaries, walls, and beds snap into alignment.
 
-[ Step 3: Bed 2-Point Alignment (Alternative) ]
-  Select "Bed Two Points" mode on the Hand Slate.
-  Point at the Headboard center -> Point at the Footboard center.
-  Result: Ward snaps directly using the physical bed as the spatial baseline.
+[ Step 3: Keep the Alignment ]
+  Click [💾 Save Persistent Spatial Anchor]. The headset stores the anchor and
+  sends its ID to the edge server. If saving fails, the slate says so and
+  nothing is sent.
+  [⚡ 1-Click Re-Sync Alignment] restores it later; [🗑️ Purge Anchor & Reset
+  Alignment] starts again.
 
-[ Step 4: Physical Floor Height Snapping ]
-  Calibration depth raycasting automatically queries Meta.XR.EnvironmentRaycastManager.
-  Points lock to true measured physical floor Y (immune to virtual geometry occlusion).
+[ Physical Floor Height ]
+  Calibration points are placed with Meta.XR.EnvironmentRaycastManager on the
+  measured physical floor, not on virtual geometry.
 ```
+
+The alignment tool also has bed two-point and wall-anchor two-point methods (`WardAlignmentTool.cs`); they have no button on the hand slate and are not part of the normal procedure.
 
 ---
 
@@ -395,27 +406,27 @@ When the patient wearing the wristband is detected by the IPS engine:
 1. **In-Transit Walking Mode:**
    - A $0.65\text{m}$ emerald green/cyan uncertainty footprint ring appears on the physical floor.
    - A glassmorphic vitals HUD panel floats $+1.35\text{m}$ at eye level, smoothly billboarding to face the doctor as they move around the room.
-   - Displays live Heart Rate (pulsating ECG rhythm), Blood Oxygen %, Fall Risk score, and IMU motion state.
+   - Displays live heart rate (a heart icon pulsing at the measured rate), SpO2 marked `~` as indicative, wristband battery, and motion state. A value the wristband cannot measure at the moment is shown as `--`, never as the last or a default value.
 2. **Bed-Docked Mode:**
    - When the patient enters their assigned bed area, the panel automatically transitions to **Bed-Docked** state.
    - Locks statically to the bed headwall or bedside cart with zero jitter.
    - Aligns outward along the bed's rotation ($0^\circ, 90^\circ, 180^\circ, 270^\circ$) facing into the room toward the foot of the bed (non-mirrored, readable text).
-3. **Manual [✥ Move] Handle & [🔓 Unfix] Controls:**
+3. **Manual [✥ Move] Handle and Panel Buttons:**
    - Top-left corner of the vitals panel features a **`[✥ Move]`** handle.
    - Aim the laser pointer at the handle, pinch and hold to drag the panel vertically and horizontally.
    - Extend or pull back your left hand to adjust distance (closer or farther).
-   - Release pinch: The panel locks permanently at your chosen location (`📌 PANEL LOCKED`).
-   - Click the adjacent **`[🔓 Unfix]`** button to release manual lock and resume automatic IPS/Bed following.
+   - Release pinch: the panel stays at your chosen location.
+   - **`[🎯 Re-Attach]`** returns the panel to automatic IPS/bed following; the **headboard/bedside** button switches the bed mount; the cancel button ends a manual aim.
 
 ---
 
 ### 6.6 Wrist Hand Slate HUD
 
-Look at your left palm/wrist to summon the 4-tab clinical slate:
-* **Tab 1: IPS Ward Radar & Mini-Map:** Top-down architectural floorplan showing room boundaries, beds, anchors, doctor position (green compass blip), and patient position (cyan dot).
-* **Tab 2: Room Calibration:** Switch between Door Frame, Bed 2-Point, and Wall Anchor alignment modes.
-* **Tab 3: Hardware Fleet:** Real-time health, RSSI, and battery status of all assigned nodes.
-* **Tab 4: Settings & Connection:** Reconnect to Edge Server, switch network IP presets (Wi-Fi `.1.229`, Hotspot `.137.1`, or Localhost).
+Look at your left palm/wrist to summon the 4-tab slate:
+* **🚪 Ward Setup:** ward information and the ward choice ("SWITCH HOSPITAL WARD"), door frame calibration, save / re-sync / purge of the spatial anchor, perspective, and the 3D digital twin overlay on/off.
+* **📍 IPS Location:** "Find My Current Ward / Room" and continuous refresh (4 Hz). Shows only data of the loaded ward: its beds and anchors, and the anchor signal marked as estimated. Without a ward it says "NO WARD CONFIGURED".
+* **🛏️ Patient Vitals:** re-attach the patient hologram to gaze/aim and switch its mount between headboard and bedside.
+* **⚙️ System:** reconnect, server address presets (Wi-Fi `.1.229`, Hotspot `.137.1`, or Localhost for Quest Link), the headset ID, the active ward and the connection state.
 
 ---
 
@@ -436,22 +447,28 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 
 [Step 3: Power On Wristband Tag]
   Power Seeed Studio XIAO ESP32-C6 (Power bank or USB).
-  Place finger firmly on the optical sensor.
+  Wear it with the sensor on the outer side of the wrist, strap snug
+  (or rest a fingertip on the sensor for a bench test).
 
 [Step 4: Power On Stationary Wall Anchors]
-  Power on Anchors (A, B, C).
-  Observe the Web Dashboard: Anchors automatically connect via Wi-Fi/MQTT and begin scanning.
-  Live Map displays raw and filtered RSSI with live estimated distances and vitals.
+  Power on the anchors.
+  The server prints one [MQTT CLIENT CONNECTED] line per anchor; the System Health
+  tab shows them ONLINE.
+  Live Map shows the wristband's position and vitals; Live Lab shows raw and
+  filtered RSSI per anchor.
 
 [Step 5: Launch Meta Quest 3 MR Client]
   Put on Meta Quest 3 -> Start Quest Link.
-  In Unity, hit Play on 'MainMRScene'.
-  Observe WebSocket connected message in VR.
+  In Unity (project quest3_client), press Play on 'SampleScene'.
+  The hand slate's System tab shows the headset ID and the connection.
 
 [Step 6: Calibrate Room]
-  Turn left palm up -> Click [🎯 Room Calibration].
+  Turn left palm up -> [🚪 Ward Setup] -> check the ward -> [🚪 Start Door Frame Calibration (L->R)].
   Aim laser pointer at door frame corners -> Lock Point 1 & Point 2.
-  Verify virtual hospital beds overlay the real physical furniture perfectly.
+  Check that the virtual beds overlay the real furniture.
+
+[Stopping]
+  Ctrl+C once in the server terminal (Section 3.5), then stop InfluxDB and MySQL.
 ```
 
 ---
@@ -474,10 +491,10 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | One persistent connection per headset, with heartbeats. Ensure only one Unity instance is playing. |
 | Headset appears on the Devices tab as a new, unenrolled device (`QUEST3-` followed by 6 characters) | Each headset now reports its own ID, derived from the device (the Unity editor on a PC gets another ID than the Quest itself). | Enrol it once on the Devices tab. An old `QUEST3-001` entry can be deleted. |
-| Hand slate shows "No ward configured" | No ward has been chosen on this headset yet; no ward is assumed. | Ward tab on the hand slate: choose the ward. The choice is remembered. |
+| Hand slate shows "Ward: not configured" or "NO WARD CONFIGURED" | No ward has been chosen on this headset yet; no ward is assumed. | **Ward Setup** tab on the hand slate: choose the ward under "SWITCH HOSPITAL WARD". The choice is remembered. |
 | Server console shows the same warning only now and then | Repeated warnings are limited to one per 10 to 30 s. | Set `LOG_LEVEL=debug` in `edge_server/.env` for full detail, including error stacks. |
 | Virtual room overlay appears underground or tilted | Calibration point snapped to virtual floor mesh instead of physical floor. | Fixed in v2.0: Depth raycasting now queries `EnvironmentRaycastManager` to detect true physical floor height before transforming coordinates. |
 | Bed vitals panel is mirrored / backwards | Canvas local rotation flipped $180^\circ$ relative to bed anchor. | Fixed in v2.0: `GetBedHeadboardRotation` now matches `wardOrigin.rotation * Quaternion.Euler(0, bed.rotation_deg, 0)`. The Canvas front face (local $-Z$) points outward down the mattress into the room. |
 | Laser pointer blocked by 3D room overlay | Raycast hit testing virtual wall/bed colliders before physical space. | Virtual room geometry colliders are bypassed during calibration mode; raycast queries physical depth sensor mesh directly. |
 | `[FATAL STARTUP ERROR] Could not connect to MySQL` on `npm start` | MySQL service is not running, or the settings in `edge_server/.env` are wrong. | 1. Start MySQL in XAMPP Control Panel.<br>2. Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` in `.env`.<br>3. Run `npm start` again. |
-| Heart rate reads 0 or stays on `Reading...` | Finger placement too loose or sensor FIFO saturated. | Rest finger gently but firmly over the optical lens of the HW-605. Ensure IR readings exceed 50,000 in Serial Monitor / Dashboard. |
+| Heart rate shows `--` or stays on `Reading...` | The wristband reports no heart rate while the pulse signal is not clear (movement, loose strap, wrong spot); it never sends a guessed value. | Keep the arm still for about 10 s with the strap snug and the sensor on the outer side of the wrist, at the usual spot (or rest a fingertip on the sensor). The wristband's Serial Monitor shows each broadcast (`[BROADCAST …] BPM: …`). Background: `docs/test_records/heart-rate-measurement.md`. |

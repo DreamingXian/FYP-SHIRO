@@ -586,7 +586,7 @@
     ripplePhase = (ripplePhase + 0.04) % (Math.PI * 2);
 
     // Smooth tag positions toward targets (physics-constrained visual gliding)
-    for (const [tagId, pos] of liveTagPositions.entries()) {
+    for (const pos of liveTagPositions.values()) {
       if (pos.targetX !== undefined && pos.targetY !== undefined) {
         const dx = pos.targetX - pos.x;
         const dy = pos.targetY - pos.y;

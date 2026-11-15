@@ -105,6 +105,8 @@ function startServer(extraEnv) {
       ...process.env,
       DB_NAME: process.env.DB_NAME,
       INFLUX_TOKEN: '',
+      // Some tests read INFO lines (OFFLINE, shutdown); never inherit a quieter level
+      LOG_LEVEL: 'info',
       MQTT_ANCHOR_USER: TEST_MQTT_LOGIN.username,
       MQTT_ANCHOR_PASSWORD: TEST_MQTT_LOGIN.password,
       ...extraEnv

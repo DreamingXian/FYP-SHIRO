@@ -1209,8 +1209,8 @@ namespace ShiroMR
             else
             {
                 _vitalsTrackingModeText.text = holo.isPersonDetected
-                    ? "🟢 IN-TRANSIT: Locked to Physical Human (Depth Fused)"
-                    : "🟡 IN-TRANSIT: Tracking Ground Footprint (Deadband Active)";
+                    ? "🟢 IN-TRANSIT: Following wristband position (pulse detected)"
+                    : "🟡 IN-TRANSIT: Following wristband position (no pulse reading now)";
                 _vitalsTrackingModeText.color = holo.isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
             }
         }

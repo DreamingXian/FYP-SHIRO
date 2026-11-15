@@ -618,7 +618,7 @@ async function handleDeviceDisconnect(deviceIdOrAlias) {
 /**
  * Updates an existing device status (e.g. OFFLINE on disconnect).
  */
-async function updateDeviceStatus(deviceId, status) {
+async function updateDeviceStatus(deviceId, _status) {
   return handleDeviceDisconnect(deviceId);
 }
 

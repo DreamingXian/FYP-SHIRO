@@ -4,61 +4,21 @@
 
 let totalPackets = 0;
 let lastPacketTime = Date.now();
-const ppgHistory = [];
-const maxDataPoints = 140;
+
+// The raw pulse signal (infrared / red light) is not drawn: the wristband
+// computes heart rate and SpO2 itself and packet v2 carries only those results
+// (docs/protocol.md), so there is no waveform to show.
 
 const rssiHistoryRaw = [];
 const rssiHistoryFilt = [];
 const maxRssiPoints = 80;
 
 function resizeCanvases() {
-  const ppgCanvas = document.getElementById('ppgCanvas');
   const rssiCanvas = document.getElementById('rssiCanvas');
-
-  if (ppgCanvas && ppgCanvas.parentElement) {
-    ppgCanvas.width = ppgCanvas.parentElement.clientWidth;
-    ppgCanvas.height = ppgCanvas.parentElement.clientHeight;
-  }
   if (rssiCanvas && rssiCanvas.parentElement) {
     rssiCanvas.width = rssiCanvas.parentElement.clientWidth;
     rssiCanvas.height = rssiCanvas.parentElement.clientHeight;
   }
-}
-
-function drawPPG() {
-  const ppgCanvas = document.getElementById('ppgCanvas');
-  if (!ppgCanvas) return;
-  const ppgCtx = ppgCanvas.getContext('2d');
-  if (!ppgCtx) return;
-
-  ppgCtx.clearRect(0, 0, ppgCanvas.width, ppgCanvas.height);
-
-  // Baseline divider
-  ppgCtx.strokeStyle = '#E2E8F0';
-  ppgCtx.lineWidth = 1;
-  ppgCtx.beginPath();
-  ppgCtx.moveTo(0, ppgCanvas.height / 2);
-  ppgCtx.lineTo(ppgCanvas.width, ppgCanvas.height / 2);
-  ppgCtx.stroke();
-
-  if (ppgHistory.length < 2) return;
-  const min = Math.min(...ppgHistory);
-  const max = Math.max(...ppgHistory);
-  const range = (max - min) === 0 ? 1 : (max - min);
-
-  // Royal Electric Blue PPG curve
-  ppgCtx.strokeStyle = '#1E60F2';
-  ppgCtx.lineWidth = 2.5;
-  ppgCtx.beginPath();
-  const step = ppgCanvas.width / (maxDataPoints - 1);
-  for (let i = 0; i < ppgHistory.length; i++) {
-    const x = i * step;
-    const normalized = (ppgHistory[i] - min) / range;
-    const y = ppgCanvas.height - 15 - (normalized * (ppgCanvas.height - 30));
-    if (i === 0) ppgCtx.moveTo(x, y);
-    else ppgCtx.lineTo(x, y);
-  }
-  ppgCtx.stroke();
 }
 
 function drawRSSI() {
@@ -207,7 +167,7 @@ function initLiveLabListeners() {
           <td style="color: var(--text-muted);">${escapeHtml(msg.timestamp)}</td>
           <td class="mono" style="color: var(--telemetry-purple); font-weight: 600;">${escapeHtml(msg.topic)}</td>
           <td class="mono">Raw: ${escapeHtml(msg.raw_rssi)} dBm ➔ Filtered: ${escapeHtml(msg.filtered_rssi)} dBm (Dist: ${escapeHtml(msg.filtered_distance)}m)</td>
-          <td style="color: var(--primary); font-weight: 600;">✓ EKF Filtered</td>
+          <td style="color: var(--primary); font-weight: 600;">✓ Kalman filtered</td>
         </tr>`;
         logBody.insertAdjacentHTML('afterbegin', row);
         if (logBody.children.length > 10) logBody.removeChild(logBody.lastChild);
@@ -234,14 +194,13 @@ function initLiveLabListeners() {
       const bpmStatus = document.getElementById('bpm-status');
       const valSpo2 = document.getElementById('val-spo2');
       const spo2Badge = document.getElementById('spo2-badge');
-      const rawIrPreview = document.getElementById('raw-ir-preview');
       const valG = document.getElementById('val-g');
       const gMeter = document.getElementById('g-meter');
       const gBadge = document.getElementById('g-badge');
       const logBody = document.getElementById('log-body');
 
       // Vitals: BPM & SpO2
-      if (d.touch === 1 || d.ir > 50000) {
+      if (d.touch === 1) {
         if (fingerBadge) {
           fingerBadge.innerText = '● Finger Detected';
           fingerBadge.className = 'badge badge-live';
@@ -300,14 +259,6 @@ function initLiveLabListeners() {
           spo2Badge.className = 'badge badge-neutral';
         }
       }
-
-      if (rawIrPreview) {
-        rawIrPreview.innerText = `IR: ${d.ir ? d.ir.toLocaleString() : '0'} | Red: ${d.red ? d.red.toLocaleString() : '0'}`;
-      }
-
-      ppgHistory.push(d.ir);
-      if (ppgHistory.length > maxDataPoints) ppgHistory.shift();
-      drawPPG();
 
       // G-Force & Fall status. No g value means the accelerometer is not delivering data.
       const hasG = typeof d.g === 'number' && Number.isFinite(d.g);
@@ -432,7 +383,6 @@ function initLiveLabListeners() {
 
 // Global exposure
 window.resizeCanvases = resizeCanvases;
-window.drawPPG = drawPPG;
 window.drawRSSI = drawRSSI;
 window.initLiveLabListeners = initLiveLabListeners;
 

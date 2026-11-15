@@ -5,7 +5,6 @@
 
 let cachedFleet = [];
 let cachedUnprovisioned = [];
-let cachedDeviceWards = [];
 let currentDeviceTypeFilter = 'ALL';
 let currentStatusFilter = null; // null | 'ONLINE' | 'OFFLINE'
 let currentAvailFilter = null;  // null | 'AVAILABLE' | 'IN_USE' | 'UNAVAILABLE'
@@ -41,7 +40,6 @@ function safeShowToast(message, type = 'info', duration = 3500) {
 async function initDevicesModule() {
   setupDeviceWsListeners();
   await Promise.all([
-    fetchWardsForDevices(),
     loadDevicesFleet(),
     loadUnprovisionedDiscovery()
   ]);
@@ -154,21 +152,6 @@ function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
       }
     }
     updateFleetCounts();
-  }
-}
-
-/**
- * Fetches available wards for the assignment dropdown.
- */
-async function fetchWardsForDevices() {
-  try {
-    const res = await fetch('/api/ward/list');
-    const data = await res.json();
-    if (data.success) {
-      cachedDeviceWards = data.wards || [];
-    }
-  } catch (err) {
-    console.warn('Could not fetch wards for device assignment:', err);
   }
 }
 
@@ -666,17 +649,14 @@ async function openEnrollModal(mac, model, type, battery, ip) {
       initialId = nextData.nextId;
     }
   } catch (err) {
-    // The ID field stays empty for the user to fill in
     console.warn('[DEVICES] Could not get the next device ID:', err.message);
   }
 
+  // No assumed ID: a default such as TAG-001 may already belong to another device.
   if (!initialId) {
-    initialId = type === 'ANCHOR' ? 'anchor-001' : 'TAG-001';
+    safeShowToast('Could not get a free device ID from the edge server. Please try again.', 'danger');
+    return;
   }
-
-  const typeName = type === 'WRISTBAND' ? '🛏️ Wearable Wristband Tag'
-    : type === 'ANCHOR' ? '📡 Stationary Wall Anchor'
-    : '🥽 Meta Quest 3 Headset';
 
   const typePill = type === 'WRISTBAND' ? `<span class="badge badge-info">🛏️ Wristband</span>`
     : type === 'ANCHOR' ? `<span class="badge badge-neutral">📡 Anchor</span>`

@@ -928,10 +928,6 @@
       list.forEach((b, index) => {
         const statusVal = b.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE';
         const rot = parseInt(b.rotation_deg, 10) || 0;
-        const isHorizontal = (rot === 90 || rot === 270);
-        const spanXM = isHorizontal ? (b.length || 2.00) : (b.width || 0.90);
-        const spanYM = isHorizontal ? (b.width || 0.90) : (b.length || 2.00);
-
         const xVal = Number(b.x !== undefined ? b.x : 0).toFixed(2);
         const yVal = Number(b.y !== undefined ? b.y : 0).toFixed(2);
 
@@ -1237,7 +1233,7 @@
       }
 
       // Ray-cast helper using window.check3dRayLos
-      const rayChecker = typeof window.check3dRayLos === 'function' ? window.check3dRayLos : function(A, T, obsList, rH, ign) {
+      const rayChecker = typeof window.check3dRayLos === 'function' ? window.check3dRayLos : function() {
         return { clear: true };
       };
 

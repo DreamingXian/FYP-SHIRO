@@ -4,7 +4,7 @@
 // =============================================================================
 const logger = require('../utils/logger');
 const { getPool } = require('../database/db');
-const { KalmanFilter1D, calculateDistance, getCalibration, setAnchorCalibration, clearAnchorCalibration } = require('./kalman_filter');
+const { KalmanFilter1D, getCalibration, setAnchorCalibration, clearAnchorCalibration } = require('./kalman_filter');
 const { broadcastToClients } = require('./websocket_service');
 const deviceService = require('./device_service');
 const calibrationService = require('./calibration_service');

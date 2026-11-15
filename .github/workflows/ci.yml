@@ -1,0 +1,103 @@
+# Automatic checks on every push and pull request.
+# Nothing here uses the real database or any real password: the integration
+# tests run against a temporary MariaDB that exists only during the job.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Edge server (lint, unit and integration tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mariadb:
+        # Same major version as XAMPP on the development PC
+        image: mariadb:10.4
+        env:
+          MARIADB_ROOT_PASSWORD: ci-only-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-only-password"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    defaults:
+      run:
+        working-directory: edge_server
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: edge_server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        id: unit
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee unit-tests.log
+
+      - name: Show failed unit tests
+        if: failure() && steps.unit.outcome == 'failure'
+        run: node ../.github/scripts/annotate_failures.js unit-tests.log "Unit tests failed"
+
+      - name: Integration tests (temporary MariaDB, database shiro_test)
+        id: integration
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_USER: root
+          DB_PASSWORD: ci-only-password
+        run: |
+          set -o pipefail
+          npm run test:integration 2>&1 | tee integration-tests.log
+
+      - name: Show failed integration tests
+        if: failure() && steps.integration.outcome == 'failure'
+        run: node ../.github/scripts/annotate_failures.js integration-tests.log "Integration tests failed"
+
+  firmware:
+    name: Firmware (host tests and compile)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Host tests (fall detector, packet, pulse estimation)
+        working-directory: firmware/tests
+        run: g++ -std=c++17 -Wall -Wextra host_tests.cpp -o host_tests && ./host_tests
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install the ESP32 core and libraries (same versions as the development PC)
+        run: |
+          arduino-cli core update-index --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli lib install "SparkFun MAX3010x Pulse and Proximity Sensor Library@1.1.2" "PubSubClient@2.8"
+
+      - name: Compile the wristband (XIAO ESP32-C6)
+        run: arduino-cli compile --fqbn esp32:esp32:XIAO_ESP32C6 firmware/shiro_wristband_vitals
+
+      - name: Compile the anchor (ESP32, Huge APP partition) with the example settings
+        run: |
+          cp firmware/shiro_anchor_node/secrets.example.h firmware/shiro_anchor_node/secrets.h
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app firmware/shiro_anchor_node

@@ -473,7 +473,7 @@ function validateAdmissionForm() {
   // 1. Legal Name
   const nameEl = document.getElementById('adm-name');
   const nameVal = nameEl ? nameEl.value.trim() : '';
-  if (!nameVal || !/^[a-zA-Z\s\.\'\-\@\/]{2,}$/.test(nameVal)) {
+  if (!nameVal || !/^[a-zA-Z\s.'\-@/]{2,}$/.test(nameVal)) {
     markInvalid(nameEl, 'Please enter a valid legal full name (at least 2 alphabetic characters).');
   } else {
     clearValidation(nameEl);
@@ -560,7 +560,7 @@ function validateAdmissionForm() {
   // 6. Emergency Phone
   const phoneEl = document.getElementById('adm-phone');
   const phoneVal = phoneEl ? phoneEl.value.trim() : '';
-  const cleanPhone = phoneVal.replace(/[-\s\(\)\+]/g, '');
+  const cleanPhone = phoneVal.replace(/[-\s()+]/g, '');
   if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 15 || !/^\d+$/.test(cleanPhone)) {
     markInvalid(phoneEl, 'Please enter a valid phone number (at least 8 digits, e.g. +6012-3456789 or 012-3456789).');
   } else {
@@ -1106,7 +1106,7 @@ async function editPatientInfo(patientId) {
           let updatedPhoto = document.getElementById('edit-patient-photo-url')?.value || photoSrc;
 
           // Validation
-          if (!updatedPhone || !/^(\+?6?01[0-9]{1}-?[0-9]{7,8}|\+?[0-9\s\-]{8,15})$/.test(updatedPhone)) {
+          if (!updatedPhone || !/^(\+?6?01[0-9]{1}-?[0-9]{7,8}|\+?[0-9\s-]{8,15})$/.test(updatedPhone)) {
             if (window.showToast) window.showToast('Please enter a valid phone number before saving.', 'warning');
             return;
           }

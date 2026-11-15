@@ -48,8 +48,10 @@ function resolvePublicFile(pathname) {
   } catch {
     return null;
   }
-  if (decoded.includes('\0')) return null;
-  const relative = decoded === '/' ? 'index.html' : decoded.replace(/^[/\\]+/, '');
+  // No NUL, and no backslash: on Windows "\" separates folders, on Linux it is a
+  // normal character. Refusing it keeps the rule the same on every platform.
+  if (decoded.includes('\0') || decoded.includes('\\')) return null;
+  const relative = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
   const filePath = path.resolve(PUBLIC_ROOT, relative);
   if (filePath !== PUBLIC_ROOT && !filePath.startsWith(PUBLIC_ROOT + path.sep)) return null;
   return filePath;
