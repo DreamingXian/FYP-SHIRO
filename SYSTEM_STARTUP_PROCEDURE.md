@@ -130,8 +130,10 @@ Save, then **Stop** and **Start** MySQL in XAMPP. phpMyAdmin keeps working, beca
 # 1. Back up the current rules (restore with: netsh advfirewall import "$env:USERPROFILE\Documents\firewall_before_shiro.wfw")
 netsh advfirewall export "$env:USERPROFILE\Documents\firewall_before_shiro.wfw"
 
-# 2. Node.js: only TCP 3000 (dashboard) and 1883 (MQTT), only on private networks
-Get-NetFirewallRule -DisplayName 'Node.js JavaScript Runtime' | Where-Object { ($_ | Get-NetFirewallPortFilter).Protocol -eq 'TCP' } | Set-NetFirewallRule -Profile Private -Protocol TCP -LocalPort 3000,1883
+# 2. Node.js: only TCP 3000 (dashboard) and 1883 (MQTT), only on private networks.
+#    -EdgeTraversalPolicy Block is required: the rule Windows created at the first start of
+#    Node.js is "defer to user", which cannot be combined with a port limit.
+Get-NetFirewallRule -DisplayName 'Node.js JavaScript Runtime' | Where-Object { ($_ | Get-NetFirewallPortFilter).Protocol -eq 'TCP' } | Set-NetFirewallRule -EdgeTraversalPolicy Block -Profile Private -Protocol TCP -LocalPort 3000,1883
 Get-NetFirewallRule -DisplayName 'Node.js JavaScript Runtime' | Where-Object { ($_ | Get-NetFirewallPortFilter).Protocol -eq 'UDP' } | Disable-NetFirewallRule
 
 # 3. MySQL, InfluxDB and Apache need no access from other devices
