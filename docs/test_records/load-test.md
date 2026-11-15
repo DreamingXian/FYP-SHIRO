@@ -49,14 +49,14 @@ Event-loop delay (after only, from `/api/system/stats`): the 99th percentile sta
 
 ## Soak with the real hardware
 
-Date: 15 Nov 2026, server started at 21:59. The 3 real anchors and the wristband ran normally against `shiro_db`, with the dashboard open; branch `fix/phase-6-reliability` at commit `fee3dd3`. Readings from the System Health tab (`/api/system/stats`):
+Date: 15 Nov 2026, server started at 21:59, readings from 22:00 to 22:30. The 3 real anchors and the wristband ran normally against `shiro_db`, with the dashboard open; branch `fix/phase-6-reliability` at commit `fee3dd3`. Readings from the System Health tab (`/api/system/stats`):
 
-| Server uptime | Memory in use (RSS) | JavaScript heap | Event-loop delay, 99th percentile |
-| ---: | ---: | ---: | ---: |
-| 0 min 25 s | 79.2 MB | 23.5 MB | 21.7 ms |
-| 10 min 25 s | 82.8 MB | 27.3 MB | 23.3 ms |
-| 20 min 35 s | 83.4 MB | 27.9 MB | 18.4 ms |
-| 31 min 10 s | 81.4 MB | 27.8 MB | 16.1 ms |
+| Time | Server uptime | Memory in use (RSS) | JavaScript heap | Event-loop delay, 99th percentile |
+| :---: | ---: | ---: | ---: | ---: |
+| 22:00 | 0 min 25 s | 79.2 MB | 23.5 MB | 21.7 ms |
+| 22:10 | 10 min 25 s | 82.8 MB | 27.3 MB | 23.3 ms |
+| 22:20 | 20 min 35 s | 83.4 MB | 27.9 MB | 18.4 ms |
+| 22:30 | 31 min 10 s | 81.4 MB | 27.8 MB | 16.1 ms |
 
 Memory rose by 3.6 MB in the first 10 minutes while caches filled, then stayed level (82.8 → 81.4 MB over the last 20 minutes): no sign of a leak. The event-loop delay (already minus the 20 ms sampling interval) stayed below 25 ms and did not grow.
 
