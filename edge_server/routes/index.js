@@ -11,7 +11,13 @@ const { handleDeviceRoutes } = require('./device_routes');
 const { handleBindingRoutes } = require('./binding_routes');
 const { handleAlertRoutes } = require('./alert_routes');
 const { handleSystemRoutes } = require('./system_routes');
+const { handleAuthRoutes } = require('./auth_routes');
+const { handleAdminRoutes } = require('./admin_routes');
+const { handleHeadsetRoutes } = require('./headset_routes');
 const { HttpError, JSON_BODY_LIMIT, PHOTO_BODY_LIMIT, sendError, sendFailure, readBody, isCrossSiteRequest } = require('../utils/http');
+const { requiredAccess, decide } = require('../services/auth/permissions');
+const { actorOf, clientIp } = require('../services/auth/request_auth');
+const audit = require('../services/audit_service');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -34,8 +40,34 @@ const API_ROUTERS = [
   ['/api/devices', handleDeviceRoutes],
   ['/api/bindings', handleBindingRoutes],
   ['/api/alerts', handleAlertRoutes],
-  ['/api/system', handleSystemRoutes]
+  ['/api/system', handleSystemRoutes],
+  ['/api/auth', handleAuthRoutes],
+  ['/api/admin', handleAdminRoutes],
+  ['/api/headset', handleHeadsetRoutes]
 ];
+
+/**
+ * Keeps a copy of what the handler sends, so the audit record can name an ID
+ * the server created (for example the patient ID of an admission).
+ */
+function captureResponse(res) {
+  const captured = { text: null };
+  const originalEnd = res.end;
+  res.end = function end(chunk, ...rest) {
+    if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) captured.text = String(chunk).slice(0, 64 * 1024);
+    return originalEnd.call(this, chunk, ...rest);
+  };
+  return captured;
+}
+
+function parseCaptured(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Turns the path of a request into a file inside public/.
@@ -111,6 +143,21 @@ async function handleRequest(req, res) {
   const pathname = parsedUrl.pathname;
 
   if (!pathname.startsWith('/api/')) {
+    // Patient photos are patient data: only for a signed-in clinician or a paired headset
+    if (pathname.startsWith('/uploads/')) {
+      let actor = null;
+      try {
+        actor = await actorOf(req);
+      } catch (err) {
+        sendFailure(res, err, 'uploadAccess');
+        return;
+      }
+      if (!actor) {
+        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('401 Please sign in');
+        return;
+      }
+    }
     serveStaticFile(req, res, pathname);
     return;
   }
@@ -121,10 +168,38 @@ async function handleRequest(req, res) {
       throw new HttpError(403, 'Requests from other websites are not accepted.');
     }
 
+    // Who is asking, and may they? Checked before the body is read.
+    const actor = await actorOf(req);
+    const verdict = decide(requiredAccess(req.method, pathname), actor);
+    if (verdict === 'unauthenticated') {
+      throw new HttpError(401, 'Please sign in.');
+    }
+    if (verdict === 'forbidden') {
+      throw new HttpError(403, actor && actor.type === 'HEADSET'
+        ? 'A headset cannot do this.'
+        : 'Your account does not have permission for this. An admin can do it.');
+    }
+
     let body = '';
     if (req.method === 'POST' || req.method === 'DELETE') {
       const limit = pathname === '/api/patients/upload-photo' ? PHOTO_BODY_LIMIT : JSON_BODY_LIMIT;
       body = await readBody(req, limit);
+    }
+
+    if (audit.AUDITED_REQUESTS[`${req.method} ${pathname}`]) {
+      const captured = captureResponse(res);
+      res.once('finish', () => {
+        audit.recordRequest({
+          method: req.method,
+          pathname,
+          status: res.statusCode,
+          actor,
+          body,
+          query: Object.fromEntries(parsedUrl.searchParams),
+          response: parseCaptured(captured.text),
+          ip: clientIp(req)
+        });
+      });
     }
 
     for (const [prefix, handler] of API_ROUTERS) {

@@ -4,7 +4,7 @@
 // that must still work. Time-series logging is off, so nothing reaches InfluxDB.
 process.env.INFLUX_TOKEN = '';
 
-const { db, freshDatabase, startServer, connectMqtt, anchorClientId } = require('./helper');
+const { db, freshDatabase, startServer, connectMqtt, anchorClientId, signIn } = require('./helper');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -22,9 +22,13 @@ const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Session cookie of the test admin, set in before()
+let cookie = '';
+const get = (url) => fetch(url, { headers: { Cookie: cookie } });
+
 const post = (pathname, body, headers = {}) => fetch(BASE + pathname, {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', ...headers },
+  headers: { 'Content-Type': 'application/json', Cookie: cookie, ...headers },
   body: JSON.stringify(body)
 });
 
@@ -56,8 +60,9 @@ describe('input validation and web hardening', () => {
     pool = await freshDatabase();
     server = startServer({ HTTP_PORT: String(HTTP_PORT), MQTT_PORT: String(MQTT_PORT) });
     await server.ready;
+    cookie = await signIn(BASE);
 
-    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`);
+    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`, { headers: { Cookie: cookie } });
     ws.on('message', (data) => { received.push(JSON.parse(data.toString())); });
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
 
@@ -82,7 +87,9 @@ describe('input validation and web hardening', () => {
     uploaded.push(stored);
     assert.deepEqual(fs.readFileSync(stored), PNG);
 
-    const served = await fetch(BASE + data.photo_url);
+    const anonymous = await fetch(BASE + data.photo_url);
+    assert.equal(anonymous.status, 401, 'a patient photo is not served without sign-in');
+    const served = await get(BASE + data.photo_url);
     assert.equal(served.status, 200);
     assert.equal(served.headers.get('content-type'), 'image/png');
     assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
@@ -118,26 +125,26 @@ describe('input validation and web hardening', () => {
 
   // ----- vitals history -----
   test('the vitals history answers a listed range and refuses a query injection', async () => {
-    const ok = await expectStatus(await fetch(`${BASE}/api/patients/vitals-history?id=P-001&range=-1h`), 200);
+    const ok = await expectStatus(await get(`${BASE}/api/patients/vitals-history?id=P-001&range=-1h`), 200);
     assert.equal(ok.range, '-1h');
     assert.equal(ok.window, '10s');
     assert.deepEqual(ok.vitals, []);
 
-    const byDefault = await expectStatus(await fetch(`${BASE}/api/patients/vitals-history?id=P-001`), 200);
+    const byDefault = await expectStatus(await get(`${BASE}/api/patients/vitals-history?id=P-001`), 200);
     assert.equal(byDefault.range, '-24h');
 
     const range = encodeURIComponent('-1h) |> drop(columns: ["_value"]) //');
-    await expectStatus(await fetch(`${BASE}/api/patients/vitals-history?id=P-001&range=${range}`), 400);
-    await expectStatus(await fetch(`${BASE}/api/patients/vitals-history?id=${encodeURIComponent('P-001" or true or "')}&range=-1h`), 400);
-    await expectStatus(await fetch(`${BASE}/api/patients/vitals-history`), 400);
+    await expectStatus(await get(`${BASE}/api/patients/vitals-history?id=P-001&range=${range}`), 400);
+    await expectStatus(await get(`${BASE}/api/patients/vitals-history?id=${encodeURIComponent('P-001" or true or "')}&range=-1h`), 400);
+    await expectStatus(await get(`${BASE}/api/patients/vitals-history`), 400);
   });
 
   // ----- no silent defaults -----
   test('a ward request without a ward ID is refused, and an unknown ward is a 404', async () => {
-    await expectStatus(await fetch(`${BASE}/api/ward/config`), 400);
-    await expectStatus(await fetch(`${BASE}/api/ward/ips-init`), 400);
-    await expectStatus(await fetch(`${BASE}/api/ward/config?ward_id=WARD-999`), 404);
-    const ward = await expectStatus(await fetch(`${BASE}/api/ward/config?ward_id=WARD-001`), 200);
+    await expectStatus(await get(`${BASE}/api/ward/config`), 400);
+    await expectStatus(await get(`${BASE}/api/ward/ips-init`), 400);
+    await expectStatus(await get(`${BASE}/api/ward/config?ward_id=WARD-999`), 404);
+    const ward = await expectStatus(await get(`${BASE}/api/ward/config?ward_id=WARD-001`), 200);
     assert.equal(ward.ward.ward_id, 'WARD-001');
   });
 
@@ -250,7 +257,7 @@ describe('input validation and web hardening', () => {
   });
 
   test('a WebSocket message over the size limit closes that connection only', async () => {
-    const big = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`);
+    const big = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`, { headers: { Cookie: cookie } });
     await new Promise((resolve, reject) => { big.once('open', resolve); big.once('error', reject); });
     const closed = new Promise((resolve) => big.once('close', (code) => resolve(code)));
     big.on('error', () => {});
@@ -266,9 +273,9 @@ describe('input validation and web hardening', () => {
       foreign.once('unexpected-response', (req, res) => resolve(res.statusCode));
       foreign.once('error', () => resolve('error'));
     });
-    assert.equal(outcome, 401);
+    assert.equal(outcome, 403);
 
-    const own = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`, { origin: `http://127.0.0.1:${HTTP_PORT}` });
+    const own = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`, { origin: `http://127.0.0.1:${HTTP_PORT}`, headers: { Cookie: cookie } });
     const opened = await new Promise((resolve) => {
       own.once('open', () => { own.close(); resolve(true); });
       own.once('error', () => resolve(false));

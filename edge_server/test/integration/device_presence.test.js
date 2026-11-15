@@ -3,7 +3,7 @@
 // Starts the real server on spare ports against shiro_test.
 process.env.INFLUX_TOKEN = '';
 
-const { db, freshDatabase, startServer, connectMqtt, anchorClientId } = require('./helper');
+const { db, freshDatabase, startServer, connectMqtt, anchorClientId, signIn } = require('./helper');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
@@ -40,6 +40,7 @@ describe('device presence', () => {
   let server;
   let pool;
   let ws;
+  let cookie;
   const received = [];
 
   before(async () => {
@@ -50,7 +51,8 @@ describe('device presence', () => {
     );
     server = startServer({ HTTP_PORT: String(HTTP_PORT), MQTT_PORT: String(MQTT_PORT) });
     await server.ready;
-    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`);
+    cookie = await signIn(`http://127.0.0.1:${HTTP_PORT}`);
+    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`, { headers: { Cookie: cookie } });
     ws.on('message', (data) => { received.push(JSON.parse(data.toString())); });
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
   });
@@ -96,7 +98,7 @@ describe('device presence', () => {
   });
 
   test('/api/system/stats reports memory, delay, query count and presence writes', async () => {
-    const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/system/stats`);
+    const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/system/stats`, { headers: { Cookie: cookie } });
     assert.equal(res.status, 200);
     const { stats } = await res.json();
     assert.ok(stats.uptime_s >= 0);

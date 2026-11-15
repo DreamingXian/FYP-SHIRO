@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS `patient_bindings` (
   `patient_id` VARCHAR(32) NOT NULL,
   `device_id` VARCHAR(32) NOT NULL,
   `bound_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  `bound_by` VARCHAR(64) DEFAULT 'DOC-8821',
+  `bound_by` VARCHAR(64) NULL DEFAULT NULL,
   `stream_rate` VARCHAR(32) DEFAULT '5 Hz Live Stream',
   `status` ENUM('ACTIVE', 'UNBOUND') NOT NULL DEFAULT 'ACTIVE',
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

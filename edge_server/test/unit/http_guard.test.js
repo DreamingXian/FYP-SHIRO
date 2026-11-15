@@ -13,6 +13,9 @@ const path = require('node:path');
 const { handleRequest, resolvePublicFile } = require('../../routes/index');
 const db = require('../../database/db');
 const { JSON_BODY_LIMIT } = require('../../utils/http');
+const authService = require('../../services/auth/auth_service');
+const { memoryStore } = require('../../services/auth/stores');
+const audit = require('../../services/audit_service');
 
 const PUBLIC_DIR = path.resolve(__dirname, '..', '..', 'public');
 const UPLOAD_DIR = path.join(PUBLIC_DIR, 'uploads', 'patients');
@@ -20,8 +23,15 @@ const UPLOAD_DIR = path.join(PUBLIC_DIR, 'uploads', 'patients');
 let server;
 let base;
 let port;
+let cookie = '';
 
 before(async () => {
+  // Accounts and the audit trail in memory: this file has no database
+  authService.configure({ store: memoryStore() });
+  audit.configure({ sink: async () => {} });
+  await authService.createClinician({ username: 'utest-admin', fullName: 'Unit Test Admin', role: 'ADMIN', password: 'unit-test-password-1' });
+  const { token } = await authService.login('utest-admin', 'unit-test-password-1');
+  cookie = `shiro_session=${token}`;
   server = http.createServer((req, res) => {
     handleRequest(req, res).catch(() => { res.statusCode = 500; res.end(); });
   });
@@ -42,9 +52,12 @@ test('this file cannot reach a real database', () => {
 
 const post = (pathname, body, headers = {}) => fetch(base + pathname, {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', ...headers },
+  headers: { 'Content-Type': 'application/json', Cookie: cookie, ...headers },
   body: typeof body === 'string' ? body : JSON.stringify(body)
 });
+
+/** GET as the signed-in admin. */
+const get = (pathname) => fetch(base + pathname, { headers: { Cookie: cookie } });
 
 /** Sends a request line exactly as written: fetch() would tidy the path first. */
 function rawGet(rawPath) {
@@ -124,8 +137,8 @@ describe('static files', () => {
 
 describe('API requests', () => {
   test('an unknown API address is a JSON 404', async () => {
-    await expectError(await fetch(base + '/api/nothing'), 404);
-    await expectError(await fetch(base + '/api/patientsX'), 404);
+    await expectError(await get('/api/nothing'), 404);
+    await expectError(await get('/api/patientsX'), 404);
   });
 
   test('a body that is not valid JSON is a 400', async () => {
@@ -151,23 +164,23 @@ describe('API requests', () => {
   });
 
   test('a missing identifier is a 400: no default patient, ward or device is used', async () => {
-    assert.match((await expectError(await fetch(base + '/api/patients/vitals-history'), 400)).error, /id/);
-    assert.match((await expectError(await fetch(base + '/api/patients/get'), 400)).error, /id/);
-    assert.match((await expectError(await fetch(base + '/api/ward/config'), 400)).error, /ward_id/);
-    assert.match((await expectError(await fetch(base + '/api/ward/ips-init'), 400)).error, /ward_id/);
+    assert.match((await expectError(await get('/api/patients/vitals-history'), 400)).error, /id/);
+    assert.match((await expectError(await get('/api/patients/get'), 400)).error, /id/);
+    assert.match((await expectError(await get('/api/ward/config'), 400)).error, /ward_id/);
+    assert.match((await expectError(await get('/api/ward/ips-init'), 400)).error, /ward_id/);
     assert.match((await expectError(await post('/api/ward/save-anchor', { spatial_anchor_uuid: 'a1b2c3d4-e5f6-7890-abcd-ef0123456789' }), 400)).error, /ward_id/);
     assert.match((await expectError(await post('/api/ward/calibration/reset', {}), 400)).error, /ward_id/);
     assert.match((await expectError(await post('/api/ward/config', { room_title: 'No ID' }), 400)).error, /ward_id/);
     assert.match((await expectError(await post('/api/patients/upload-photo', { image_data: 'data:image/png;base64,AAAA' }), 400)).error, /patient_id/);
     assert.match((await expectError(await post('/api/devices/ping', {}), 400)).error, /device_id/);
-    assert.match((await expectError(await fetch(base + '/api/devices/next-id'), 400)).error, /type/);
+    assert.match((await expectError(await get('/api/devices/next-id'), 400)).error, /type/);
   });
 
   test('identifiers and lists with an invalid form are a 400', async () => {
-    await expectError(await fetch(base + '/api/patients/get?id=' + encodeURIComponent("P-001' OR '1'='1")), 400);
-    await expectError(await fetch(base + '/api/patients/list?status=' + encodeURIComponent('ADMITTED; DROP TABLE patients')), 400);
-    await expectError(await fetch(base + '/api/devices/list?type=TOASTER'), 400);
-    await expectError(await fetch(base + '/api/alerts/history?limit=' + encodeURIComponent('5; DROP TABLE x')), 400);
+    await expectError(await get('/api/patients/get?id=' + encodeURIComponent("P-001' OR '1'='1")), 400);
+    await expectError(await get('/api/patients/list?status=' + encodeURIComponent('ADMITTED; DROP TABLE patients')), 400);
+    await expectError(await get('/api/devices/list?type=TOASTER'), 400);
+    await expectError(await get('/api/alerts/history?limit=' + encodeURIComponent('5; DROP TABLE x')), 400);
     await expectError(await post('/api/bindings/bind', { patient_id: 'P-001', device_id: '<img src=x>' }), 400);
     await expectError(await post('/api/devices/enroll', { device_id: 'TAG-900', mac_address: 'not-a-mac', device_type: 'WRISTBAND' }), 400);
     await expectError(await post('/api/alerts/acknowledge', { incident_id: { $ne: null } }), 400);
@@ -176,9 +189,9 @@ describe('API requests', () => {
 
   test('a query injection in the vitals history range or patient ID is a 400', async () => {
     const range = encodeURIComponent('-1h) |> drop(columns: ["_value"]) //');
-    assert.match((await expectError(await fetch(`${base}/api/patients/vitals-history?id=P-001&range=${range}`), 400)).error, /range/);
+    assert.match((await expectError(await get(`/api/patients/vitals-history?id=P-001&range=${range}`), 400)).error, /range/);
     const id = encodeURIComponent('P-001" or r._measurement == "spatial_trajectories');
-    assert.match((await expectError(await fetch(`${base}/api/patients/vitals-history?id=${id}&range=-1h`), 400)).error, /id/);
+    assert.match((await expectError(await get(`/api/patients/vitals-history?id=${id}&range=-1h`), 400)).error, /id/);
   });
 
   test('a photo upload cannot name its own path or carry something that is not a photo', async () => {

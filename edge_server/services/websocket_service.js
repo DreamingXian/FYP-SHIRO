@@ -5,6 +5,10 @@ const logger = require('../utils/logger');
 const { WebSocketServer } = require('ws');
 const { getCalibration, updateCalibration, setAnchorCalibration } = require('./kalman_filter');
 const { HttpError, isCrossSiteRequest } = require('../utils/http');
+const { actorOf, clientIp } = require('./auth/request_auth');
+const { actorLabel } = require('./auth/auth_service');
+const { decideCommand } = require('./auth/permissions');
+const audit = require('./audit_service');
 const {
   requireId, optionalId, requireMac, optionalMac, requireDeviceRef, requireLabel,
   optionalOneOf, optionalNumber, optionalInt, optionalText, normalizeMac
@@ -184,16 +188,36 @@ function sendCommandError(ws, action, message) {
   }));
 }
 
+/**
+ * A socket is accepted only from this server's own pages or a non-browser client,
+ * and only with a signed-in session (dashboard) or a paired headset's token.
+ */
+function verifyClient(info, done) {
+  if (isCrossSiteRequest(info.req)) {
+    done(false, 403, 'Forbidden');
+    return;
+  }
+  actorOf(info.req)
+    .then((actor) => {
+      if (actor) done(true);
+      else done(false, 401, 'Sign in or pair this headset first');
+    })
+    .catch((err) => {
+      logger.warn('[WEBSOCKET] Could not check who is connecting:', err.message);
+      done(false, 503, 'Service unavailable');
+    });
+}
+
 function initWebSocketServer(httpServer) {
   wss = new WebSocketServer({
     server: httpServer,
     maxPayload: MAX_MESSAGE_BYTES,
-    // A page of another website must not be able to open a socket to this server
-    verifyClient: (info) => !isCrossSiteRequest(info.req)
+    verifyClient
   });
 
   wss.on('connection', (ws, req) => {
-    logger.info('[WEBSOCKET] Web Dashboard / HMD connected.');
+    ws.actor = req.actor || null;
+    logger.info(`[WEBSOCKET] Connected: ${ws.actor ? actorLabel(ws.actor) : 'unknown'}.`);
     ws.send(JSON.stringify({
       type: 'STATUS',
       message: 'Connected to SHIRO Edge Server',
@@ -212,9 +236,26 @@ function initWebSocketServer(httpServer) {
         action = parsed && parsed.action;
         const cmd = validateCommand(parsed);
 
-        if (cmd.action === 'UPDATE_CALIBRATION') handleCalibration(cmd);
-        else if (cmd.action === 'SET_ACTIVE_MODE') await handleActiveMode(cmd);
-        else await handleDevicePresence(cmd, ws, req);
+        if (decideCommand(cmd.action, ws.actor) !== 'ok') {
+          throw new HttpError(403, ws.actor && ws.actor.type === 'HEADSET'
+            ? 'A headset cannot send this command.'
+            : 'Your account does not have permission for this command.');
+        }
+        const ip = clientIp(req);
+
+        if (cmd.action === 'UPDATE_CALIBRATION') {
+          handleCalibration(cmd);
+          await audit.record({ actor: ws.actor, action: 'CALIBRATION_UPDATE', targetType: 'DEVICE', targetId: cmd.anchorId, details: { A: cmd.A, n: cmd.n }, ip });
+        } else if (cmd.action === 'SET_ACTIVE_MODE') {
+          await handleActiveMode(cmd);
+          await audit.record({ actor: ws.actor, action: 'ACTIVE_MODE', targetType: 'DEVICE', targetId: cmd.tagId, details: { duration: cmd.duration }, ip });
+        } else {
+          // A headset reports only itself
+          if (cmd.deviceId !== ws.actor.id) {
+            throw new HttpError(403, `This headset is paired as ${ws.actor.id}, not ${cmd.deviceId}.`);
+          }
+          await handleDevicePresence(cmd, ws, req);
+        }
       } catch (err) {
         if (err instanceof HttpError) {
           logger.warn(`[WEBSOCKET] Command refused (${typeof action === 'string' ? action.slice(0, 40) : 'no action'}): ${err.message}`);
@@ -256,6 +297,25 @@ function broadcastToClients(data) {
   });
 }
 
+/**
+ * Ends the open sockets of one clinician or one headset, after a sign-out,
+ * deactivation, password reset or revoked pairing.
+ */
+function closeConnectionsOf(type, id) {
+  if (!wss) return 0;
+  let closed = 0;
+  wss.clients.forEach((client) => {
+    if (client.actor && client.actor.type === type && client.actor.id === id) {
+      client.close(4001, 'Access ended');
+      closed++;
+    }
+  });
+  return closed;
+}
+
+const closeHeadsetConnections = (deviceId) => closeConnectionsOf('HEADSET', deviceId);
+const closeClinicianConnections = (clinicianId) => closeConnectionsOf('CLINICIAN', clinicianId);
+
 function getConnectedClientsCount() {
   if (!wss) return 0;
   let count = 0;
@@ -284,6 +344,8 @@ module.exports = {
   closeWebSocketServer,
   broadcastToClients,
   getConnectedClientsCount,
+  closeHeadsetConnections,
+  closeClinicianConnections,
   validateCommand,
   MAX_MESSAGE_BYTES
 };

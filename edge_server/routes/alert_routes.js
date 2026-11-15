@@ -8,6 +8,7 @@ const thresholds = require('../config/clinical_thresholds');
 const { getPool } = require('../database/db');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const { requireId, requireOneOf, optionalNumber, optionalInt, optionalText } = require('../utils/validate');
+const { actorLabel } = require('../services/auth/auth_service');
 
 const INCIDENT_CATEGORIES = ['FALL_ACCIDENT', 'CRITICAL_VITALS', 'GEOFENCE_BREACH'];
 const INCIDENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$/;
@@ -63,11 +64,11 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
       if (typeof data.incident_id !== 'string' || !INCIDENT_ID_PATTERN.test(data.incident_id)) {
         throw new HttpError(400, 'incident_id is required and must be a valid incident ID.');
       }
-      const clinician = optionalText(data.attending_clinician, 'attending_clinician', 64);
       const notes = optionalText(data.notes, 'notes', 2000);
+      // The signed-in clinician or the paired headset; a name sent by the client is not trusted
       const result = await alertService.acknowledgeIncident(
         data.incident_id,
-        clinician || alertService.UNVERIFIED_CLINICIAN,
+        req.actor ? actorLabel(req.actor).slice(0, 64) : alertService.UNVERIFIED_CLINICIAN,
         notes || ''
       );
       sendJson(res, 200, result);

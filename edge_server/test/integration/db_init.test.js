@@ -4,8 +4,12 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const EXPECTED_TABLES = [
+  'audit_log',
+  'auth_sessions',
+  'clinicians',
   'devices',
   'emergency_incident_logs',
+  'headset_pairings',
   'patient_bindings',
   'patients',
   'ward_anchors',
@@ -25,7 +29,7 @@ describe('fresh install', () => {
   before(async () => { pool = await freshDatabase(); });
   after(async () => { await db.closePool(); });
 
-  test('creates all nine tables, including patient_bindings', async () => {
+  test('creates all thirteen tables, including patient_bindings and the account tables', async () => {
     const [rows] = await pool.query('SHOW TABLES');
     const names = rows.map(r => Object.values(r)[0]).sort();
     assert.deepEqual(names, EXPECTED_TABLES);

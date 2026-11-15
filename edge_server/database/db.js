@@ -90,6 +90,8 @@ async function applySchema() {
   await migrateIncidentSimulation();
   const { migrate: migrateIncidentFreefall } = require('./migrate_incident_freefall');
   await migrateIncidentFreefall();
+  const { migrate: migrateBindingBoundBy } = require('./migrate_binding_bound_by');
+  await migrateBindingBoundBy();
 }
 
 /**
