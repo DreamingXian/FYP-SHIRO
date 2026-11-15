@@ -15,11 +15,13 @@ function normalise(deviceId) {
  * @param {() => Promise<Array<{device_id: string, patient_id: string}>>} options.load
  *        Returns the active bindings.
  * @param {number} [options.maxAgeMs] Age after which a lookup triggers a background refresh.
+ * @param {number} [options.retryAfterFailureMs] Wait before the next background attempt after a failed one.
  * @param {() => number} [options.now]
  */
-function createBindingCache({ load, maxAgeMs = 15000, now = Date.now }) {
+function createBindingCache({ load, maxAgeMs = 15000, retryAfterFailureMs = 5000, now = Date.now }) {
   let byDevice = new Map();
   let lastRefresh = 0;
+  let lastFailure = null; // time of the last failed load, null while loads succeed
   let inFlight = null;
 
   async function refresh() {
@@ -33,6 +35,13 @@ function createBindingCache({ load, maxAgeMs = 15000, now = Date.now }) {
         }
         byDevice = next;
         lastRefresh = now();
+        if (lastFailure !== null) {
+          lastFailure = null;
+          logger.info(`[BINDING CACHE] Database answers again; ${next.size} active binding(s) loaded.`);
+        }
+      } catch (err) {
+        lastFailure = now();
+        throw err;
       } finally {
         inFlight = null;
       }
@@ -43,10 +52,19 @@ function createBindingCache({ load, maxAgeMs = 15000, now = Date.now }) {
   /**
    * Returns the patient bound to this wristband, or null when it is unbound.
    * Never blocks: a stale cache answers from memory and refreshes in the background.
+   * After a failed refresh the next background attempt waits retryAfterFailureMs,
+   * so an unreachable database is not retried on every telemetry packet.
    */
   function getPatientIdForDevice(deviceId) {
-    if (now() - lastRefresh > maxAgeMs) {
-      refresh().catch(err => logger.warn('[BINDING CACHE] Refresh failed:', err.message));
+    const t = now();
+    const stale = t - lastRefresh > maxAgeMs;
+    const waitingAfterFailure = lastFailure !== null && t - lastFailure < retryAfterFailureMs;
+    if (stale && !waitingAfterFailure) {
+      refresh().catch(err => {
+        if (logger.every('binding-cache-refresh', 30000)) {
+          logger.warn(`[BINDING CACHE] Refresh failed (${err.code || err.message}). Using the last known bindings; retried every ${retryAfterFailureMs / 1000} s.`);
+        }
+      });
     }
     return byDevice.get(normalise(deviceId)) || null;
   }
