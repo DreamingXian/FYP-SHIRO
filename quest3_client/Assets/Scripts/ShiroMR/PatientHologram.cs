@@ -506,10 +506,9 @@ namespace ShiroMR
         }
 
         /// <summary>
-        /// Evaluates whether an actual physical human is wearing the wristband using multi-modal bio-sensing:
-        /// 1. MAX30102 Optical PPG capillary pulse: Valid pulse wave (40 <= heartRateBpm <= 220) proves human skin contact.
-        /// 2. If the wristband is sitting on a table/bed/floor with no human, heartRateBpm is 0.
-        /// 3. Manual Clinician Aim Lock: Clinician explicitly locked the hologram onto the patient in the room.
+        /// "Person detected" means only: a valid pulse is being read right now (40 to 220 BPM),
+        /// or the clinician locked the hologram onto the patient by hand. No reading (0) does not
+        /// prove the wristband is off: at the wrist the pulse is often not measurable for a while.
         /// </summary>
         public void EvaluatePersonDetection()
         {
@@ -636,12 +635,12 @@ namespace ShiroMR
             {
                 if (isPersonDetected)
                 {
-                    _statusBannerText.text = "🟢 Patient Confirmed • Following Movement";
+                    _statusBannerText.text = "🟢 Pulse detected • Following wristband position";
                     _statusBannerText.color = new Color(0.2f, 0.95f, 0.5f);
                 }
                 else
                 {
-                    _statusBannerText.text = "🟡 Searching Patient • Floor Ring Active (0 BPM)";
+                    _statusBannerText.text = "🟡 No pulse reading now • Following wristband position";
                     _statusBannerText.color = new Color(0.95f, 0.85f, 0.35f);
                 }
             }
@@ -668,7 +667,7 @@ namespace ShiroMR
                 }
                 else
                 {
-                    _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PATIENT CONFIRMED)" : "🚶 IN-TRANSIT (WRISTBAND UNATTACHED)";
+                    _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PULSE DETECTED)" : "🚶 IN-TRANSIT (NO PULSE READING)";
                     _trackingBadgeText.color = isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
                 }
             }
