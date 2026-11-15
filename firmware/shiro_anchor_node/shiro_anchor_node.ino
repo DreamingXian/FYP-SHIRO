@@ -288,13 +288,29 @@ void executeActiveModeCommand(const char* targetMacStr) {
 // -----------------------------------------------------------------------------
 // Wi-Fi Connection Helper
 // -----------------------------------------------------------------------------
+// The board restarts when Wi-Fi does not come up at power-on within this time,
+// or stays lost for WIFI_LOST_RESTART_MS: a restart clears a stuck radio state.
+const unsigned long WIFI_START_TIMEOUT_MS = 20000;
+const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;
+const unsigned long WIFI_LOST_RESTART_MS = 120000;
+const unsigned long MQTT_RETRY_INTERVAL_MS = 2000;
+
 void setupWifi() {
   delay(10);
   Serial.printf("\nConnecting to Wi-Fi: %s ", ssid);
   WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);       // do not rewrite flash at every connection
+  WiFi.setAutoReconnect(true);  // the Wi-Fi driver also retries on its own
   WiFi.begin(ssid, password);
 
+  const unsigned long started = millis();
   while (WiFi.status() != WL_CONNECTED) {
+    if (millis() - started > WIFI_START_TIMEOUT_MS) {
+      Serial.printf("\n[FAILED] No Wi-Fi after %lu s. Check SHIRO_WIFI_SSID / SHIRO_WIFI_PASSWORD and that the network is 2.4 GHz. Restarting...\n",
+                    WIFI_START_TIMEOUT_MS / 1000);
+      delay(1000);
+      ESP.restart();
+    }
     delay(500);
     Serial.print(".");
   }
@@ -306,30 +322,68 @@ void setupWifi() {
 }
 
 // -----------------------------------------------------------------------------
-// MQTT Reconnection Helper
+// Keeps Wi-Fi up without blocking loop(). Returns true while connected.
+// A lost connection is retried every 5 s; after 2 minutes the board restarts.
 // -----------------------------------------------------------------------------
-void reconnectMQTT() {
-  while (!mqttClient.connected()) {
-    Serial.printf("[ANCHOR %s] Connecting to MQTT Broker on %s... ", anchorMac, mqtt_server);
-    String macClean = WiFi.macAddress();
-    macClean.replace(":", "");
-    char clientId[50];
-    snprintf(clientId, sizeof(clientId), "SHIRO_Anchor_%s", macClean.c_str());
+bool maintainWifi(unsigned long now) {
+  static bool wasConnected = true;
+  static unsigned long lostSince = 0;
+  static unsigned long lastAttempt = 0;
 
-    if (mqttClient.connect(clientId, mqtt_user, mqtt_pass)) {
-      Serial.println("[OK] Connected to MQTT Broker!");
-      if (!mqttClient.subscribe("shiro/control/mode")) {
-        Serial.println("[WARN] Could not subscribe to shiro/control/mode: 1 Hz commands will not arrive.");
-      }
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!wasConnected) {
+      Serial.printf("[OK] Wi-Fi back after %lu s. IP %s\n", (now - lostSince) / 1000, WiFi.localIP().toString().c_str());
+      wasConnected = true;
+    }
+    return true;
+  }
+
+  if (wasConnected) {
+    Serial.println("[WARN] Wi-Fi lost. Reconnecting in the background; BLE scanning continues.");
+    wasConnected = false;
+    lostSince = now;
+    lastAttempt = now;
+  }
+  if (now - lostSince > WIFI_LOST_RESTART_MS) {
+    Serial.printf("[FAILED] Wi-Fi lost for %lu s. Restarting...\n", WIFI_LOST_RESTART_MS / 1000);
+    delay(500);
+    ESP.restart();
+  }
+  if (now - lastAttempt >= WIFI_RETRY_INTERVAL_MS) {
+    lastAttempt = now;
+    WiFi.reconnect();
+  }
+  return false;
+}
+
+// -----------------------------------------------------------------------------
+// MQTT Reconnection Helper: one attempt at most every 2 s, never a loop, so
+// commands, scanning and the Wi-Fi check keep running between attempts.
+// -----------------------------------------------------------------------------
+void reconnectMQTT(unsigned long now) {
+  static unsigned long lastAttempt = 0;
+  static bool firstAttempt = true;
+  if (!firstAttempt && now - lastAttempt < MQTT_RETRY_INTERVAL_MS) return;
+  firstAttempt = false;
+  lastAttempt = now;
+
+  Serial.printf("[ANCHOR %s] Connecting to MQTT Broker on %s... ", anchorMac, mqtt_server);
+  String macClean = WiFi.macAddress();
+  macClean.replace(":", "");
+  char clientId[50];
+  snprintf(clientId, sizeof(clientId), "SHIRO_Anchor_%s", macClean.c_str());
+
+  if (mqttClient.connect(clientId, mqtt_user, mqtt_pass)) {
+    Serial.println("[OK] Connected to MQTT Broker!");
+    if (!mqttClient.subscribe("shiro/control/mode")) {
+      Serial.println("[WARN] Could not subscribe to shiro/control/mode: 1 Hz commands will not arrive.");
+    }
+  } else {
+    const int rc = mqttClient.state();
+    if (rc == MQTT_CONNECT_BAD_CREDENTIALS || rc == MQTT_CONNECT_UNAUTHORIZED) {
+      Serial.printf("[FAILED] rc=%d: login refused. Check SHIRO_MQTT_USER / SHIRO_MQTT_PASSWORD in secrets.h against edge_server/.env. Retrying in 2 seconds...\n", rc);
     } else {
-      const int rc = mqttClient.state();
-      if (rc == MQTT_CONNECT_BAD_CREDENTIALS || rc == MQTT_CONNECT_UNAUTHORIZED) {
-        Serial.printf("[FAILED] rc=%d: login refused. Check SHIRO_MQTT_USER / SHIRO_MQTT_PASSWORD in secrets.h against edge_server/.env. Retrying in 2 seconds...\n", rc);
-      } else {
-        Serial.printf("[FAILED] rc=%d. Retrying in 2 seconds...\n", rc);
-      }
-      delay(2000);
-      break;
+      Serial.printf("[FAILED] rc=%d. Retrying in 2 seconds...\n", rc);
     }
   }
 }
@@ -406,6 +460,9 @@ void setup() {
 
   // 2. Configure MQTT Client
   mqttClient.setServer(mqtt_server, mqtt_port);
+  // Wait at most 4 s for the broker's answer (default 15 s), so a server that
+  // is down does not hold up loop() for long
+  mqttClient.setSocketTimeout(4);
   if (!mqttClient.setBufferSize(MQTT_BUFFER_SIZE)) {
     Serial.println("[WARN] Could not allocate the MQTT buffer: large messages will be dropped.");
   }
@@ -430,11 +487,16 @@ void setup() {
 // Arduino Main Loop
 // -----------------------------------------------------------------------------
 void loop() {
-  // 1. Maintain MQTT connection
-  if (!mqttClient.connected()) {
-    reconnectMQTT();
+  unsigned long now = millis();
+
+  // 1. Maintain Wi-Fi and MQTT without blocking: while either is down, the
+  //    table of heard wristbands keeps being cleaned and nothing is published
+  if (maintainWifi(now)) {
+    if (!mqttClient.connected()) {
+      reconnectMQTT(now);
+    }
+    mqttClient.loop();
   }
-  mqttClient.loop();
 
   // 2. Execute pending BLE write command outside of MQTT callback
   if (pendingCmd) {
@@ -443,7 +505,7 @@ void loop() {
   }
 
   // 3. Publish Combined Telemetry updates to Edge Server at ~6.7 Hz
-  unsigned long now = millis();
+  now = millis();
   if (now - lastPublishTime >= PUBLISH_INTERVAL) {
     lastPublishTime = now;
 
