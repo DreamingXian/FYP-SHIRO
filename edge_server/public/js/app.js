@@ -158,6 +158,9 @@ async function initializeApp() {
   if (typeof window.initBindingsModule === 'function') {
     window.initBindingsModule();
   }
+  if (typeof window.initHealthMonitor === 'function') {
+    window.initHealthMonitor();
+  }
 
   // 6. Global Window Resize Handling
   window.addEventListener('resize', () => {

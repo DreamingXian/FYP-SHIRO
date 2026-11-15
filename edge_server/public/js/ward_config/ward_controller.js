@@ -198,7 +198,10 @@
               });
             }
           }
-        } catch (_) {}
+        } catch (err) {
+          // Polled every 3 s: the next poll retries. Shown in the browser console only.
+          console.warn('[WARD] Could not refresh the anchor list:', err.message);
+        }
       }, 3000);
     }
 
@@ -664,7 +667,9 @@
         if (tData.success) {
           availableTemplates = tData.templates;
         }
-      } catch (err) {}
+      } catch (err) {
+        console.warn('[WARD] Could not load the ward templates; the template list stays empty:', err.message);
+      }
 
       // Preload WARD-001 for editor ready state
       try {

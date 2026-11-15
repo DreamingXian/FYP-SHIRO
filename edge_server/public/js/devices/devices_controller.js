@@ -665,7 +665,10 @@ async function openEnrollModal(mac, model, type, battery, ip) {
     if (nextData.success && nextData.nextId) {
       initialId = nextData.nextId;
     }
-  } catch (_) {}
+  } catch (err) {
+    // The ID field stays empty for the user to fill in
+    console.warn('[DEVICES] Could not get the next device ID:', err.message);
+  }
 
   if (!initialId) {
     initialId = type === 'ANCHOR' ? 'anchor-001' : 'TAG-001';
@@ -810,7 +813,9 @@ async function openManualEnrollModal() {
         const idEl = document.getElementById('manual-dev-id');
         if (idEl) idEl.value = data.nextId;
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn('[DEVICES] Could not get the next device ID:', err.message);
+    }
   };
 
   safeShowModal({
