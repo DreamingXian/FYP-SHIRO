@@ -2,6 +2,7 @@
 // SHIRO Central Ward Management System - Real-Time IPS Localization Service
 // Robust 2D Weighted Multilateration, Median+Kalman Filtering & Offline Handling
 // =============================================================================
+const logger = require('../utils/logger');
 const { getPool } = require('../database/db');
 const { KalmanFilter1D, calculateDistance, getCalibration, setAnchorCalibration, clearAnchorCalibration } = require('./kalman_filter');
 const { broadcastToClients } = require('./websocket_service');
@@ -303,9 +304,9 @@ async function reloadWardAnchorsCache() {
     }
     anchorToWardMap = newAnchorMap;
 
-    console.log(`[IPS ENGINE] Cached ${anchors.length} assigned anchors across ${rooms.length} wards.`);
+    logger.info(`[IPS ENGINE] Cached ${anchors.length} assigned anchors across ${rooms.length} wards.`);
   } catch (err) {
-    console.warn('[IPS ENGINE] Failed to reload ward anchors cache:', err.message);
+    logger.warn('[IPS ENGINE] Failed to reload ward anchors cache:', err.message);
   }
 }
 
@@ -568,7 +569,7 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
     tag_mac: cleanMac || '',
     status: 'ONLINE',
     motion_state: motionStateText,
-    confidence: (ks.state === 'LOCKED' && isImuActive) ? 'STATIONARY_LOCKED' : confidence,
+    confidence,
     last_seen: now,
     last_broadcast: prevSmoothed?.last_broadcast || 0
   });
@@ -716,7 +717,7 @@ function purgeTag(tagId, mac = null) {
     tag_id: tagId,
     mac: mac || ''
   });
-  console.log(`[IPS ENGINE] Purged tag ${tagId} from all localization caches.`);
+  logger.info(`[IPS ENGINE] Purged tag ${tagId} from all localization caches.`);
 }
 
 module.exports = {
