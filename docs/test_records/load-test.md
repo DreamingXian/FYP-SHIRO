@@ -47,10 +47,34 @@ Event-loop delay (after only, from `/api/system/stats`): the 99th percentile sta
 - The slowest API answer fell from 304 ms to 19 ms.
 - Nothing was lost: the integration test `device_presence.test.js` checks that the last battery value and last-seen time reach the database within one batch interval, that a silent device is marked OFFLINE after 12 s, and that a clean shutdown writes what is still in memory.
 
-## Still to do (with hardware)
+## Soak with the real hardware
 
-- Soak: 30 minutes with the real anchors and wristband, memory read from the System Health tab at the start and every 10 minutes.
-- Faults: MySQL stopped during operation, an anchor unplugged, the router switched off and on.
+Date: 15 Nov 2026, server started at 21:59. The 3 real anchors and the wristband ran normally against `shiro_db`, with the dashboard open; branch `fix/phase-6-reliability` at commit `fee3dd3`. Readings from the System Health tab (`/api/system/stats`):
+
+| Server uptime | Memory in use (RSS) | JavaScript heap | Event-loop delay, 99th percentile |
+| ---: | ---: | ---: | ---: |
+| 0 min 25 s | 79.2 MB | 23.5 MB | 21.7 ms |
+| 10 min 25 s | 82.8 MB | 27.3 MB | 23.3 ms |
+| 20 min 35 s | 83.4 MB | 27.9 MB | 18.4 ms |
+| 31 min 10 s | 81.4 MB | 27.8 MB | 16.1 ms |
+
+Memory rose by 3.6 MB in the first 10 minutes while caches filled, then stayed level (82.8 → 81.4 MB over the last 20 minutes): no sign of a leak. The event-loop delay (already minus the 20 ms sampling interval) stayed below 25 ms and did not grow.
+
+## Fault tests with the real hardware
+
+Date: 15 Nov 2026, same set-up.
+
+| Fault | Expected | Result |
+| :--- | :--- | :--- |
+| MySQL stopped for about 40 s during operation, then started | Server keeps running; each problem logged at most once per 30 s; after MySQL is back the server and dashboard recover without a restart | Passed after two fixes made during this test (below) |
+| An anchor unplugged, then powered again | OFFLINE on the System Health tab within about 14 s, ONLINE again after power-up | Passed |
+| Router switched off, then on | Anchors reconnect to Wi-Fi and MQTT by themselves, no manual reset | Passed |
+
+Found and fixed during the MySQL test:
+
+- The binding cache retried its reload on every wristband reading while MySQL was down (about 5 warnings per second). It now waits 5 s after a failed reload and warns at most once per 30 s (commit `8c875a1`).
+- The Ward page fetched the whole device list on every anchor signal message when the anchor was missing from its list, and the server logged every failed request (dozens of lines per second). Now at most one fetch per 5 s, and the same failure is logged at most once per 30 s (commit `fee3dd3`).
+- Not a SHIRO fault: after MySQL restarted, `shiro_app` lost its access to `shiro_db` because MySQL's own grant table `mysql.db` was damaged (Aria error 176). The table was repaired and the grants applied again; the startup guide now has a troubleshooting row for it.
 
 ## How to repeat
 
