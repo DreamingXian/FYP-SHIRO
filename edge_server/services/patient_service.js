@@ -237,7 +237,7 @@ async function admitPatient(patientData) {
       }
     }
 
-    const cleanPhone = patientData.phone_number ? patientData.phone_number.replace(/[-\s\(\)\+]/g, '') : '';
+    const cleanPhone = patientData.phone_number ? patientData.phone_number.replace(/[-\s()+]/g, '') : '';
     if (!cleanPhone || cleanPhone.length < 8 || cleanPhone.length > 15 || !/^\d+$/.test(cleanPhone)) {
       throw new Error('Validation Error: Please enter a valid contact phone number (at least 8 digits).');
     }

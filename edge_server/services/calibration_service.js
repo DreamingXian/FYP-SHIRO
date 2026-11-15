@@ -228,7 +228,6 @@ function getSessionResults() {
  */
 async function applyCalibrations(wardId, calibrations) {
   const wardService = require('./ward_service');
-  const ipsService = require('./ips_service');
 
   if (!Array.isArray(calibrations) || calibrations.length === 0) {
     throw new Error('No calibrations array provided to apply.');

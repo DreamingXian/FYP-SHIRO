@@ -127,6 +127,8 @@ function queuePoint(line) {
  */
 function escapeTag(value, fallback) {
   const text = String(value === undefined || value === null ? '' : value)
+    // Control characters are removed on purpose: they would break the line protocol
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F\\]/g, '')
     .trim()
     .replace(/[,= ]/g, '\\$&');

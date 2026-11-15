@@ -67,7 +67,7 @@ describe('headset presence (DEVICE_HANDSHAKE, DEVICE_HEARTBEAT)', () => {
   });
 
   test('an unknown battery level stays unknown', () => {
-    const { battery_level, ...withoutBattery } = handshake;
+    const { battery_level: _removed, ...withoutBattery } = handshake;
     assert.equal(validateCommand({ ...withoutBattery, action: 'DEVICE_HEARTBEAT' }).battery, null);
   });
 
