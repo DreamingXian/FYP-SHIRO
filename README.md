@@ -282,9 +282,11 @@ Code/
   * Headset-triggered live mode and an explicit return to passive mode.
   * Patient profile and 24-hour history in the headset.
   * Binding history instead of deleting binding rows.
+  * Each patient's incident history on the dashboard's Patients page.
+  * Headset: restore the ward alignment after the headset wakes from sleep.
   * Standalone Android APK build for the Quest 3.
 * [ ] **Evaluation:**
-  * Position accuracy measured at fixed points in the ward.
+  * Position accuracy measured at fixed points in the ward, and improved (the regression run of 16 Nov 2026 found it low in a small room).
   * End-to-end telemetry and tracking latency.
   * Frame rate and battery runtime on the Meta Quest 3 and the wristband.
   * Thesis chapters aligned with what was built.
