@@ -203,13 +203,34 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
 
    **Stopping the server:** press **Ctrl+C** once in its terminal. It disconnects the anchors and dashboards, writes the device status and InfluxDB points still in memory, closes the database and ends with `[SHUTDOWN] Done.` Closing the terminal window instead skips these steps; at most the last 5 seconds of "last seen" and battery values are then lost.
 
-3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`:
+3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The dashboard offers:
    * **Ward Configuration Editor:** Room dimensions, obstacle cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor placement suggestions with line-of-sight checks.
    * **Live Ward Map:** 2D real-time bird's-eye canvas with a scaled patient marker, movement trail, bed docking detection, and landmark calibration of each anchor ($A$ and $n$ parameters).
    * **Device Provisioning Radar:** Lists nearby anchors, wristbands and headsets that are not yet enrolled, with one-click enrollment.
    * **Patient Admissions Directory:** Patient profiles, fall risk scores, bed allocation, wristband binding and discharge.
    * **Live Telemetry & Diagnostics Lab:** Live heart rate, SpO2 (indicative), motion and sensor contact from the wristband, raw versus Kalman-filtered RSSI per anchor, and an MQTT telemetry inspector. The raw pulse waveform is not shown: the wristband sends only computed results.
    * **System Health:** live server state (uptime, memory, response delay, database queries per second) and the status of every enrolled anchor and headset, refreshed every 5 s.
+   * **Admin** (admins only): clinician accounts, headset pairing and the audit log.
+
+### 3.6 Clinician Accounts and Sign-in
+
+The dashboard and every API address need a signed-in clinician. Two roles exist:
+
+| Role | Can do |
+| :--- | :--- |
+| `CLINICIAN` | Patients (admit, edit, discharge, beds, photos), wristband bindings, alarms (acknowledge), live mode, everything that is read only |
+| `ADMIN` | Everything a clinician can, plus accounts, device enrollment and deletion, ward editing, anchor calibration, headset pairing and the audit log |
+
+**First start (once):**
+1. On the **server PC itself**, open `http://localhost:3000`. While no account exists, the sign-in page shows **Create the first admin account**. This form works only on the server PC.
+2. Enter your full name, a username (lowercase, for example `admin`) and a password of at least 10 characters. You are then signed in as admin.
+3. Open the **ADMIN** tab and create an account for each clinician (role `CLINICIAN`). Give each person their initial password in person.
+
+**Every day:** sign in with your username and password. A session lasts 12 hours; **Log out** (top right) ends it. After 5 wrong passwords an account is locked for 5 minutes.
+
+**Audit log:** ADMIN tab → Audit Log. Every change (admission, discharge, binding, acknowledgement, device, ward, calibration), every sign-in and failed sign-in, and every account and pairing change is listed with who did it, when and from which address. Filter by actor (`CLN-002`, `QUEST3-…`), action (`PATIENT_ADMIT`) or target (`P-001`).
+
+**Forgotten admin password:** on the server PC, in `edge_server`, run `node tools/reset_password.js <username>` and type the new password twice (it is not shown). Every session of that account ends.
 
 ---
 
@@ -346,7 +367,11 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
    * **Server Port:** `3000`.
    * **Target Ward ID:** leave empty. The ward is chosen on the hand slate (Section 6.6) and remembered on the headset; no ward is assumed.
    * **Auto Connect on Start:** Enabled.
-6. **Enroll the headset (once per headset).** Press Play. The Unity Console shows `[SHIRO NET] This headset is QUEST3-…`. On the dashboard's **Devices** tab, the same ID appears as a device that is not enrolled yet: enroll it. The Unity editor on a PC and the app installed on the Quest have different IDs, so each is enrolled once.
+6. **Pair the headset (once per headset).** Press Play. The hand slate's **System** tab shows `Edge Server: 🔑 NOT PAIRED`.
+   1. On the dashboard (signed in as admin): **ADMIN** tab → **Headset Pairing** → **Create pairing code**. A 6-digit code appears, valid for 5 minutes and usable once.
+   2. On the headset: System tab → **🔑 Pair headset (code)** → type the code on the number pad → **✓ Pair**.
+   3. The headset is enrolled automatically (as `QUEST3-…`, shown in the Unity Console as `[SHIRO NET] This headset is QUEST3-…`) and connects. It stays paired until an admin presses **Revoke** on the ADMIN tab.
+   The Unity editor on a PC and the app installed on the Quest have different IDs, so each is paired once.
 
 ### 6.3 Running the Client (Two Methods)
 
@@ -490,7 +515,11 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | One persistent connection per headset, with heartbeats. Ensure only one Unity instance is playing. |
-| Headset appears on the Devices tab as a new, unenrolled device (`QUEST3-` followed by 6 characters) | Each headset now reports its own ID, derived from the device (the Unity editor on a PC gets another ID than the Quest itself). | Enrol it once on the Devices tab. An old `QUEST3-001` entry can be deleted. |
+| Hand slate shows `Edge Server: 🔑 NOT PAIRED` | The headset has no pairing, or its pairing was revoked, or the database was recreated. | Section 6.2 step 6: create a code on the ADMIN tab and enter it on the System tab. |
+| Hand slate says "Pairing refused: The pairing code is wrong or has expired" | The code was mistyped, older than 5 minutes or already used. | Create a new code. After 5 wrong codes the headset's address is locked for 5 minutes. |
+| The dashboard always returns to the sign-in page | The session ended: 12 hours passed, you logged out elsewhere, or an admin deactivated the account or reset its password. | Sign in again; ask an admin if the account is deactivated. |
+| "Too many failed sign-ins for this account" | 5 wrong passwords in a row. | Wait 5 minutes. A forgotten password is reset by an admin (ADMIN tab), or for the last admin with `node tools/reset_password.js <username>` on the server PC. |
+| "Your account does not have permission for this" | The action needs an admin (accounts, devices, wards, calibration). | Ask an admin, or sign in with an admin account. |
 | Hand slate shows "Ward: not configured" or "NO WARD CONFIGURED" | No ward has been chosen on this headset yet; no ward is assumed. | **Ward Setup** tab on the hand slate: choose the ward under "SWITCH HOSPITAL WARD". The choice is remembered. |
 | Server console shows the same warning only now and then | Repeated warnings are limited to one per 10 to 30 s. | Set `LOG_LEVEL=debug` in `edge_server/.env` for full detail, including error stacks. |
 | Virtual room overlay appears underground or tilted | Calibration point snapped to virtual floor mesh instead of physical floor. | Fixed in v2.0: Depth raycasting now queries `EnvironmentRaycastManager` to detect true physical floor height before transforming coordinates. |

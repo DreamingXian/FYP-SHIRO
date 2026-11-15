@@ -113,6 +113,7 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
 * **Every Input Is Checked:** Each value that reaches the edge server over HTTP, WebSocket or MQTT is checked for type, form and range before it is used (`edge_server/utils/validate.js`). A request with a missing or malformed identifier is refused with a 400 response; it is never answered with a default patient, ward or device. Request bodies and messages have size limits, a photo upload is accepted only as PNG, JPEG or WebP by its content, and requests from pages of other websites are refused. The dashboard shows every value from the server as text (`public/js/html_safety.js`), so a name such as `<img src=x onerror=alert(1)>` is displayed, never run.
 * **Only the Project's Devices Are Accepted:** The MQTT broker requires the anchor login and an anchor client ID, limits each anchor to its own topics and locks out an address after 10 failed logins. MySQL and InfluxDB listen on the server PC only, the server uses a limited MySQL account, and the firewall opens only the dashboard and MQTT ports on private networks. What is protected, and the known limits (no TLS, unauthenticated BLE, shared anchor login, no clinician login yet), are in [docs/security.md](docs/security.md).
 * **Stable Under Continuous Telemetry:** Device presence is kept in memory and written in one batch every 5 s; status changes are written at once. In a 5-minute load test (3 anchors × 2 wristbands at 7 Hz) database queries fell from about 150 to 2.6 per second and memory stayed at about 95 MB instead of growing to 200 MB; a 30-minute run with the real hardware stayed level at 79–83 MB ([docs/test_records/load-test.md](docs/test_records/load-test.md)). Ctrl+C shuts the server down cleanly without losing buffered data; log lines carry a time stamp and a level (`LOG_LEVEL`); a database outage is logged without flooding and the server recovers by itself.
+* **Clinician Sign-in and Audit Trail:** The dashboard and API need a signed-in clinician (roles `ADMIN` and `CLINICIAN`; scrypt password hashes, 12-hour HttpOnly session, lockout after 5 wrong passwords). Every change, sign-in and failed sign-in is written to an audit log with who did it; bindings and acknowledgements record the real clinician. A headset is paired once with a 6-digit code from the dashboard and then uses its own revocable token. The ADMIN tab manages accounts, headset pairings and the audit log ([docs/security.md](docs/security.md)).
 * **One Anchor per 1 Hz Command:** The server sends the 1 Hz vitals command through the anchor that hears the wristband most strongly, so two anchors never compete for the same BLE connection.
 
 ### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
@@ -179,14 +180,14 @@ Detailed step-by-step instructions, including troubleshooting, are in [SYSTEM_ST
    cd d:\RSW\FYP\Code\edge_server
    npm start
    ```
-   Open the dashboard at `http://localhost:3000`.
+   Open the dashboard at `http://localhost:3000` and sign in. On the very first start, create the first admin account there (on the server PC only), then the other accounts on the ADMIN tab (startup guide, Section 3.6).
 3. **Power On Hardware Nodes:**
    * **Wristband:** Power the XIAO ESP32-C6 and wear it with the sensor on the outer side of the wrist, strap snug.
    * **Anchors:** Power the ESP32-WROOM-32E nodes. They connect to Wi-Fi and the MQTT broker by themselves and start publishing.
 4. **Launch Meta Quest 3 Client:**
    * In Unity Hub, open the project folder `quest3_client/` of this repository with Unity `6000.3.28f1` (platform: Android).
    * Open `Assets/Scenes/SampleScene.unity`, connect the Quest 3 via Quest Link / Air Link and press Play.
-   * On the dashboard's Devices tab, enroll the headset ID shown in the Unity Console (`QUEST3-…`) once.
+   * Pair the headset once: ADMIN tab → Create pairing code, then hand slate → System → Pair headset (code).
    * Look at the left palm → **Ward Setup** tab → choose the ward → **Start Door Frame Calibration** and aim at the door frame corners.
 
 ### Automated Tests
@@ -236,7 +237,7 @@ Code/
 │   ├── eslint.config.js            # Lint rules (npm run lint)
 │   ├── .env.example                # Template for git-ignored .env (ports, MQTT anchor login, MySQL, InfluxDB token)
 │   ├── test/                       # Automated tests (unit/ and integration/)
-│   ├── tools/                      # start_influxdb.bat (InfluxDB on this PC only), load_test.js
+│   ├── tools/                      # start_influxdb.bat (InfluxDB on this PC only), load_test.js, reset_password.js
 │   ├── config/                     # Application, network, calibration and alarm threshold configs
 │   ├── database/                   # Connection pool, schema/ (tables), seed/ (sample data), migrations
 │   ├── controllers/                # Request handlers (Wards, Patients, Devices, Bindings)
@@ -275,7 +276,7 @@ Code/
 
 ## 7. Upcoming Milestones & Roadmap
 
-* [ ] **Clinician sign-in:** clinician accounts and roles, sign-in for the dashboard and the headset, protected HTTP and WebSocket endpoints, and the real clinician recorded on bindings and acknowledgements.
+* [x] **Clinician sign-in (minimal):** accounts with two roles, protected HTTP and WebSocket endpoints, audit log, headset pairing, the real clinician recorded on bindings and acknowledgements. Not included: sign-in of a named clinician on the headset, password expiry, two-factor sign-in.
 * [ ] **Remaining clinical features:**
   * Headset emergency overlay with alarm tone and acknowledge.
   * Geofence detection on the server.
