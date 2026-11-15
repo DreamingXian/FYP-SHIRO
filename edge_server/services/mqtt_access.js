@@ -7,6 +7,7 @@
 // firmware's secrets.h. Without both values the server does not start: an open
 // broker is never the fallback.
 // =============================================================================
+const logger = require('../utils/logger');
 const crypto = require('crypto');
 
 // Client ID an anchor uses: SHIRO_Anchor_ followed by its Wi-Fi MAC address without colons
@@ -99,7 +100,7 @@ function refusal(returnCode, message) {
  * @param {{warn?: Function, now?: Function}} [options]  warn receives one text line; now for tests
  */
 function createAccessControl(credentials, options = {}) {
-  const warn = options.warn || ((line) => console.warn(line));
+  const warn = options.warn || ((line) => logger.warn(line));
   const now = options.now || Date.now;
 
   const failures = new Map();     // address -> { count, since, lockedUntil }

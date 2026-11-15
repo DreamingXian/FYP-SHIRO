@@ -4,6 +4,7 @@
 // always tell a simulated alarm from a real one. Existing rows are not changed
 // (they keep the default 0).
 // =============================================================================
+const logger = require('../utils/logger');
 const { getPool } = require('./db');
 
 async function migrate() {
@@ -15,12 +16,12 @@ async function migrate() {
     ALTER TABLE emergency_incident_logs
     ADD COLUMN is_simulated TINYINT(1) NOT NULL DEFAULT 0 AFTER alert_message
   `);
-  console.log('[DB MIGRATION] Added is_simulated to emergency_incident_logs.');
+  logger.info('[DB MIGRATION] Added is_simulated to emergency_incident_logs.');
   return true;
 }
 
 module.exports = { migrate };
 
 if (require.main === module) {
-  migrate().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
+  migrate().then(() => process.exit(0)).catch(e => { logger.error(e); process.exit(1); });
 }

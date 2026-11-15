@@ -197,6 +197,9 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
    * Sample wards and patients are loaded only into a completely empty database. To load them by hand, run `npm run db:seed`.
    * If MySQL is not running, the server stops with `[FATAL STARTUP ERROR] Could not connect to MySQL ...` and exit code 1. Start MySQL in XAMPP and run `npm start` again.
    * If the MQTT anchor login is missing from `.env`, the server stops with `[FATAL STARTUP ERROR] MQTT_ANCHOR_USER and MQTT_ANCHOR_PASSWORD must be set ...` (Section 3.2 b).
+   * Log lines carry a time stamp and a level (`INFO`, `WARN`, `ERROR`). `LOG_LEVEL` in `.env` chooses how much is shown.
+
+   **Stopping the server:** press **Ctrl+C** once in its terminal. It disconnects the anchors and dashboards, writes the device status and InfluxDB points still in memory, closes the database and ends with `[SHUTDOWN] Done.` Closing the terminal window instead skips these steps; at most the last 5 seconds of "last seen" and battery values are then lost.
 
 3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`:
    * **Ward Configuration Editor:** Architectural room dimensioning, obstacle cutouts, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and 3D ray-cast anchor suggestion.
@@ -204,6 +207,7 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
    * **Device Provisioning Radar:** Zero-configuration spectrum discovery for Seeed Studio XIAO and ESP32 nodes with 1-click enrollment.
    * **Patient Admissions Directory:** Electronic health record (EHR) profiles, fall risk scores, bed allocation, and wristband tag binding.
    * **Live Telemetry & Diagnostics Lab:** Rolling 5 Hz PPG absorption waveform, heart rate, SpO2 %, and dual-channel RSSI Kalman filter comparison.
+   * **System Health:** live server state (uptime, memory, response delay, database queries per second) and the status of every enrolled anchor and headset, refreshed every 5 s.
 
 ---
 
@@ -460,6 +464,7 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | `rc=4: login refused` (or `rc=5`) in Anchor Serial Monitor; server prints `[MQTT SECURITY] Refused SHIRO_Anchor_…` | The anchor's MQTT login does not match `edge_server/.env`, or its address is locked out for 60 s after 10 failed logins. | Make `SHIRO_MQTT_USER` / `SHIRO_MQTT_PASSWORD` in `secrets.h` equal to `MQTT_ANCHOR_USER` / `MQTT_ANCHOR_PASSWORD` in `.env`, reflash, and wait one minute. |
 | `[FATAL STARTUP ERROR] MQTT_ANCHOR_USER and MQTT_ANCHOR_PASSWORD must be set` | The MQTT anchor login is missing from `edge_server/.env`, or the password is shorter than 16 characters. | Section 3.2 a and b. |
 | `Access denied for user 'shiro_app'` on `npm start` | Wrong `DB_PASSWORD`, or the account was not created. | Section 3.2 c. Check the password in `.env`; in phpMyAdmin, User accounts must list `shiro_app` with host `127.0.0.1`. |
+| `Access denied for user 'shiro_app'@'127.0.0.1' to database 'shiro_db'` (the login works, the database is refused), often right after MySQL was restarted | MySQL's grant table `mysql.db` is damaged, so the GRANTs of section 3.2 c were lost when MySQL reloaded them. | In phpMyAdmin's SQL tab: `CHECK TABLE mysql.db, mysql.proxies_priv;`. If either is not `OK`, run `REPAIR TABLE mysql.db, mysql.proxies_priv;`, then run the two `GRANT` lines of section 3.2 c again and `FLUSH PRIVILEGES;`. `SHOW GRANTS FOR 'shiro_app'@'127.0.0.1';` must list `shiro_db` and `shiro_test`. |
 | Live map toast: "1 Hz vitals stream not started: No anchor has heard wristband …" | No anchor has received the wristband for 3.5 s. | Check that the wristband is on and near an online anchor, then select the patient again. |
 | Edge server prints `[PROTOCOL] Wristband … sends a packet version this system does not support` | Wristband and anchors run different firmware versions. | Flash the wristband and all anchors from the same commit. |
 | Live map shows **SENSOR FAULT** | The wristband reports that its accelerometer or pulse sensor does not answer. | Check the sensor wiring (SDA `D4`, SCL `D5`, 3.3 V, GND) and restart the wristband. The Serial Monitor names the failed sensor. |
@@ -467,7 +472,10 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Live Lab simulation button answers "Simulation is disabled" | `ENABLE_SIMULATION=false` in `edge_server/.env`. | Set it to `true` and restart the server. Simulated incidents are always marked as simulated. |
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
-| Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | Fixed in v2.0: Single persistent connection per headset serial (`QUEST3-001`) with heartbeats. Ensure only one Unity instance is playing. |
+| Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | One persistent connection per headset, with heartbeats. Ensure only one Unity instance is playing. |
+| Headset appears on the Devices tab as a new, unenrolled device (`QUEST3-` followed by 6 characters) | Each headset now reports its own ID, derived from the device (the Unity editor on a PC gets another ID than the Quest itself). | Enrol it once on the Devices tab. An old `QUEST3-001` entry can be deleted. |
+| Hand slate shows "No ward configured" | No ward has been chosen on this headset yet; no ward is assumed. | Ward tab on the hand slate: choose the ward. The choice is remembered. |
+| Server console shows the same warning only now and then | Repeated warnings are limited to one per 10 to 30 s. | Set `LOG_LEVEL=debug` in `edge_server/.env` for full detail, including error stacks. |
 | Virtual room overlay appears underground or tilted | Calibration point snapped to virtual floor mesh instead of physical floor. | Fixed in v2.0: Depth raycasting now queries `EnvironmentRaycastManager` to detect true physical floor height before transforming coordinates. |
 | Bed vitals panel is mirrored / backwards | Canvas local rotation flipped $180^\circ$ relative to bed anchor. | Fixed in v2.0: `GetBedHeadboardRotation` now matches `wardOrigin.rotation * Quaternion.Euler(0, bed.rotation_deg, 0)`. The Canvas front face (local $-Z$) points outward down the mattress into the room. |
 | Laser pointer blocked by 3D room overlay | Raycast hit testing virtual wall/bed colliders before physical space. | Virtual room geometry colliders are bypassed during calibration mode; raycast queries physical depth sensor mesh directly. |

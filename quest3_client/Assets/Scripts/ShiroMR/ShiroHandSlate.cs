@@ -264,7 +264,7 @@ namespace ShiroMR
                     toggleRequested = true;
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleReopenInputs", swallowed); }
 
             // 2. Pure Hand Tracking: Left Hand Index Pinch Gesture
             try
@@ -283,7 +283,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleReopenInputs", swallowed); }
 
             // 3. Unity Editor Keyboard Shortcuts ('M', 'C', 'H')
 #if ENABLE_INPUT_SYSTEM
@@ -340,7 +340,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.UpdateSlateTransform", swallowed); }
 
             // 2. Controller Fallback
             if (!foundLeftWrist)
@@ -510,7 +510,7 @@ namespace ShiroMR
                         }
                     }
                 }
-                catch { }
+                catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.UpdateRightFingertipPosition", swallowed); }
             }
 
             // 3. Touch Controller Tip Fallback
@@ -682,7 +682,7 @@ namespace ShiroMR
             {
                 OVRInput.SetControllerVibration(0.5f, 0.25f, OVRInput.Controller.RTouch);
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.TriggerButtonClick", swallowed); }
 
             StartCoroutine(AnimateButtonPressRoutine(btn));
             btn.onClick.Invoke();
@@ -769,29 +769,37 @@ namespace ShiroMR
                 ? WardSpatialManager.Instance.GetCachedWardConfig()
                 : null;
 
-            string targetWardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "WARD-005";
-            string wardTitle = "Standard Ward 005";
+            string targetWardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
 
-            float roomW = 2.29f;
-            float roomL = 3.39f;
-            float roomH = 2.45f;
-            string doorWall = "EAST";
-            float doorPos = 2.57f;
-            float doorW = 0.79f;
-
-            if (ward != null)
+            // Without a loaded ward there is nothing to locate against: say so, invent nothing
+            if (ward == null || ward.length_x <= 0 || ward.width_y <= 0)
             {
-                wardTitle = !string.IsNullOrEmpty(ward.room_title) ? ward.room_title : wardTitle;
-                roomW = ward.length_x > 0 ? ward.length_x : roomW;
-                roomL = ward.width_y > 0 ? ward.width_y : roomL;
-                roomH = ward.height_z > 0 ? ward.height_z : roomH;
-                if (ward.door != null)
+                if (_ipsStatusBadge != null)
                 {
-                    doorWall = !string.IsNullOrEmpty(ward.door.wall) ? ward.door.wall.ToUpper() : doorWall;
-                    doorPos = ward.door.x;
-                    doorW = ward.door.width > 0 ? ward.door.width : doorW;
+                    _ipsStatusBadge.text = string.IsNullOrEmpty(targetWardId) ? "⚠ NO WARD CONFIGURED" : $"⚠ WARD {targetWardId} NOT LOADED";
+                    _ipsStatusBadge.color = new Color(0.95f, 0.70f, 0.1f);
                 }
+                if (_ipsResultSummary != null)
+                {
+                    _ipsResultSummary.text = string.IsNullOrEmpty(targetWardId)
+                        ? "Choose a ward on the Ward tab."
+                        : "Check the connection to the edge server (System tab), then try again.";
+                }
+                if (_ipsCoordinatesText != null) _ipsCoordinatesText.text = "Position: not available";
+                if (_ipsDistancesText != null) _ipsDistancesText.text = "";
+                if (_ipsNearestAnchorText != null) _ipsNearestAnchorText.text = "";
+                if (_ipsNearestBedText != null) _ipsNearestBedText.text = "";
+                if (_ipsConfidenceText != null) _ipsConfidenceText.text = "";
+                return;
             }
+
+            string wardTitle = !string.IsNullOrEmpty(ward.room_title) ? ward.room_title : ward.ward_id;
+            float roomW = ward.length_x;
+            float roomL = ward.width_y;
+            bool hasDoor = ward.door != null && ward.door.width > 0 && !string.IsNullOrEmpty(ward.door.wall);
+            string doorWall = hasDoor ? ward.door.wall.ToUpper() : "";
+            float doorPos = hasDoor ? ward.door.x : 0f;
+            float doorW = hasDoor ? ward.door.width : 0f;
 
             Vector3 headWorld = _mainCam != null ? _mainCam.transform.position : Vector3.zero;
             Vector3 wardLocal = headWorld;
@@ -810,13 +818,17 @@ namespace ShiroMR
             float distWest = Mathf.Abs(wardLocal.x);
             float distEast = Mathf.Abs(roomW - wardLocal.x);
 
-            Vector3 doorCenter = (doorWall == "EAST")
-                ? new Vector3(roomW, 0, doorPos + doorW / 2.0f)
-                : new Vector3(doorPos + doorW / 2.0f, 0, 0);
-            float distToDoor = Vector3.Distance(new Vector3(wardLocal.x, 0, wardLocal.z), doorCenter);
+            float distToDoor = -1f; // -1 = the ward has no door configured
+            if (hasDoor)
+            {
+                Vector3 doorCenter = (doorWall == "EAST")
+                    ? new Vector3(roomW, 0, doorPos + doorW / 2.0f)
+                    : new Vector3(doorPos + doorW / 2.0f, 0, 0);
+                distToDoor = Vector3.Distance(new Vector3(wardLocal.x, 0, wardLocal.z), doorCenter);
+            }
 
-            string nearestAnchorInfo = "Anchor B [East Wall] (1.12m | RSSI -48 dBm)";
-            if (ward != null && ward.anchors != null && ward.anchors.Count > 0)
+            string nearestAnchorInfo = "No anchors configured in this ward";
+            if (ward.anchors != null && ward.anchors.Count > 0)
             {
                 WardAnchor nearest = null;
                 float minD = float.MaxValue;
@@ -832,8 +844,9 @@ namespace ShiroMR
                 }
                 if (nearest != null)
                 {
+                    // Distance from the headset position; the signal value is an estimate from the radio model, not a measurement
                     int estRssi = Mathf.RoundToInt(-45f - 10f * 3.2f * Mathf.Log10(Mathf.Max(0.5f, minD)));
-                    nearestAnchorInfo = $"{nearest.anchor_id} [{nearest.wall_location}] ({minD:F2}m | RSSI {estRssi} dBm)";
+                    nearestAnchorInfo = $"{nearest.anchor_id} [{nearest.wall_location}] ({minD:F2}m | est. {estRssi} dBm)";
                 }
             }
 
@@ -855,7 +868,9 @@ namespace ShiroMR
             {
                 _ipsResultSummary.text = isInsideWard
                     ? $"Doctor is inside {wardTitle} ({targetWardId}).\nDigital twin coordinates locked to physical ward geometry."
-                    : $"Doctor is in hallway outside {wardTitle}.\nDistance to entrance door: {distToDoor:F2}m.";
+                    : (distToDoor >= 0f
+                        ? $"Doctor is in hallway outside {wardTitle}.\nDistance to entrance door: {distToDoor:F2}m."
+                        : $"Doctor is outside {wardTitle}.\nNo door is configured for this ward.");
             }
 
             if (_ipsCoordinatesText != null)
@@ -875,15 +890,27 @@ namespace ShiroMR
 
             if (_ipsNearestBedText != null)
             {
-                float bedDist = Vector3.Distance(wardLocal, new Vector3(1.19f + 0.55f, 0, 1.0f));
-                _ipsNearestBedText.text = $"Bed 1 ({bedDist:F2}m away) - Status: OCCUPIED";
+                // Nearest bed of the loaded ward, measured to the bed centre on the floor
+                WardBed nearestBed = null;
+                float bedDist = float.MaxValue;
+                if (ward.beds != null)
+                {
+                    foreach (var b in ward.beds)
+                    {
+                        Vector3 centre = new Vector3(b.x + b.width / 2f, 0f, b.y + b.length / 2f);
+                        float d = Vector3.Distance(new Vector3(wardLocal.x, 0f, wardLocal.z), centre);
+                        if (d < bedDist) { bedDist = d; nearestBed = b; }
+                    }
+                }
+                _ipsNearestBedText.text = nearestBed != null
+                    ? $"{(string.IsNullOrEmpty(nearestBed.bed_code) ? nearestBed.bed_id : nearestBed.bed_code)} ({bedDist:F2}m away) - Status: {(string.IsNullOrEmpty(nearestBed.status) ? "unknown" : nearestBed.status)}"
+                    : "No beds configured in this ward";
             }
 
             if (_ipsConfidenceText != null)
             {
-                _ipsConfidenceText.text = isInsideWard
-                    ? "Confidence: 99.4% (Fused Vision SLAM + 3-Node BLE Mesh)"
-                    : "Confidence: 98.7% (Hallway Transit Detected)";
+                // No confidence figure is computed, so none is shown
+                _ipsConfidenceText.text = "Source: headset tracking against the calibrated ward outline";
             }
 
             if (!silent)
@@ -893,7 +920,7 @@ namespace ShiroMR
                 {
                     OVRInput.SetControllerVibration(0.4f, 0.3f, OVRInput.Controller.RTouch);
                 }
-                catch { }
+                catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.ExecuteIpsLocationFind", swallowed); }
             }
         }
 
@@ -1005,19 +1032,17 @@ namespace ShiroMR
             }
             _wardButtons.Clear();
 
-            string currentWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "WARD-005";
+            string currentWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
             List<string> wardIds = new List<string>();
 
-            if (ShiroNetworkManager.Instance != null && ShiroNetworkManager.Instance.AvailableWards.Count > 0)
+            // Only wards the server reports. Before the list has arrived, no buttons
+            // are shown (the Ward tab text says why), rather than guessed ward IDs.
+            if (ShiroNetworkManager.Instance != null)
             {
                 foreach (var w in ShiroNetworkManager.Instance.AvailableWards)
                 {
                     if (!string.IsNullOrEmpty(w.ward_id)) wardIds.Add(w.ward_id);
                 }
-            }
-            else
-            {
-                wardIds.AddRange(new string[] { "WARD-001", "WARD-002", "WARD-003", "WARD-004", "WARD-005" });
             }
 
             float colWidth = 215f;
@@ -1288,7 +1313,7 @@ namespace ShiroMR
             p.transform.localPosition = new Vector3(0, -30f, 0);
             _tabPanels[0] = p;
 
-            _wardInfoText = CreateText(p.transform, "WardInfo", "Ward: Standard Ward 005 (WARD-005)\nSize: 2.29m × 3.39m × 2.45m", 26, FontStyle.Normal, TextAnchor.UpperLeft, Color.white);
+            _wardInfoText = CreateText(p.transform, "WardInfo", "Ward: not configured\nChoose a ward below (list loads from the edge server)", 26, FontStyle.Normal, TextAnchor.UpperLeft, Color.white);
             _wardInfoText.rectTransform.anchoredPosition = new Vector2(-240f, 185f);
             _wardInfoText.rectTransform.sizeDelta = new Vector2(560f, 70f);
 
@@ -1521,13 +1546,16 @@ namespace ShiroMR
             _sysServerStatus.rectTransform.sizeDelta = new Vector2(1000f, 45f);
 
             // Headset Battery (Centered, Width 1000)
-            _sysBatteryStatus = CreateText(p.transform, "HeadsetBat", $"Meta Quest 3 Battery: {Mathf.RoundToInt(SystemInfo.batteryLevel >= 0 ? SystemInfo.batteryLevel * 100 : 92)} %", 24, FontStyle.Normal, TextAnchor.MiddleLeft, Color.white);
+            _sysBatteryStatus = CreateText(p.transform, "HeadsetBat", SystemInfo.batteryLevel >= 0 ? $"Meta Quest 3 Battery: {Mathf.RoundToInt(SystemInfo.batteryLevel * 100)} %" : "Meta Quest 3 Battery: not reported", 24, FontStyle.Normal, TextAnchor.MiddleLeft, Color.white);
             _sysBatteryStatus.rectTransform.anchoredPosition = new Vector2(0f, 55f);
             _sysBatteryStatus.rectTransform.sizeDelta = new Vector2(1000f, 45f);
 
             // Spatial Anchor UUID (Centered, Width 1000)
-            string curWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "WARD-005";
-            _sysAnchorUuid = CreateText(p.transform, "AnchorUuid", $"Active Ward: {curWard}  |  Spatial Anchor: ANCHOR-{curWard}-SAVED", 24, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.80f, 0.85f, 0.95f));
+            string curWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+            string headsetId = ShiroNetworkManager.Instance != null && ShiroNetworkManager.Instance.Identity != null ? ShiroNetworkManager.Instance.Identity.DeviceId : "unknown";
+            _sysAnchorUuid = CreateText(p.transform, "AnchorUuid", string.IsNullOrEmpty(curWard)
+                ? $"Headset: {headsetId}  |  Active Ward: not configured"
+                : $"Headset: {headsetId}  |  Active Ward: {curWard}", 24, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.80f, 0.85f, 0.95f));
             _sysAnchorUuid.rectTransform.anchoredPosition = new Vector2(0f, -5f);
             _sysAnchorUuid.rectTransform.sizeDelta = new Vector2(1000f, 45f);
 

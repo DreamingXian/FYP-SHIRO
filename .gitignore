@@ -86,6 +86,7 @@ quest3_client/*.svd
 quest3_client/*.pdb
 quest3_client/*.opendb
 quest3_client/*.VC.db
+quest3_client/.vsconfig
 quest3_client/Assets/_Recovery/
 
 # Meta XR Immersive Debugger dev-agent settings (contains a generated access token)

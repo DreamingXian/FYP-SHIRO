@@ -112,6 +112,7 @@ Unified packets are published directly over Wi-Fi to the central Edge Server's e
   * **Live Lab & Diagnostics:** Real-time 5 Hz PPG absorption waveform, dual-channel RSSI Kalman filter comparison, and raw MQTT packet inspector.
 * **Clinical Emergency Audit Logging:** Dedicated MySQL emergency log schema (`init_emergency_logs.sql`), alert service, and InfluxDB time-series integration for clinical incidents.
 * **Only the Project's Devices Are Accepted:** The MQTT broker requires the anchor login and an anchor client ID, limits each anchor to its own topics and locks out an address after 10 failed logins. MySQL and InfluxDB listen on the server PC only, the server uses a limited MySQL account, and the firewall opens only the dashboard and MQTT ports on private networks. What is protected, and the known limits (no TLS, unauthenticated BLE, shared anchor login), are in [docs/security.md](docs/security.md).
+* **Stable Under Continuous Telemetry:** Device presence is kept in memory and written in one batch every 5 s; status changes are written at once. In a 5-minute load test (3 anchors × 2 wristbands at 7 Hz) database queries fell from about 150 to 2.6 per second and memory stayed at about 95 MB instead of growing to 200 MB ([docs/test_records/load-test.md](docs/test_records/load-test.md)). Ctrl+C shuts the server down cleanly without losing buffered data; log lines carry a time stamp and a level (`LOG_LEVEL`); the System Health tab shows live server and device state.
 * **One Anchor per 1 Hz Command:** The server sends the 1 Hz vitals command through the anchor that hears the wristband most strongly, so two anchors never compete for the same BLE connection.
 
 ### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
@@ -180,7 +181,8 @@ Run from `edge_server/`:
 | Command | What it runs | Needs |
 | :--- | :--- | :--- |
 | `npm test` | Unit tests (filters, positioning maths, incident IDs, binding cache, alarm thresholds, fall de-duplication, telemetry validation, firmware/server contract, input validation, request limits, photo upload, WebSocket and MQTT message checks, MQTT login and topic rules, choice of the anchor for the 1 Hz command, and a check that every value the dashboard places into HTML is escaped) | Nothing. They cannot reach a database: `test/unit/no_database.js` points them at a closed port |
-| `npm run test:integration` | Database start-up, restart safety, bindings, incident log, alarm path, the full MQTT-to-dashboard pipeline, refused requests, commands and messages, and MQTT access (no login, wrong login, forbidden topics, lockout), with a real server on spare ports | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
+| `npm run test:integration` | Database start-up, restart safety, bindings, incident log, alarm path, the full MQTT-to-dashboard pipeline, refused requests, commands and messages, MQTT access (no login, wrong login, forbidden topics, lockout), batched device presence, OFFLINE detection and clean shutdown, with a real server on spare ports | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
+| `node tools/load_test.js --duration 300` | Load test: replays anchors (default 3 anchors × 2 wristbands at 7 Hz) against a running server and reports messages per second, database queries per second, memory, event-loop delay and API answer times. Results of 15 Nov 2026: [docs/test_records/load-test.md](docs/test_records/load-test.md) | A server started against `shiro_test`, never the database with real patients |
 
 Firmware logic (fall state machine, telemetry packet, heart-rate and SpO2 estimation against recorded pulse signals) is tested on the PC, without a board:
 
@@ -213,13 +215,13 @@ Code/
 │   ├── package.json                # Server dependencies & scripts
 │   ├── .env.example                # Template for git-ignored .env (ports, MQTT anchor login, MySQL, InfluxDB token)
 │   ├── test/                       # Automated tests (`npm test`)
-│   ├── tools/                      # start_influxdb.bat (InfluxDB on this PC only)
+│   ├── tools/                      # start_influxdb.bat (InfluxDB on this PC only), load_test.js
 │   ├── config/                     # Application, network, and calibration configs
 │   ├── database/                   # Connection pool, schema/ (tables), seed/ (sample data), migrations
 │   ├── controllers/                # Express controllers (Wards, Patients, Devices)
 │   ├── services/                   # MQTT (with mqtt_access.js: login and topic rules), WebSocket, IPS EKF, and Alert services
 │   ├── routes/                     # Express REST API routes
-│   ├── utils/                      # Request helpers (size limit, JSON, errors) and input validation
+│   ├── utils/                      # Request helpers (size limit, JSON, errors), input validation, logger (LOG_LEVEL)
 │   └── public/                     # Single Page Application frontend (HTML/CSS/JS)
 │       ├── index.html              # Main dashboard application shell
 │       ├── css/                    # Modular stylesheet components & theme

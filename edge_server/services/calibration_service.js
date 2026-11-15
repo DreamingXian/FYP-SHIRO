@@ -1,6 +1,7 @@
 // =============================================================================
 // SHIRO Hospital Edge Server - Empirical Anchor Calibration Service
 // =============================================================================
+const logger = require('../utils/logger');
 const { getPool } = require('../database/db');
 const { getCalibration, setAnchorCalibration } = require('./kalman_filter');
 const { broadcastToClients } = require('./websocket_service');
@@ -81,7 +82,7 @@ async function startSession({ ward_id, tag_id, target_x, target_y, target_z = 0.
     }
   }
 
-  console.log(`[CALIBRATION] Started session ${activeSession.sessionId} for Ward ${wardId}, Tag ${cleanTag} at (${target_x}, ${target_y}, ${target_z}) for ${durationMs / 1000}s`);
+  logger.info(`[CALIBRATION] Started session ${activeSession.sessionId} for Ward ${wardId}, Tag ${cleanTag} at (${target_x}, ${target_y}, ${target_z}) for ${durationMs / 1000}s`);
 
   // Broadcast session started
   broadcastToClients({

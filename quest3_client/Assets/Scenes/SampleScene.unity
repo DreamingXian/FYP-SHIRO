@@ -489,7 +489,7 @@ MonoBehaviour:
   wardVisualizer: {fileID: 0}
   serverIp: 192.168.1.229
   serverPort: 3000
-  targetWardId: WARD-005
+  targetWardId:
   patientHologramPrefab: {fileID: 0}
 --- !u!4 &806196342
 Transform:

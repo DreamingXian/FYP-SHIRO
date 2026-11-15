@@ -28,6 +28,8 @@
     let cachedRegisteredAnchors = [];
     let isWardWsRegistered = false;
     let anchorStatusPollTimer = null;
+    const ANCHOR_CACHE_MISS_REFETCH_MS = 5000;
+    let lastAnchorCacheMissFetch = 0;
 
     function findAnchorInCache(idOrMac) {
       if (!idOrMac) return null;
@@ -118,7 +120,13 @@
       const targetId = dev ? dev.device_id : idOrMac;
 
       if (!dev) {
-        // If not found in cache, fetch fresh list then sync
+        // Not in the cache: fetch a fresh list, at most once per 5 s. Anchor
+        // signal messages arrive several times a second, and an anchor that is
+        // not enrolled (or a list that failed to load) must not turn each of
+        // them into a request.
+        const t = Date.now();
+        if (t - lastAnchorCacheMissFetch < ANCHOR_CACHE_MISS_REFETCH_MS) return;
+        lastAnchorCacheMissFetch = t;
         fetchRegisteredAnchors().then(() => {
           dev = findAnchorInCache(idOrMac);
           if (dev) dev.status = cleanStatus;
@@ -198,7 +206,10 @@
               });
             }
           }
-        } catch (_) {}
+        } catch (err) {
+          // Polled every 3 s: the next poll retries. Shown in the browser console only.
+          console.warn('[WARD] Could not refresh the anchor list:', err.message);
+        }
       }, 3000);
     }
 
@@ -664,7 +675,9 @@
         if (tData.success) {
           availableTemplates = tData.templates;
         }
-      } catch (err) {}
+      } catch (err) {
+        console.warn('[WARD] Could not load the ward templates; the template list stays empty:', err.message);
+      }
 
       // Preload WARD-001 for editor ready state
       try {

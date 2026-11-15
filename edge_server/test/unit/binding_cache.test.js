@@ -69,4 +69,41 @@ describe('binding cache', () => {
     await assert.rejects(cache.refresh(), /db down/);
     assert.equal(cache.getPatientIdForDevice('TAG-001'), 'P-001');
   });
+
+  test('an unreachable database is retried every 5 s, not on every lookup', async () => {
+    let time = 1000;
+    let loads = 0;
+    let fail = false;
+    const cache = createBindingCache({
+      load: async () => { loads++; if (fail) throw new Error('db down'); return [{ device_id: 'TAG-001', patient_id: 'P-001' }]; },
+      now: () => time,
+      maxAgeMs: 15000,
+      retryAfterFailureMs: 5000
+    });
+    await cache.refresh();
+    assert.equal(loads, 1);
+
+    fail = true;
+    time += 20000; // stale: the first lookup starts a reload, which fails
+    cache.getPatientIdForDevice('TAG-001');
+    await new Promise(setImmediate);
+    assert.equal(loads, 2);
+
+    for (let i = 0; i < 20; i++) { // many packets within the next second
+      time += 50;
+      assert.equal(cache.getPatientIdForDevice('TAG-001'), 'P-001');
+    }
+    await new Promise(setImmediate);
+    assert.equal(loads, 2, 'no new attempt within 5 s of the failure');
+
+    fail = false;
+    time += 5000; // retry window over
+    cache.getPatientIdForDevice('TAG-001');
+    await new Promise(setImmediate);
+    assert.equal(loads, 3);
+    time += 50; // fresh again: no further reloads
+    cache.getPatientIdForDevice('TAG-001');
+    await new Promise(setImmediate);
+    assert.equal(loads, 3);
+  });
 });

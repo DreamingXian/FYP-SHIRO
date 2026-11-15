@@ -1,6 +1,7 @@
 // =============================================================================
 // WebSocket Real-Time Bridge Service
 // =============================================================================
+const logger = require('../utils/logger');
 const { WebSocketServer } = require('ws');
 const { getCalibration, updateCalibration, setAnchorCalibration } = require('./kalman_filter');
 const { HttpError, isCrossSiteRequest } = require('../utils/http');
@@ -68,11 +69,11 @@ function validateCommand(cmd) {
 function handleCalibration(cmd) {
   if (cmd.anchorId) {
     const updated = setAnchorCalibration(cmd.anchorId, cmd.A ?? undefined, cmd.n ?? undefined);
-    console.log(`[ANCHOR CALIBRATION UPDATED] ${cmd.anchorId} -> A: ${updated.A} dBm | n: ${updated.n}`);
+    logger.info(`[ANCHOR CALIBRATION UPDATED] ${cmd.anchorId} -> A: ${updated.A} dBm | n: ${updated.n}`);
     broadcastToClients({ type: 'ANCHOR_CALIBRATION_SYNC', anchor_id: cmd.anchorId, calibration: updated });
   } else {
     const updated = updateCalibration(cmd.A ?? undefined, cmd.n ?? undefined);
-    console.log(`[CALIBRATION UPDATED] A: ${updated.A} dBm | n: ${updated.n}`);
+    logger.info(`[CALIBRATION UPDATED] A: ${updated.A} dBm | n: ${updated.n}`);
     broadcastToClients({ type: 'CALIBRATION_SYNC', calibration: updated });
   }
 }
@@ -125,7 +126,7 @@ async function handleActiveMode(cmd) {
   const deviceService = require('./device_service');
   const enrolledAnchor = deviceService.findEnrolledDeviceByMac(best.anchorMac);
   const viaAnchor = enrolledAnchor ? enrolledAnchor.device_id : best.anchorMac;
-  console.log(`[ACTIVE MODE TRIGGER] 1 Hz monitoring for ${tagId} (${targetMac}, ${duration}s) sent through anchor ${viaAnchor} (${best.rssi} dBm, heard by ${best.heardBy} anchor(s))`);
+  logger.info(`[ACTIVE MODE TRIGGER] 1 Hz monitoring for ${tagId} (${targetMac}, ${duration}s) sent through anchor ${viaAnchor} (${best.rssi} dBm, heard by ${best.heardBy} anchor(s))`);
 
   broadcastToClients({
     type: 'ACTIVE_MODE_ENGAGED',
@@ -158,7 +159,7 @@ async function handleDevicePresence(cmd, ws, req) {
         ip_address: clientIp,
         rssi: null
       });
-      console.log(`[RADAR] Unprovisioned Headset ${cmd.deviceId} [${cmd.mac}] broadcasting in Live Discovery Radar`);
+      logger.info(`[RADAR] Unprovisioned Headset ${cmd.deviceId} [${cmd.mac}] broadcasting in Live Discovery Radar`);
     } else {
       // Enrolled: keep its session online
       const enrolledId = rows[0].device_id;
@@ -170,7 +171,7 @@ async function handleDevicePresence(cmd, ws, req) {
       });
     }
   } catch (dErr) {
-    console.warn('[DEVICE HANDSHAKE ERROR]', dErr.message);
+    logger.warn('[DEVICE HANDSHAKE ERROR]', dErr.message);
   }
 }
 
@@ -192,7 +193,7 @@ function initWebSocketServer(httpServer) {
   });
 
   wss.on('connection', (ws, req) => {
-    console.log('[WEBSOCKET] Web Dashboard / HMD connected.');
+    logger.info('[WEBSOCKET] Web Dashboard / HMD connected.');
     ws.send(JSON.stringify({
       type: 'STATUS',
       message: 'Connected to SHIRO Edge Server',
@@ -216,10 +217,10 @@ function initWebSocketServer(httpServer) {
         else await handleDevicePresence(cmd, ws, req);
       } catch (err) {
         if (err instanceof HttpError) {
-          console.warn(`[WEBSOCKET] Command refused (${typeof action === 'string' ? action.slice(0, 40) : 'no action'}): ${err.message}`);
+          logger.warn(`[WEBSOCKET] Command refused (${typeof action === 'string' ? action.slice(0, 40) : 'no action'}): ${err.message}`);
           sendCommandError(ws, action, err.message);
         } else {
-          console.error('[WEBSOCKET] Command failed:', err);
+          logger.error('[WEBSOCKET] Command failed:', err);
           sendCommandError(ws, action, 'The command could not be carried out.');
         }
       }
@@ -230,15 +231,15 @@ function initWebSocketServer(httpServer) {
         try {
           const deviceService = require('./device_service');
           await deviceService.handleDeviceDisconnect(ws.associatedDeviceId);
-          console.log(`[WEBSOCKET] Headset disconnected: ${ws.associatedDeviceId} set to OFFLINE`);
+          logger.info(`[WEBSOCKET] Headset disconnected: ${ws.associatedDeviceId} set to OFFLINE`);
         } catch (err) {
-          console.warn('[WEBSOCKET] Could not mark the headset offline:', err.message);
+          logger.warn('[WEBSOCKET] Could not mark the headset offline:', err.message);
         }
       }
     });
 
     ws.on('error', (err) => {
-      console.warn('[WEBSOCKET ERROR]', err.message);
+      logger.warn('[WEBSOCKET ERROR]', err.message);
     });
   });
 
@@ -262,8 +263,25 @@ function getConnectedClientsCount() {
   return count;
 }
 
+/** Shutdown: tells every dashboard and headset that the server is going away. */
+function closeWebSocketServer() {
+  if (!wss) return Promise.resolve();
+  const server = wss;
+  wss = null;
+  for (const client of server.clients) {
+    try {
+      client.close(1001, 'Server shutting down');
+    } catch (err) {
+      logger.debug('[WEBSOCKET] Close failed, connection ended instead:', err.message);
+      client.terminate();
+    }
+  }
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
 module.exports = {
   initWebSocketServer,
+  closeWebSocketServer,
   broadcastToClients,
   getConnectedClientsCount,
   validateCommand,

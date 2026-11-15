@@ -4,6 +4,7 @@
 // parsing JSON, and deciding what an error may tell the client.
 // =============================================================================
 
+const logger = require('./logger');
 /** An error whose message is written for the client and is safe to send. */
 class HttpError extends Error {
   constructor(status, message) {
@@ -22,6 +23,7 @@ const PHOTO_BODY_LIMIT = 4608 * 1024;     // photo upload: a 3 MB image as base6
 const DRAIN_FACTOR = 8;
 
 const GENERIC_SERVER_ERROR = 'Internal server error. The details are in the server log.';
+const HTTP_ERROR_LOG_INTERVAL_MS = 30000;
 
 function sendJson(res, status, data) {
   if (res.headersSent) return;
@@ -52,7 +54,12 @@ function isRuleError(err) {
 function sendFailure(res, err, context) {
   if (err instanceof HttpError) return sendError(res, err.status, err.message);
   if (isRuleError(err)) return sendError(res, 400, err.message);
-  console.error(`[HTTP ERROR] ${context}:`, err);
+  // The same failure in the same handler is logged at most once per 30 s, so an
+  // unreachable database does not print one line per dashboard request.
+  const reason = (err && (err.code || err.message)) || String(err);
+  if (logger.every(`http-error|${context}|${reason}`, HTTP_ERROR_LOG_INTERVAL_MS)) {
+    logger.error(`[HTTP ERROR] ${context}:`, err);
+  }
   sendError(res, 500, GENERIC_SERVER_ERROR);
 }
 

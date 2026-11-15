@@ -152,6 +152,7 @@ const SAFE_EXPRESSIONS = [
   /^(a|activePat)\.(clearBeds|totalBeds|compositeScore|areaRatio|grid3Pct|jointBedClear|jointBedPct)$/, // geometry results
   /^(textColor|barColor|batColor|deltaColor|dotColor|strokeColor|normalBgColor|badgeClass|icon|typePill|typeBadge|statusBadge|availBadge|riskBadge|powerDisplay|avatarHtml|photoImg|bedInfo|secondaryActionBtn|liveMapBtn|nodeDisplay|boundText|losText|statusBadgeHtml|optionsHtml|wardOptions|bedsList|anchorsList|obstaclesList|patternOptionsHtml|anchorCardsHtml|hrSvg|spo2Svg|gridLines|inUseDetail|inUseNote|genderLabel|isBest|pathD|startTimeStr|endTimeStr|timeStr|rotLabel|uuidShort|hVal|xVal|yVal|zVal|wVal|lVal|avgHR|minHR|maxHR|avgSpO2|minSpO2|maxSpO2|unit)$/,
   /^getRadar(Signal|Battery)Html\(d\)$/,
+  /^statusBadge\(d\.status\)$/, // health_monitor.js: fixed class name, escaped text
   /^isBound \|\| isAssignedWard \? `<option value="IN_USE" selected>In Use \(Currently Deployed\)<\/option>` : ''$/,
   /^r\.median_rssi !== null \? `<span class="mono">\$\{escapeHtml\(r\.median_rssi\)\}/
 ];

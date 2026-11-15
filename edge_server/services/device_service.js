@@ -3,34 +3,146 @@
 // Manages Hardware Devices (Wristbands, Anchors, Edge Nodes, Headsets) & Discovery
 // =============================================================================
 
+const logger = require('../utils/logger');
 const { getPool } = require('../database/db');
 const { broadcastToClients } = require('./websocket_service');
 
 // In-memory buffer for unprovisioned devices heard over MQTT / BLE in the last 10 minutes
 const discoveredDevices = new Map();
 
-// In-memory lookup cache for enrolled devices keyed by physical MAC address
+// In-memory lookup cache for enrolled devices, keyed by MAC address (with and
+// without separators) and by device ID. It is the only lookup on the telemetry
+// path: no database query per MQTT message.
 const enrolledDevicesByMac = new Map();
+
+function cacheEnrolledDevice(r) {
+  if (r.mac_address) {
+    const clean = r.mac_address.toUpperCase().trim();
+    enrolledDevicesByMac.set(clean, r);
+    enrolledDevicesByMac.set(clean.replace(/[:-]/g, ''), r);
+  }
+  if (r.device_id) {
+    enrolledDevicesByMac.set(r.device_id.toUpperCase().trim(), r);
+  }
+}
 
 /**
  * Synchronizes the in-memory enrolled device cache from MySQL.
+ * Throws when the database cannot be read, so start-up fails visibly.
  */
 async function syncEnrolledDevicesCache() {
-  try {
+  const pool = getPool();
+  const [rows] = await pool.query('SELECT device_id, mac_address, device_type, status, availability_status FROM devices');
+  enrolledDevicesByMac.clear();
+  for (const r of rows) cacheEnrolledDevice(r);
+}
+
+// -----------------------------------------------------------------------------
+// Presence writes. Every MQTT message used to read and update the devices table
+// (about 80 queries per second with 3 anchors). Now:
+//  - a status change (ONLINE, CHARGING, OFFLINE) is written at once;
+//  - last seen, IP address and battery are kept here and written together every
+//    PRESENCE_FLUSH_MS. The OFFLINE timeout (OFFLINE_AFTER_MS) is longer than
+//    that, so a device that keeps sending is never marked offline.
+// -----------------------------------------------------------------------------
+const PRESENCE_FLUSH_MS = 5000;
+const OFFLINE_AFTER_MS = 12000;
+const pendingPresence = new Map(); // device_id -> { lastSeenMs, ip, battery }
+const lastSeenMs = new Map();      // device_id -> time of the last message, in memory
+let presenceTimer = null;
+let presenceFlush = null;          // the flush in progress, if any
+
+const queryCounter = { statusWrites: 0, presenceWrites: 0, presenceFlushes: 0 };
+
+function addPresence(deviceId, now, ip, battery) {
+  const entry = pendingPresence.get(deviceId) || { lastSeenMs: 0, ip: null, battery: null };
+  entry.lastSeenMs = Math.max(entry.lastSeenMs, now);
+  if (ip) entry.ip = ip;
+  if (battery !== undefined && battery !== null) entry.battery = battery;
+  pendingPresence.set(deviceId, entry);
+}
+
+/**
+ * Writes the presence data collected since the last flush: one UPDATE per
+ * device that sent something. On a database error the data is kept for the
+ * next flush (newer values win).
+ */
+function flushPresence() {
+  if (presenceFlush) return presenceFlush;
+  if (pendingPresence.size === 0) return Promise.resolve(0);
+
+  const batch = new Map(pendingPresence);
+  pendingPresence.clear();
+  presenceFlush = (async () => {
     const pool = getPool();
-    const [rows] = await pool.query('SELECT device_id, mac_address, device_type, status, availability_status FROM devices');
-    enrolledDevicesByMac.clear();
-    for (const r of rows) {
-      if (r.mac_address) {
-        const clean = r.mac_address.toUpperCase().trim();
-        enrolledDevicesByMac.set(clean, r);
-        enrolledDevicesByMac.set(clean.replace(/[:-]/g, ''), r);
-      }
-      if (r.device_id) {
-        enrolledDevicesByMac.set(r.device_id.toUpperCase().trim(), r);
+    let written = 0;
+    for (const [deviceId, entry] of batch) {
+      try {
+        await pool.query(
+          `UPDATE devices SET last_seen = FROM_UNIXTIME(?),
+             ip_address = COALESCE(?, ip_address),
+             battery_level = COALESCE(?, battery_level)
+           WHERE device_id = ?`,
+          [entry.lastSeenMs / 1000, entry.ip, entry.battery, deviceId]
+        );
+        written++;
+        queryCounter.presenceWrites++;
+      } catch (err) {
+        // Keep it for the next flush unless newer data has arrived meanwhile
+        const newer = pendingPresence.get(deviceId);
+        if (!newer) pendingPresence.set(deviceId, entry);
+        if (logger.every('presence-flush-error', 30000)) {
+          logger.error(`[DEVICE SERVICE] Could not write device presence (${err.code || err.message}). Kept in memory and retried every ${PRESENCE_FLUSH_MS / 1000} s.`);
+        }
       }
     }
-  } catch (_) { }
+    queryCounter.presenceFlushes++;
+    return written;
+  })().finally(() => { presenceFlush = null; });
+  return presenceFlush;
+}
+
+function startPresenceWriter(intervalMs = PRESENCE_FLUSH_MS) {
+  if (presenceTimer) return presenceTimer;
+  presenceTimer = setInterval(() => { flushPresence(); }, intervalMs);
+  return presenceTimer;
+}
+
+/** Shutdown: stops the timer and writes what is still waiting. */
+async function stopPresenceWriter() {
+  if (presenceTimer) {
+    clearInterval(presenceTimer);
+    presenceTimer = null;
+  }
+  if (presenceFlush) await presenceFlush;
+  return flushPresence();
+}
+
+function getPresenceStats() {
+  return { ...queryCounter, pending: pendingPresence.size };
+}
+
+/** Writes a status change at once. The cache holds the status last written. */
+async function writeStatusChange(dev, status, now, ip, battery) {
+  const previous = dev.status;
+  dev.status = status; // set first, so the next messages do not write the same change again
+  pendingPresence.delete(dev.device_id);
+  try {
+    await getPool().query(
+      `UPDATE devices SET status = ?, last_seen = FROM_UNIXTIME(?),
+         ip_address = COALESCE(?, ip_address),
+         battery_level = COALESCE(?, battery_level)
+       WHERE device_id = ?`,
+      [status, now / 1000, ip || null, battery === undefined ? null : battery, dev.device_id]
+    );
+    queryCounter.statusWrites++;
+    if (previous !== status) logger.info(`[DEVICE] ${dev.device_id} ${previous || 'UNKNOWN'} -> ${status}`);
+  } catch (err) {
+    dev.status = previous; // not written: the next message tries again
+    if (logger.every('status-write-error', 30000)) {
+      logger.error(`[DEVICE SERVICE] Could not write the status of ${dev.device_id} (${err.code || err.message}).`);
+    }
+  }
 }
 
 /**
@@ -238,7 +350,7 @@ async function enrollDevice(data) {
   ]);
 
   removeDiscoveredDevice(cleanMac);
-  enrolledDevicesByMac.set(cleanMac, {
+  cacheEnrolledDevice({
     device_id: assignedId,
     mac_address: cleanMac,
     device_type: data.device_type,
@@ -302,14 +414,19 @@ async function deleteDevice(deviceId) {
   try {
     await require('./binding_cache').refresh();
   } catch (err) {
-    console.warn('[DEVICE SERVICE] Binding cache refresh failed:', err.message);
+    logger.warn('[DEVICE SERVICE] Binding cache refresh failed:', err.message);
   }
+
+  pendingPresence.delete(deviceId);
+  lastSeenMs.delete(deviceId);
 
   // Automatically purge deleted device from real-time IPS localization memory
   try {
     const ipsService = require('./ips_service');
     ipsService.purgeTag(deviceId, mac);
-  } catch (_) { }
+  } catch (err) {
+    logger.warn(`[DEVICE SERVICE] ${deviceId} was deleted, but could not be removed from the live map:`, err);
+  }
 
   return {
     success: true,
@@ -369,44 +486,19 @@ async function getNextDeviceId(deviceType) {
 async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata = {}) {
   const pool = getPool();
   try {
-    // 1. Search if device exists in MySQL by physical MAC address (definitive hardware identity)
-    let rows = [];
-    const searchMac = metadata.mac ? metadata.mac.toUpperCase().trim() : null;
+    // 1. Enrolled device? Looked up in the cache, by MAC address (the hardware
+    //    identity) or else by device ID. No database query per message.
+    const dev = metadata.mac ? findEnrolledDeviceByMac(metadata.mac) : findEnrolledDeviceByMac(deviceIdOrAlias);
 
-    if (searchMac) {
-      [rows] = await pool.query(
-        'SELECT device_id, mac_address, device_type, status, availability_status FROM devices WHERE UPPER(mac_address) = ? LIMIT 1',
-        [searchMac]
-      );
-    } else {
-      [rows] = await pool.query(
-        'SELECT device_id, mac_address, device_type, status, availability_status FROM devices WHERE device_id = ? LIMIT 1',
-        [deviceIdOrAlias]
-      );
-    }
-
-    if (rows.length > 0) {
-      const dev = rows[0];
-      if (dev.mac_address) {
-        enrolledDevicesByMac.set(dev.mac_address.toUpperCase().trim(), dev);
-      }
+    if (dev) {
+      const now = Date.now();
       const effectiveStatus = metadata.status || 'ONLINE';
-      let updateSql = `UPDATE devices SET status = ?, last_seen = NOW()`;
-      const params = [effectiveStatus];
-
-      if (metadata.ip) {
-        updateSql += `, ip_address = ?`;
-        params.push(metadata.ip);
+      lastSeenMs.set(dev.device_id, now);
+      if (effectiveStatus !== dev.status) {
+        await writeStatusChange(dev, effectiveStatus, now, metadata.ip, metadata.battery_level);
+      } else {
+        addPresence(dev.device_id, now, metadata.ip, metadata.battery_level);
       }
-      if (metadata.battery_level !== undefined && metadata.battery_level !== null) {
-        updateSql += `, battery_level = ?`;
-        params.push(metadata.battery_level);
-      }
-
-      updateSql += ` WHERE device_id = ?`;
-      params.push(dev.device_id);
-
-      await pool.query(updateSql, params);
 
       // Broadcast heartbeat over WebSocket to web dashboard
       broadcastToClients({
@@ -414,7 +506,6 @@ async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata =
         device_id: dev.device_id,
         device_type: dev.device_type,
         status: effectiveStatus,
-        availability_status: dev.availability_status || 'AVAILABLE',
         last_seen: new Date().toLocaleTimeString(),
         battery_level: metadata.battery_level,
         is_charging: metadata.is_charging || (effectiveStatus === 'CHARGING'),
@@ -476,7 +567,7 @@ async function recordActiveDeviceTraffic(deviceIdOrAlias, deviceType, metadata =
       });
     }
   } catch (err) {
-    console.error('[DEVICE SERVICE] recordActiveDeviceTraffic error:', err.message);
+    logger.error('[DEVICE SERVICE] recordActiveDeviceTraffic error:', err.message);
   }
 }
 
@@ -494,6 +585,9 @@ async function handleDeviceDisconnect(deviceIdOrAlias) {
 
     if (rows.length > 0) {
       await pool.query('UPDATE devices SET status = "OFFLINE" WHERE device_id = ?', [deviceIdOrAlias]);
+      const cached = findEnrolledDeviceByMac(deviceIdOrAlias);
+      if (cached) cached.status = 'OFFLINE';
+      pendingPresence.delete(deviceIdOrAlias);
       broadcastToClients({
         type: 'DEVICE_HEARTBEAT',
         device_id: deviceIdOrAlias,
@@ -517,7 +611,7 @@ async function handleDeviceDisconnect(deviceIdOrAlias) {
       });
     }
   } catch (err) {
-    console.warn(`[DEVICE SERVICE] Could not handle disconnect for ${deviceIdOrAlias}:`, err.message);
+    logger.warn(`[DEVICE SERVICE] Could not handle disconnect for ${deviceIdOrAlias}:`, err.message);
   }
 }
 
@@ -554,13 +648,21 @@ async function runFreshnessCheck() {
     });
   }
 
-  // 2. Mark enrolled devices OFFLINE if no packet in 12 seconds (absorbs normal Wi-Fi jitter)
+  // 2. Mark enrolled devices OFFLINE if no packet in 12 seconds (absorbs normal Wi-Fi jitter).
+  //    The database holds last_seen up to PRESENCE_FLUSH_MS late, so a device heard
+  //    more recently according to memory is left alone.
   try {
     const [stale] = await pool.query(
-      `SELECT device_id, device_type FROM devices WHERE status IN ('ONLINE', 'CHARGING') AND last_seen < (NOW() - INTERVAL 12 SECOND)`
+      `SELECT device_id, device_type FROM devices WHERE status IN ('ONLINE', 'CHARGING') AND last_seen < (NOW() - INTERVAL ? SECOND)`,
+      [OFFLINE_AFTER_MS / 1000]
     );
     for (const d of stale) {
-      await pool.query(`UPDATE devices SET status = 'OFFLINE' WHERE device_id = ?`, [d.device_id]);
+      if (now - (lastSeenMs.get(d.device_id) || 0) <= OFFLINE_AFTER_MS) continue;
+      await pool.query(`UPDATE devices SET status = 'OFFLINE' WHERE device_id = ? AND status IN ('ONLINE', 'CHARGING')`, [d.device_id]);
+      const cached = findEnrolledDeviceByMac(d.device_id);
+      if (cached) cached.status = 'OFFLINE';
+      pendingPresence.delete(d.device_id);
+      logger.info(`[DEVICE] ${d.device_id} OFFLINE (nothing received for ${OFFLINE_AFTER_MS / 1000} s)`);
       broadcastToClients({
         type: 'DEVICE_HEARTBEAT',
         device_id: d.device_id,
@@ -568,7 +670,11 @@ async function runFreshnessCheck() {
         status: 'OFFLINE'
       });
     }
-  } catch (_) { }
+  } catch (err) {
+    if (logger.every('freshness-check-error', 30000)) {
+      logger.error(`[DEVICE SERVICE] Offline check failed (${err.code || err.message}). Device status may be out of date until the database answers.`);
+    }
+  }
 }
 
 /**
@@ -603,6 +709,12 @@ module.exports = {
   findEnrolledDeviceByMac,
   syncEnrolledDevicesCache,
   startFreshnessWatchdog,
-  stopFreshnessWatchdog
+  stopFreshnessWatchdog,
+  startPresenceWriter,
+  stopPresenceWriter,
+  flushPresence,
+  getPresenceStats,
+  PRESENCE_FLUSH_MS,
+  OFFLINE_AFTER_MS
 };
 

@@ -1,13 +1,14 @@
 // =============================================================================
 // Migration: Add Calibration Columns to ward_anchors table
 // =============================================================================
+const logger = require('../utils/logger');
 const { getPool } = require('./db');
 
 async function migrate() {
   const pool = getPool();
   try {
     await pool.query('SELECT calibrated_a, calibrated_n, last_calibrated_at FROM ward_anchors LIMIT 1');
-    console.log('[DB MIGRATION] Anchor calibration columns already exist in ward_anchors.');
+    logger.info('[DB MIGRATION] Anchor calibration columns already exist in ward_anchors.');
   } catch (err) {
     if (err.code === 'ER_BAD_FIELD_ERROR' || (err.message && err.message.includes("Unknown column 'calibrated_a'"))) {
       await pool.query(`
@@ -16,9 +17,9 @@ async function migrate() {
         ADD COLUMN calibrated_n DECIMAL(4,2) NULL DEFAULT NULL AFTER calibrated_a,
         ADD COLUMN last_calibrated_at TIMESTAMP NULL DEFAULT NULL AFTER calibrated_n
       `);
-      console.log('[DB MIGRATION] Successfully added calibrated_a, calibrated_n, and last_calibrated_at to ward_anchors.');
+      logger.info('[DB MIGRATION] Successfully added calibrated_a, calibrated_n, and last_calibrated_at to ward_anchors.');
     } else {
-      console.error('[DB MIGRATION] Error checking/adding calibration columns:', err.message);
+      logger.error('[DB MIGRATION] Error checking/adding calibration columns:', err.message);
     }
   }
 }
@@ -26,6 +27,6 @@ async function migrate() {
 module.exports = { migrate };
 
 if (require.main === module) {
-  migrate().then(() => process.exit(0)).catch(e => { console.error(e); process.exit(1); });
+  migrate().then(() => process.exit(0)).catch(e => { logger.error(e); process.exit(1); });
 }
 

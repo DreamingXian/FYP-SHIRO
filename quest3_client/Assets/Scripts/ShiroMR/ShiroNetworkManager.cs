@@ -24,8 +24,15 @@ namespace ShiroMR
         [Tooltip("IP address of the Edge Server (use 127.0.0.1 for PC Link testing, or 192.168.1.229 for wireless headset)")]
         public string serverIp = "192.168.1.229";
         public int serverPort = 3000;
-        public string targetWardId = "WARD-005";
+        [Tooltip("Ward shown in the headset. Empty = not configured: choose one on the hand slate. The last choice is remembered.")]
+        public string targetWardId = "";
         public bool autoConnectOnStart = true;
+
+        /// <summary>True when a ward has been chosen. No ward is assumed.</summary>
+        public bool HasWard => !string.IsNullOrEmpty(targetWardId);
+
+        /// <summary>This headset's own device ID and artificial MAC address (see HeadsetIdentity).</summary>
+        public HeadsetIdentity Identity { get; private set; }
 
         [Header("Connection Status")]
         [SerializeField] private bool isWsConnected = false;
@@ -51,7 +58,7 @@ namespace ShiroMR
         private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private readonly ConcurrentQueue<Action> _mainThreadQueue = new ConcurrentQueue<Action>();
         private bool _isDisposed = false;
-        private volatile int _cachedBatteryLevel = 95;
+        private volatile int _cachedBatteryLevel = -1; // -1 = unknown, sent as null
         private float _batteryPollTimer = 0f;
 
         private void Awake()
@@ -64,6 +71,9 @@ namespace ShiroMR
             Instance = this;
             DontDestroyOnLoad(gameObject);
 
+            Identity = HeadsetIdentity.Create();
+            Debug.Log($"[SHIRO NET] This headset is {Identity.DeviceId} ({Identity.MacAddress}).");
+
             // Restore last active ward selected by clinician if available
             targetWardId = PlayerPrefs.GetString("Shiro_ActiveWardId", targetWardId);
 
@@ -73,9 +83,9 @@ namespace ShiroMR
 
         private void Start()
         {
-            // Cache battery level on the Unity Main Thread safely
+            // Cache battery level on the Unity Main Thread safely (-1 when the platform does not report it)
             float lvl = SystemInfo.batteryLevel;
-            _cachedBatteryLevel = Mathf.RoundToInt(lvl >= 0f ? lvl * 100f : 95f);
+            _cachedBatteryLevel = lvl >= 0f ? Mathf.RoundToInt(lvl * 100f) : -1;
 
             if (autoConnectOnStart)
             {
@@ -91,7 +101,7 @@ namespace ShiroMR
             {
                 _batteryPollTimer = 0f;
                 float lvl = SystemInfo.batteryLevel;
-                _cachedBatteryLevel = Mathf.RoundToInt(lvl >= 0f ? lvl * 100f : 95f);
+                _cachedBatteryLevel = lvl >= 0f ? Mathf.RoundToInt(lvl * 100f) : -1;
             }
 
             // Dispatch queued WebSocket events on Unity's main thread
@@ -163,7 +173,7 @@ namespace ShiroMR
             {
                 _masterCts?.Cancel();
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.Disconnect", swallowed); }
 
             if (_webSocket != null)
             {
@@ -260,6 +270,15 @@ namespace ShiroMR
         /// </summary>
         public IEnumerator FetchWardConfigRoutine(Action onComplete = null)
         {
+            if (!HasWard)
+            {
+                // Nothing is assumed: the clinician chooses the ward on the hand slate.
+                // The live connection still starts, so the ward list and alerts work.
+                Debug.LogWarning("[SHIRO NET] No ward configured. Choose one on the hand slate (Ward tab).");
+                onComplete?.Invoke();
+                yield break;
+            }
+
             string url = $"http://{serverIp}:{serverPort}/api/ward/ips-init?ward_id={UnityWebRequest.EscapeURL(targetWardId)}";
             Debug.Log($"[SHIRO NET] Fetching Ward Architecture from {url}...");
 
@@ -283,12 +302,14 @@ namespace ShiroMR
                         }
                         else
                         {
-                            Debug.LogError($"[SHIRO NET] Failed to parse ward configuration: {response?.error ?? "Unknown error"}");
+                            Debug.LogError($"[SHIRO NET] Ward {targetWardId} could not be loaded: {response?.error ?? "Unknown error"}");
+                            onComplete?.Invoke(); // the live connection is still needed
                         }
                     }
                     catch (Exception ex)
                     {
                         Debug.LogError($"[SHIRO NET] JSON parsing error on ward init: {ex.Message}");
+                        onComplete?.Invoke();
                     }
                 }
                 else
@@ -306,7 +327,7 @@ namespace ShiroMR
         {
             if (_receiveLoopTask != null && !_receiveLoopTask.IsCompleted)
             {
-                try { _masterCts?.Cancel(); } catch { }
+                try { _masterCts?.Cancel(); } catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.StartWebSocketConnection", swallowed); }
             }
 
             _masterCts = new CancellationTokenSource();
@@ -327,7 +348,7 @@ namespace ShiroMR
 
                     if (_webSocket != null)
                     {
-                        try { _webSocket.Dispose(); } catch { }
+                        try { _webSocket.Dispose(); } catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.WebSocketReceiveLoopAsync", swallowed); }
                         _webSocket = null;
                     }
 
@@ -390,12 +411,12 @@ namespace ShiroMR
                 {
                     if (sessionCts != null)
                     {
-                        try { sessionCts.Cancel(); sessionCts.Dispose(); } catch { }
+                        try { sessionCts.Cancel(); sessionCts.Dispose(); } catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.WebSocketReceiveLoopAsync", swallowed); }
                     }
 
                     if (_webSocket != null)
                     {
-                        try { _webSocket.Dispose(); } catch { }
+                        try { _webSocket.Dispose(); } catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.WebSocketReceiveLoopAsync", swallowed); }
                         _webSocket = null;
                     }
 
@@ -479,17 +500,23 @@ namespace ShiroMR
             }
         }
 
-        private string BuildHandshakeJson()
+        // Battery as JSON: a number, or null when the platform does not report it
+        private string BatteryJson()
         {
             int bat = _cachedBatteryLevel;
-            string mac = "02:00:00:51:55:01";
-            return $"{{\"action\":\"DEVICE_HANDSHAKE\",\"device_id\":\"QUEST3-001\",\"mac_address\":\"{mac}\",\"device_type\":\"HEADSET\",\"model\":\"Meta Quest 3 (MR)\",\"assigned_ward_id\":\"{targetWardId}\",\"battery_level\":{bat}}}";
+            return bat >= 0 ? bat.ToString() : "null";
+        }
+
+        private string BuildHandshakeJson()
+        {
+            string ward = HasWard ? $"\"{targetWardId}\"" : "null";
+            return $"{{\"action\":\"DEVICE_HANDSHAKE\",\"device_id\":\"{Identity.DeviceId}\",\"mac_address\":\"{Identity.MacAddress}\",\"device_type\":\"HEADSET\",\"model\":\"Meta Quest 3 (MR)\",\"assigned_ward_id\":{ward},\"battery_level\":{BatteryJson()}}}";
         }
 
         private async Task SendDeviceHandshakeAsync(CancellationToken ct)
         {
             await SendSafeAsync(BuildHandshakeJson(), ct);
-            Debug.Log($"[SHIRO NET] Headset Handshake sent to Edge Server (QUEST3-001 in {targetWardId}).");
+            Debug.Log($"[SHIRO NET] Headset Handshake sent to Edge Server ({Identity.DeviceId} in {(HasWard ? targetWardId : "no ward")}).");
         }
 
         private async Task SendHeartbeatLoopAsync(CancellationToken ct)
@@ -501,16 +528,14 @@ namespace ShiroMR
                     await Task.Delay(3000, ct);
                     if (ct.IsCancellationRequested) break;
 
-                    int bat = _cachedBatteryLevel;
-                    string mac = "02:00:00:51:55:01";
-                    string json = $"{{\"action\":\"DEVICE_HEARTBEAT\",\"device_id\":\"QUEST3-001\",\"mac_address\":\"{mac}\",\"device_type\":\"HEADSET\",\"battery_level\":{bat}}}";
+                    string json = $"{{\"action\":\"DEVICE_HEARTBEAT\",\"device_id\":\"{Identity.DeviceId}\",\"mac_address\":\"{Identity.MacAddress}\",\"device_type\":\"HEADSET\",\"battery_level\":{BatteryJson()}}}";
                     await SendSafeAsync(json, ct);
                 }
                 catch (OperationCanceledException)
                 {
                     break;
                 }
-                catch { }
+                catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.SendHeartbeatLoopAsync", swallowed); }
             }
         }
 

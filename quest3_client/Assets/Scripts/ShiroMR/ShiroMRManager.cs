@@ -2,6 +2,7 @@
 // Project SHIRO - Meta Quest 3 Mixed Reality Client
 // Master Orchestrator: Coordinates Network, Spatial Alignment, & Patient HUDs
 // =============================================================================
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -24,8 +25,8 @@ namespace ShiroMR
         [Tooltip("IP address of the Edge Server (use 127.0.0.1 for PC Link testing, or 192.168.1.229 for wireless headset)")]
         public string serverIp = "192.168.1.229";
         public int serverPort = 3000;
-        [Tooltip("Target Ward ID to monitor on the Edge Server")]
-        public string targetWardId = "WARD-005";
+        [Tooltip("Ward ID to monitor. Empty = not configured: the clinician chooses it on the hand slate (remembered between sessions).")]
+        public string targetWardId = "";
 
         [Header("Patient Hologram Settings")]
         [Tooltip("Optional custom prefab for Patient Hologram. If null, automatically generated programmatically.")]
@@ -77,7 +78,7 @@ namespace ShiroMR
                 }
                 OVRPlugin.SetBoundaryVisible(false);
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroMRManager.Awake", swallowed); }
 
             EnsureSubsystems();
         }

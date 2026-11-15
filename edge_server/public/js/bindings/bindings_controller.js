@@ -82,7 +82,8 @@
             });
 
             window.wsClient.on('TELEMETRY', (msg) => {
-              const tagId = msg.data?.tag_id || msg.tag_id || 'TAG-001';
+              const tagId = msg.data?.tag_id || msg.tag_id;
+              if (!tagId) return; // no wristband named: nothing to update, none is assumed
               const isChg = msg.data?.charging === true;
               const status = isChg ? 'CHARGING' : 'ONLINE';
               const mode = (msg.data?.motion === 'FALL_EMERGENCY') ? 'ACTIVE' : 'POWER_SAVING';
