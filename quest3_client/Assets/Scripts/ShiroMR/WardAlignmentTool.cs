@@ -914,6 +914,7 @@ namespace ShiroMR
                 req.uploadHandler = new UploadHandlerRaw(bodyRaw);
                 req.downloadHandler = new DownloadHandlerBuffer();
                 req.SetRequestHeader("Content-Type", "application/json");
+                ShiroNetworkManager.Instance.Authorize(req);
                 req.timeout = 5;
 
                 yield return req.SendWebRequest();

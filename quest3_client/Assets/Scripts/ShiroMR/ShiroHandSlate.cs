@@ -5,6 +5,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -168,6 +169,7 @@ namespace ShiroMR
                 ShiroNetworkManager.Instance.OnConnectionStatusChanged -= OnConnectionStatusChanged;
                 ShiroNetworkManager.Instance.OnWardListLoaded -= OnWardListLoaded;
                 ShiroNetworkManager.Instance.OnActiveWardChanged -= OnActiveWardChanged;
+                ShiroNetworkManager.Instance.OnPairingStatusChanged -= OnPairingStatusChanged;
             }
         }
 
@@ -1224,6 +1226,7 @@ namespace ShiroMR
                 _sysServerStatus.text = connected ? $"Edge Server: ✅ CONNECTED ({ip}:{port})" : $"Edge Server: ❌ DISCONNECTED ({ip}:{port})";
                 _sysServerStatus.color = connected ? new Color(0.1f, 0.95f, 0.4f) : new Color(0.95f, 0.3f, 0.2f);
             }
+            if (!connected) RefreshPairingStatus();
         }
 
         #region UI Builder
@@ -1578,12 +1581,124 @@ namespace ShiroMR
             });
             hotspotIpBtn.transform.localPosition = new Vector3(280f, -85f, 0);
 
-            // Row 2: Localhost option for Quest Link PC testing
+            // Row 2: Localhost option for Quest Link PC testing, and pairing
             Button localIpBtn = CreateButton(p.transform, "LocalIpBtn", "💻 Localhost (127.0.0.1 for PC Link)", new Vector2(480f, 45f), new Color(0.20f, 0.25f, 0.32f), () =>
             {
                 if (ShiroNetworkManager.Instance != null) ShiroNetworkManager.Instance.SetServerIp("127.0.0.1");
             });
-            localIpBtn.transform.localPosition = new Vector3(0f, -150f, 0);
+            localIpBtn.transform.localPosition = new Vector3(-250f, -150f, 0);
+
+            Button pairBtn = CreateButton(p.transform, "PairBtn", "🔑 Pair headset (code)", new Vector2(420f, 45f), new Color(0.55f, 0.40f, 0.08f), OpenPairingPad);
+            pairBtn.transform.localPosition = new Vector3(250f, -150f, 0);
+
+            BuildPairingPad(p.transform);
+            RefreshPairingStatus();
+        }
+
+        // ----- Pairing: 6-digit code from the dashboard (ADMIN → Headset Pairing) -----
+
+        private GameObject _pairPanel;
+        private Text _pairCodeText;
+        private Text _pairStatusText;
+        private string _pairDigits = "";
+
+        private void BuildPairingPad(Transform parent)
+        {
+            _pairPanel = CreatePanel(parent, "PairingPad", new Vector2(1080f, 480f), new Color(0.03f, 0.06f, 0.10f, 0.97f));
+            _pairPanel.transform.localPosition = Vector3.zero;
+
+            Text title = CreateText(_pairPanel.transform, "PairTitle", "🔑 PAIR THIS HEADSET", 28, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.95f, 0.75f, 0.2f));
+            title.rectTransform.anchoredPosition = new Vector2(0f, 200f);
+            title.rectTransform.sizeDelta = new Vector2(1000f, 45f);
+
+            _pairCodeText = CreateText(_pairPanel.transform, "PairCode", "_ _ _ _ _ _", 52, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _pairCodeText.rectTransform.anchoredPosition = new Vector2(-170f, 140f);
+            _pairCodeText.rectTransform.sizeDelta = new Vector2(500f, 70f);
+
+            string[] keys = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "C" };
+            for (int i = 0; i < keys.Length; i++)
+            {
+                string key = keys[i];
+                float x = -300f + (i % 3) * 130f;
+                float y = 65f - (i / 3) * 65f;
+                Button k = CreateButton(_pairPanel.transform, $"Key_{i}", key, new Vector2(115f, 55f), new Color(0.12f, 0.20f, 0.30f), () => PressPairKey(key));
+                k.transform.localPosition = new Vector3(x, y, 0);
+            }
+
+            Button submit = CreateButton(_pairPanel.transform, "PairSubmit", "✓ Pair", new Vector2(300f, 60f), new Color(0.10f, 0.50f, 0.30f), () =>
+            {
+                if (ShiroNetworkManager.Instance != null) ShiroNetworkManager.Instance.Pair(_pairDigits);
+            });
+            submit.transform.localPosition = new Vector3(300f, 65f, 0);
+
+            Button close = CreateButton(_pairPanel.transform, "PairClose", "✖ Close", new Vector2(300f, 55f), new Color(0.30f, 0.20f, 0.22f), () =>
+            {
+                _pairPanel.SetActive(false);
+            });
+            close.transform.localPosition = new Vector3(300f, 0f, 0);
+
+            _pairStatusText = CreateText(_pairPanel.transform, "PairStatus", "", 21, FontStyle.Normal, TextAnchor.UpperCenter, new Color(0.85f, 0.9f, 1f));
+            _pairStatusText.rectTransform.anchoredPosition = new Vector2(0f, -185f);
+            _pairStatusText.rectTransform.sizeDelta = new Vector2(1020f, 90f);
+
+            _pairPanel.SetActive(false);
+
+            if (ShiroNetworkManager.Instance != null)
+            {
+                ShiroNetworkManager.Instance.OnPairingStatusChanged -= OnPairingStatusChanged;
+                ShiroNetworkManager.Instance.OnPairingStatusChanged += OnPairingStatusChanged;
+            }
+        }
+
+        private void OpenPairingPad()
+        {
+            if (_pairPanel == null) return;
+            _pairDigits = "";
+            UpdatePairCode();
+            _pairPanel.SetActive(true);
+            RefreshPairingStatus();
+        }
+
+        private void PressPairKey(string key)
+        {
+            if (key == "⌫") { if (_pairDigits.Length > 0) _pairDigits = _pairDigits.Substring(0, _pairDigits.Length - 1); }
+            else if (key == "C") _pairDigits = "";
+            else if (_pairDigits.Length < 6) _pairDigits += key;
+            UpdatePairCode();
+        }
+
+        private void UpdatePairCode()
+        {
+            if (_pairCodeText == null) return;
+            var shown = new StringBuilder();
+            for (int i = 0; i < 6; i++)
+            {
+                if (i > 0) shown.Append(' ');
+                shown.Append(i < _pairDigits.Length ? _pairDigits[i] : '_');
+            }
+            _pairCodeText.text = shown.ToString();
+        }
+
+        private void OnPairingStatusChanged(bool paired, string message)
+        {
+            if (paired && _pairPanel != null) _pairPanel.SetActive(false);
+            RefreshPairingStatus();
+        }
+
+        private void RefreshPairingStatus()
+        {
+            var net = ShiroNetworkManager.Instance;
+            if (net == null) return;
+            if (_pairStatusText != null)
+            {
+                _pairStatusText.text = $"Headset {(net.Identity != null ? net.Identity.DeviceId : "?")} → {net.serverIp}:{net.serverPort}\n{net.PairingMessage}";
+                _pairStatusText.color = net.IsPaired ? new Color(0.4f, 0.95f, 0.6f) : new Color(1f, 0.8f, 0.4f);
+            }
+            if (!net.IsPaired && _sysServerStatus != null)
+            {
+                _sysServerStatus.text = $"Edge Server: 🔑 NOT PAIRED ({net.serverIp}:{net.serverPort}) – tap \"Pair headset\"";
+                _sysServerStatus.color = new Color(1f, 0.75f, 0.2f);
+            }
         }
 
         /// <summary>

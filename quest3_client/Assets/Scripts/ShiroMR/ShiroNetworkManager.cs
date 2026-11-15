@@ -38,6 +38,19 @@ namespace ShiroMR
         [SerializeField] private bool isWsConnected = false;
         public bool IsConnected => isWsConnected;
 
+        // Pairing: the edge server accepts this headset only with the token it
+        // received once for a 6-digit code created by an admin on the dashboard.
+        private const string TokenPrefKey = "Shiro_HeadsetToken";
+        private string _headsetToken = "";
+        /// <summary>True when this headset holds a pairing token.</summary>
+        public bool IsPaired => !string.IsNullOrEmpty(_headsetToken);
+        /// <summary>The last pairing state as text for the hand slate.</summary>
+        public string PairingMessage { get; private set; } = "";
+        /// <summary>Raised on the main thread when the pairing changes (paired, message).</summary>
+        public event Action<bool, string> OnPairingStatusChanged;
+
+        private const string NotPairedMessage = "Not paired. On the dashboard: ADMIN → Headset Pairing → Create pairing code, then enter it here.";
+
         // Events for other MR components
         public event Action<WardConfig, List<TrackedSubject>> OnWardInitialized;
         public event Action<IpsPositionUpdate> OnPositionUpdated;
@@ -79,6 +92,103 @@ namespace ShiroMR
 
             // Restore last configured server IP if available (persists between sessions)
             serverIp = PlayerPrefs.GetString("Shiro_ServerIp", serverIp);
+
+            _headsetToken = PlayerPrefs.GetString(TokenPrefKey, "");
+            PairingMessage = IsPaired ? "Paired with the edge server." : NotPairedMessage;
+        }
+
+        /// <summary>Adds this headset's token to a request to the edge server.</summary>
+        public void Authorize(UnityWebRequest req)
+        {
+            if (req != null && IsPaired) req.SetRequestHeader("Authorization", $"Bearer {_headsetToken}");
+        }
+
+        /// <summary>
+        /// The server no longer accepts the token (revoked on the dashboard, or a new
+        /// database): forget it and stop connecting until the headset is paired again.
+        /// Main thread only.
+        /// </summary>
+        private void ForgetPairing(string reason)
+        {
+            _headsetToken = "";
+            PlayerPrefs.DeleteKey(TokenPrefKey);
+            PlayerPrefs.Save();
+            PairingMessage = reason;
+            Debug.LogWarning($"[SHIRO NET] {reason}");
+            Disconnect();
+            OnPairingStatusChanged?.Invoke(false, reason);
+        }
+
+        /// <summary>Exchanges a 6-digit pairing code for this headset's token.</summary>
+        public void Pair(string code)
+        {
+            StartCoroutine(PairRoutine(code));
+        }
+
+        /// <summary>Answer of POST /api/headset/pair (filled by JsonUtility).</summary>
+        [Serializable]
+        public class PairResponse
+        {
+            public bool success;
+            public string token;
+            public string device_id;
+            public string paired_by;
+            public string error;
+        }
+
+        private IEnumerator PairRoutine(string code)
+        {
+            code = (code ?? "").Trim();
+            if (code.Length != 6)
+            {
+                PairingMessage = "The pairing code has 6 digits.";
+                OnPairingStatusChanged?.Invoke(IsPaired, PairingMessage);
+                yield break;
+            }
+
+            string url = $"http://{serverIp}:{serverPort}/api/headset/pair";
+            string json = $"{{\"device_id\":\"{Identity.DeviceId}\",\"mac_address\":\"{Identity.MacAddress}\",\"code\":\"{code}\",\"model\":\"Meta Quest 3 (MR)\"}}";
+            PairingMessage = $"Pairing with {serverIp}...";
+            OnPairingStatusChanged?.Invoke(IsPaired, PairingMessage);
+
+            using (UnityWebRequest req = new UnityWebRequest(url, "POST"))
+            {
+                req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json));
+                req.downloadHandler = new DownloadHandlerBuffer();
+                req.SetRequestHeader("Content-Type", "application/json");
+                req.timeout = 6;
+                yield return req.SendWebRequest();
+
+                PairResponse resp = null;
+                try
+                {
+                    if (!string.IsNullOrEmpty(req.downloadHandler.text)) resp = JsonUtility.FromJson<PairResponse>(req.downloadHandler.text);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[SHIRO NET] Pairing answer not readable: {ex.Message}");
+                }
+
+                if (req.result == UnityWebRequest.Result.Success && resp != null && resp.success && !string.IsNullOrEmpty(resp.token))
+                {
+                    _headsetToken = resp.token;
+                    PlayerPrefs.SetString(TokenPrefKey, _headsetToken);
+                    PlayerPrefs.Save();
+                    PairingMessage = $"Paired as {resp.device_id} (code created by {resp.paired_by}).";
+                    Debug.Log($"[SHIRO NET] {PairingMessage}");
+                    OnPairingStatusChanged?.Invoke(true, PairingMessage);
+                    Disconnect();
+                    Connect();
+                }
+                else
+                {
+                    PairingMessage = resp != null && !string.IsNullOrEmpty(resp.error)
+                        ? $"Pairing refused: {resp.error}"
+                        : $"Edge server at {serverIp} not reachable ({req.error}). Choose the right server address below.";
+                    Debug.LogWarning($"[SHIRO NET] {PairingMessage}");
+                    OnPairingStatusChanged?.Invoke(IsPaired, PairingMessage);
+                }
+            }
         }
 
         private void Start()
@@ -209,53 +319,75 @@ namespace ShiroMR
             var testedIps = new HashSet<string>();
             bool serverDiscovered = false;
 
+            // 1. Find the edge server: /api/auth/status answers without sign-in
             foreach (var ip in candidateIps)
             {
                 if (string.IsNullOrEmpty(ip) || testedIps.Contains(ip)) continue;
                 testedIps.Add(ip);
 
-                string listUrl = $"http://{ip}:{serverPort}/api/ward/list";
-                using (UnityWebRequest listReq = UnityWebRequest.Get(listUrl))
+                using (UnityWebRequest probe = UnityWebRequest.Get($"http://{ip}:{serverPort}/api/auth/status"))
                 {
-                    listReq.timeout = 2; // Fast 2s probe per network interface
-                    yield return listReq.SendWebRequest();
-
-                    if (listReq.result == UnityWebRequest.Result.Success)
-                    {
-                        try
-                        {
-                            string json = listReq.downloadHandler.text;
-                            WardListResponse listResp = JsonUtility.FromJson<WardListResponse>(json);
-                            if (listResp != null && listResp.success && listResp.wards != null)
-                            {
-                                if (serverIp != ip)
-                                {
-                                    Debug.Log($"[SHIRO NET] Auto-discovered active Edge Server at {ip} (was {serverIp}). Saving to PlayerPrefs...");
-                                    serverIp = ip;
-                                    PlayerPrefs.SetString("Shiro_ServerIp", serverIp);
-                                    PlayerPrefs.Save();
-                                    if (ShiroMRManager.Instance != null) ShiroMRManager.Instance.serverIp = serverIp;
-                                }
-
-                                _availableWards.Clear();
-                                _availableWards.AddRange(listResp.wards);
-                                Debug.Log($"[SHIRO NET] Hospital Directory: Discovered {_availableWards.Count} wards on Edge Server at {serverIp}.");
-                                OnWardListLoaded?.Invoke(_availableWards);
-                                serverDiscovered = true;
-                                break;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogWarning($"[SHIRO NET] Ward directory parse warning on {ip}: {ex.Message}");
-                        }
-                    }
+                    probe.timeout = 2; // Fast 2s probe per network interface
+                    yield return probe.SendWebRequest();
+                    if (probe.result != UnityWebRequest.Result.Success) continue;
                 }
+
+                if (serverIp != ip)
+                {
+                    Debug.Log($"[SHIRO NET] Auto-discovered active Edge Server at {ip} (was {serverIp}). Saving to PlayerPrefs...");
+                    serverIp = ip;
+                    PlayerPrefs.SetString("Shiro_ServerIp", serverIp);
+                    PlayerPrefs.Save();
+                    if (ShiroMRManager.Instance != null) ShiroMRManager.Instance.serverIp = serverIp;
+                }
+                serverDiscovered = true;
+                break;
             }
 
             if (!serverDiscovered)
             {
                 Debug.LogWarning($"[SHIRO NET] Could not auto-discover Edge Server on standard subnets. Attempting connection to configured IP: {serverIp}...");
+            }
+
+            // 2. Without a pairing the server accepts nothing else: wait for a code
+            if (!IsPaired)
+            {
+                PairingMessage = NotPairedMessage;
+                Debug.LogWarning($"[SHIRO NET] {NotPairedMessage}");
+                OnPairingStatusChanged?.Invoke(false, PairingMessage);
+                yield break;
+            }
+
+            // 3. The hospital ward list
+            using (UnityWebRequest listReq = UnityWebRequest.Get($"http://{serverIp}:{serverPort}/api/ward/list"))
+            {
+                Authorize(listReq);
+                listReq.timeout = 4;
+                yield return listReq.SendWebRequest();
+
+                if (listReq.responseCode == 401)
+                {
+                    ForgetPairing("The edge server no longer accepts this headset (pairing revoked or a new database). Pair it again.");
+                    yield break;
+                }
+                if (listReq.result == UnityWebRequest.Result.Success)
+                {
+                    try
+                    {
+                        WardListResponse listResp = JsonUtility.FromJson<WardListResponse>(listReq.downloadHandler.text);
+                        if (listResp != null && listResp.success && listResp.wards != null)
+                        {
+                            _availableWards.Clear();
+                            _availableWards.AddRange(listResp.wards);
+                            Debug.Log($"[SHIRO NET] Hospital Directory: Discovered {_availableWards.Count} wards on Edge Server at {serverIp}.");
+                            OnWardListLoaded?.Invoke(_availableWards);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[SHIRO NET] Ward directory parse warning on {serverIp}: {ex.Message}");
+                    }
+                }
             }
 
             // Next, load active ward geometry and open WebSocket
@@ -284,8 +416,15 @@ namespace ShiroMR
 
             using (UnityWebRequest req = UnityWebRequest.Get(url))
             {
+                Authorize(req);
                 req.timeout = 5;
                 yield return req.SendWebRequest();
+
+                if (req.responseCode == 401)
+                {
+                    ForgetPairing("The edge server no longer accepts this headset (pairing revoked or a new database). Pair it again.");
+                    yield break;
+                }
 
                 if (req.result == UnityWebRequest.Result.Success)
                 {
@@ -325,16 +464,21 @@ namespace ShiroMR
         /// </summary>
         private void StartWebSocketConnection()
         {
+            if (!IsPaired) return; // the server refuses a headset without its token
+            string token = _headsetToken;
             if (_receiveLoopTask != null && !_receiveLoopTask.IsCompleted)
             {
                 try { _masterCts?.Cancel(); } catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.StartWebSocketConnection", swallowed); }
             }
 
             _masterCts = new CancellationTokenSource();
-            _receiveLoopTask = Task.Run(() => WebSocketReceiveLoopAsync(_masterCts.Token));
+            _receiveLoopTask = Task.Run(() => WebSocketReceiveLoopAsync(token, _masterCts.Token));
         }
 
-        private async Task WebSocketReceiveLoopAsync(CancellationToken ct)
+        // Close code the server uses when it ends a headset's access (pairing revoked)
+        private const int AccessEndedCloseCode = 4001;
+
+        private async Task WebSocketReceiveLoopAsync(string token, CancellationToken ct)
         {
             string wsUri = $"ws://{serverIp}:{serverPort}";
             byte[] buffer = new byte[8192];
@@ -353,8 +497,18 @@ namespace ShiroMR
                     }
 
                     _webSocket = new ClientWebSocket();
+                    _webSocket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
                     Debug.Log($"[SHIRO NET] Connecting WebSocket to {wsUri}...");
-                    await _webSocket.ConnectAsync(new Uri(wsUri), sessionCts.Token);
+                    try
+                    {
+                        await _webSocket.ConnectAsync(new Uri(wsUri), sessionCts.Token);
+                    }
+                    catch (WebSocketException wex) when (wex.Message.Contains("401"))
+                    {
+                        // Refused: the pairing is no longer valid
+                        _mainThreadQueue.Enqueue(() => ForgetPairing("The edge server no longer accepts this headset (pairing revoked or a new database). Pair it again."));
+                        break;
+                    }
 
                     _mainThreadQueue.Enqueue(() =>
                     {
@@ -384,7 +538,13 @@ namespace ShiroMR
 
                             if (result.MessageType == WebSocketMessageType.Close)
                             {
+                                bool accessEnded = result.CloseStatus.HasValue && (int)result.CloseStatus.Value == AccessEndedCloseCode;
                                 await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", sessionCts.Token);
+                                if (accessEnded)
+                                {
+                                    _mainThreadQueue.Enqueue(() => ForgetPairing("This headset's pairing was revoked on the dashboard. Pair it again."));
+                                    return;
+                                }
                                 break;
                             }
 
