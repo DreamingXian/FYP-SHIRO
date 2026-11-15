@@ -81,7 +81,7 @@ async function bootstrap() {
   } else {
     console.log(`  -> Network IP: http://${config.LOCAL_IP}:${config.HTTP_PORT}`);
   }
-  console.log(`[MQTT BROKER]  tcp://${config.LOCAL_IP}:${config.MQTT_PORT} (ESP32 Gateway)`);
+  console.log(`[MQTT BROKER]  tcp://${config.LOCAL_IP}:${config.MQTT_PORT} (ESP32 Anchors)`);
   console.log(`[WEBSOCKET]    ws://${config.LOCAL_IP}:${config.HTTP_PORT} (Web & Quest 3 HMD)`);
   console.log(`======================================================\n`);
 }

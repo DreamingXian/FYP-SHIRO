@@ -34,7 +34,7 @@ namespace ShiroMR
         [Header("Current Telemetry State")]
         public int heartRateBpm = 0;
         public int spo2Percent = 0;
-        public int batteryPercent = 100;
+        public int batteryPercent = -1; // -1: not reported yet
         public string motionState = "STATIONARY";
         public bool isOnline = true;
 
@@ -347,8 +347,10 @@ namespace ShiroMR
         /// </summary>
         public void UpdateTelemetry(int bpm, int spo2, int battery)
         {
-            if (bpm > 0) heartRateBpm = bpm;
-            if (spo2 > 0) spo2Percent = spo2;
+            // 0 from the server means "no valid reading now": show "--" instead of
+            // keeping the previous value on screen as if it were current.
+            heartRateBpm = bpm > 0 ? bpm : 0;
+            spo2Percent = spo2 > 0 ? spo2 : 0;
             if (battery >= 0) batteryPercent = battery;
             isOnline = true;
             EvaluatePersonDetection();
@@ -696,8 +698,10 @@ namespace ShiroMR
             {
                 if (spo2Percent > 0)
                 {
-                    _spo2Text.text = $"🫁 {spo2Percent}%";
-                    _spo2Text.color = spo2Percent < 95 ? new Color(0.95f, 0.2f, 0.2f) : new Color(0.2f, 0.85f, 1.0f);
+                    // Indicative only: the SpO2 measurement is not calibrated and raises
+                    // no alarm, so it is never coloured as an alert.
+                    _spo2Text.text = $"🫁 ~{spo2Percent}%";
+                    _spo2Text.color = new Color(0.2f, 0.85f, 1.0f);
                 }
                 else
                 {
@@ -709,7 +713,7 @@ namespace ShiroMR
             // Battery
             if (_batteryText != null)
             {
-                _batteryText.text = $"🔋 {batteryPercent}%";
+                _batteryText.text = batteryPercent >= 0 ? $"🔋 {batteryPercent}%" : "🔋 --%";
             }
 
             // Motion State
@@ -932,7 +936,7 @@ namespace ShiroMR
             _batteryText.font = defaultFont;
             _batteryText.fontSize = 11;
             _batteryText.color = new Color(0.80f, 0.88f, 0.95f);
-            _batteryText.text = "🔋 100%";
+            _batteryText.text = "🔋 --%";
             RectTransform batRect = batObj.GetComponent<RectTransform>();
             batRect.anchoredPosition = new Vector2(165, -32);
             batRect.sizeDelta = new Vector2(145, 20);
