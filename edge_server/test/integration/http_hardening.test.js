@@ -4,7 +4,7 @@
 // that must still work. Time-series logging is off, so nothing reaches InfluxDB.
 process.env.INFLUX_TOKEN = '';
 
-const { db, freshDatabase, startServer, connectMqtt } = require('./helper');
+const { db, freshDatabase, startServer, connectMqtt, anchorClientId } = require('./helper');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -17,6 +17,7 @@ const BASE = `http://127.0.0.1:${HTTP_PORT}`;
 const SERVER_DIR = path.resolve(__dirname, '..', '..');
 const UPLOAD_DIR = path.join(SERVER_DIR, 'public', 'uploads', 'patients');
 const ANCHOR = 'A0:00:00:00:00:11';
+const ANCHOR_2 = 'A0:00:00:00:00:12';
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), Buffer.alloc(64, 7)]);
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -60,7 +61,7 @@ describe('input validation and web hardening', () => {
     ws.on('message', (data) => { received.push(JSON.parse(data.toString())); });
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
 
-    mqtt = await connectMqtt(MQTT_PORT, 'SHIRO_Anchor_A00000000011');
+    mqtt = await connectMqtt(MQTT_PORT, anchorClientId(ANCHOR));
   });
 
   after(async () => {
@@ -199,12 +200,46 @@ describe('input validation and web hardening', () => {
     assert.equal(ofType('CALIBRATION_SYNC').length, 0);
   });
 
-  test('a valid 1 Hz activation is still passed on', async () => {
-    const answers = await sendCommand({ action: 'SET_ACTIVE_MODE', data: { tagId: 'B0:00:00:00:00:21', targetMac: 'B0:00:00:00:00:21', duration: 60 } });
-    const engaged = answers.find(m => m.type === 'ACTIVE_MODE_ENGAGED');
-    assert.ok(engaged, JSON.stringify(answers));
-    assert.equal(engaged.tag_id, 'B0:00:00:00:00:21');
-    assert.equal(engaged.duration, 60);
+  test('a 1 Hz activation goes out through the anchor that hears the wristband best', async () => {
+    const tag = 'B0:00:00:00:00:21';
+    const second = await connectMqtt(MQTT_PORT, anchorClientId(ANCHOR_2));
+    try {
+      assert.equal(await mqtt.subscribe('shiro/control/mode'), 0x00);
+      assert.equal(await second.subscribe('shiro/control/#'), 0x00);
+      // ANCHOR hears the wristband weakly, ANCHOR_2 strongly
+      for (let i = 0; i < 3; i++) {
+        mqtt.publish({ anchor_mac: ANCHOR, tag_mac: tag, rssi: -78 });
+        second.publish({ anchor_mac: ANCHOR_2, tag_mac: tag, rssi: -55 });
+      }
+      await sleep(300);
+
+      const answers = await sendCommand({ action: 'SET_ACTIVE_MODE', data: { tagId: tag, targetMac: tag, duration: 60 } });
+      const engaged = answers.find(m => m.type === 'ACTIVE_MODE_ENGAGED');
+      assert.ok(engaged, JSON.stringify(answers));
+      assert.equal(engaged.tag_id, tag);
+      assert.equal(engaged.duration, 60);
+      assert.equal(engaged.anchor_mac, ANCHOR_2);
+
+      // Every anchor receives the command; it names the one that must carry it out
+      for (const client of [mqtt, second]) {
+        const commands = client.messages.filter(m => m.topic === 'shiro/control/mode').map(m => JSON.parse(m.payload));
+        assert.equal(commands.length, 1, JSON.stringify(client.messages));
+        assert.deepEqual(commands[0], { cmd: 'SET_ACTIVE', target_tag: tag, target_mac: tag, target_anchor: ANCHOR_2, duration: 60 });
+      }
+    } finally {
+      second.close();
+    }
+  });
+
+  test('a 1 Hz activation for a wristband no anchor hears is refused, nothing is sent', async () => {
+    const before = mqtt.messages.length;
+    const answers = await sendCommand({ action: 'SET_ACTIVE_MODE', data: { tagId: 'B0:00:00:00:00:29', targetMac: 'B0:00:00:00:00:29' } });
+    const error = answers.find(m => m.type === 'ERROR');
+    assert.ok(error, JSON.stringify(answers));
+    assert.equal(error.action, 'SET_ACTIVE_MODE');
+    assert.match(error.error, /No anchor has heard wristband/);
+    assert.equal(answers.filter(m => m.type === 'ACTIVE_MODE_ENGAGED').length, 0);
+    assert.equal(mqtt.messages.length, before, 'no command reached the anchors');
   });
 
   test('a headset without an ID is not registered under an assumed one', async () => {

@@ -80,11 +80,76 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
 * **Server configuration file** `edge_server/.env` (first-time setup only):
   1. Copy `edge_server/.env.example` to `edge_server/.env`.
   2. Set `INFLUX_TOKEN` to an API token from the InfluxDB UI (`http://localhost:8086` --> Load Data --> API Tokens). Leave it empty to run without time-series logging.
-  3. Adjust the MySQL settings only if yours differ from the XAMPP defaults.
+  3. Set the MQTT anchor login and the MySQL account as described in Section 3.2.
 
   `.env` is git-ignored. Never commit it or paste its contents anywhere.
 
-### 3.2 Starting the MySQL Database (XAMPP)
+### 3.2 First-Time Security Setup
+
+Do this once per edge server PC. Background and limits: `docs/security.md`.
+
+**a) Generate two passwords.** Run this in PowerShell twice, once for the MQTT anchor login and once for the MySQL account. Each run prints a new random 32-character password with letters and digits only:
+```powershell
+$b = New-Object byte[] 24; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b).Replace('+','x').Replace('/','y')
+```
+Keep them only in the files named below. Do not paste them into chats, documents or commit messages.
+
+**b) MQTT anchor login.** In `edge_server/.env`:
+```ini
+MQTT_ANCHOR_USER=shiro-anchor
+MQTT_ANCHOR_PASSWORD=<first password>
+```
+Put the same two values in `firmware/shiro_anchor_node/secrets.h` (`SHIRO_MQTT_USER`, `SHIRO_MQTT_PASSWORD`, see Section 4.3) and reflash every anchor. Without these settings the server does not start.
+
+**c) MySQL account for the server.** Start MySQL and Apache in XAMPP, open `http://localhost/phpmyadmin`, click the **SQL** tab, paste the following with your second password in place of `<second password>`, and click **Go**:
+```sql
+CREATE USER 'shiro_app'@'127.0.0.1' IDENTIFIED BY '<second password>';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON `shiro_db`.* TO 'shiro_app'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON `shiro_test`.* TO 'shiro_app'@'127.0.0.1';
+```
+The server may read and change data and create missing tables in `shiro_db`, but not drop tables or reach other databases. The integration tests drop and recreate `shiro_test`, so that database gets full rights. Then in `edge_server/.env`:
+```ini
+DB_USER=shiro_app
+DB_PASSWORD=<second password>
+```
+
+**d) MySQL on this PC only.** Open `C:\xampp\mysql\bin\my.ini` in a text editor. In the `[mysqld]` section, change
+```ini
+# bind-address="127.0.0.1"
+```
+to
+```ini
+bind-address="127.0.0.1"
+```
+Save, then **Stop** and **Start** MySQL in XAMPP. phpMyAdmin keeps working, because it connects through `127.0.0.1`.
+
+**e) InfluxDB on this PC only.** Always start InfluxDB with `edge_server\tools\start_influxdb.bat` (double-click it, or run `.\start_influxdb.bat` in that folder) instead of `influxd.exe` directly. It starts InfluxDB with `--http-bind-address 127.0.0.1:8086`.
+
+**f) Windows Firewall.** Open **PowerShell as administrator** (Start menu, type PowerShell, right-click, Run as administrator) and run:
+```powershell
+# 1. Back up the current rules (restore with: netsh advfirewall import "$env:USERPROFILE\Documents\firewall_before_shiro.wfw")
+netsh advfirewall export "$env:USERPROFILE\Documents\firewall_before_shiro.wfw"
+
+# 2. Node.js: only TCP 3000 (dashboard) and 1883 (MQTT), only on private networks.
+#    -EdgeTraversalPolicy Block is required: the rule Windows created at the first start of
+#    Node.js is "defer to user", which cannot be combined with a port limit.
+Get-NetFirewallRule -DisplayName 'Node.js JavaScript Runtime' | Where-Object { ($_ | Get-NetFirewallPortFilter).Protocol -eq 'TCP' } | Set-NetFirewallRule -EdgeTraversalPolicy Block -Profile Private -Protocol TCP -LocalPort 3000,1883
+Get-NetFirewallRule -DisplayName 'Node.js JavaScript Runtime' | Where-Object { ($_ | Get-NetFirewallPortFilter).Protocol -eq 'UDP' } | Disable-NetFirewallRule
+
+# 3. MySQL, InfluxDB and Apache need no access from other devices
+Get-NetFirewallRule -DisplayName 'mysqld','influxd','Apache HTTP Server' -ErrorAction SilentlyContinue | Disable-NetFirewallRule
+
+# 4. Show the result
+Get-NetFirewallRule -DisplayName 'Node.js JavaScript Runtime','mysqld','influxd','Apache HTTP Server' -ErrorAction SilentlyContinue | Select-Object DisplayName, Enabled, Profile, @{n='Ports';e={($_ | Get-NetFirewallPortFilter).LocalPort}}
+```
+The Wi-Fi connection of the edge server PC must be a **private** network: Settings --> Network & internet --> Wi-Fi --> your network --> Network profile type --> Private. On a public network (for example a café), the anchors and the headset cannot connect, which is intended.
+
+**g) Optional: a password for MySQL `root`.** After step d, `root` without a password can be used only on this PC. To close that too, set a password and switch phpMyAdmin to a login page:
+1. In phpMyAdmin, SQL tab: `ALTER USER 'root'@'localhost' IDENTIFIED BY '<third password>';` (also for `'root'@'127.0.0.1'` and `'root'@'::1'` if they exist: User accounts tab).
+2. In `C:\xampp\phpMyAdmin\config.inc.php`, change `$cfg['Servers'][$i]['auth_type'] = 'config';` to `'cookie'` and `$cfg['Servers'][$i]['AllowNoPassword'] = true;` to `false`.
+3. phpMyAdmin now asks for a username and password; use `root` and the third password. The XAMPP Control Panel's MySQL **Stop** button may then need the password too (or stop MySQL with the Windows Services panel).
+
+### 3.3 Starting the MySQL Database (XAMPP)
 1. Open the Windows Start Menu, search for **XAMPP Control Panel**, and launch it.
 2. In the XAMPP Control Panel:
    * Click **Start** on **MySQL** (Indicator turns green on Port `3306`).
@@ -96,7 +161,11 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
    ```
    Ensures the `shiro_db` schema, ward definitions, benchmark patients, and hardware device registries are verified.
 
-### 3.3 Starting the Edge Server
+### 3.4 Starting InfluxDB
+
+Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. InfluxDB then accepts connections from this PC only (Section 3.2 e).
+
+### 3.5 Starting the Edge Server
 1. Open PowerShell or Terminal on your laptop:
    ```powershell
    cd d:\RSW\FYP\Code\edge_server
@@ -111,7 +180,7 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
    [DATABASE] Connected to MySQL server successfully.
    [DATABASE] Schema verified in "shiro_db".
    [IPS ENGINE] Cached assigned anchors across wards.
-   [MQTT BROKER] Listening on 0.0.0.0:1883
+   [MQTT BROKER] Listening on 0.0.0.0:1883 (anchor login required)
    ======================================================
      SHIRO Clinical Dashboard & Gateway Ready
    ======================================================
@@ -127,6 +196,7 @@ Always start MySQL and the Edge Server **FIRST** so the database, MQTT broker, a
    * Missing tables are created automatically. Existing data is never modified by a restart.
    * Sample wards and patients are loaded only into a completely empty database. To load them by hand, run `npm run db:seed`.
    * If MySQL is not running, the server stops with `[FATAL STARTUP ERROR] Could not connect to MySQL ...` and exit code 1. Start MySQL in XAMPP and run `npm start` again.
+   * If the MQTT anchor login is missing from `.env`, the server stops with `[FATAL STARTUP ERROR] MQTT_ANCHOR_USER and MQTT_ANCHOR_PASSWORD must be set ...` (Section 3.2 b).
 
 3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`:
    * **Ward Configuration Editor:** Architectural room dimensioning, obstacle cutouts, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and 3D ray-cast anchor suggestion.
@@ -213,10 +283,12 @@ Wi-Fi and MQTT settings are kept out of the sketch, in a git-ignored file:
    #define SHIRO_WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
    #define SHIRO_MQTT_SERVER   "192.168.1.100"   // Your laptop IPv4 address
    #define SHIRO_MQTT_PORT     1883
+   #define SHIRO_MQTT_USER     "shiro-anchor"    // = MQTT_ANCHOR_USER in edge_server/.env
+   #define SHIRO_MQTT_PASSWORD "..."             // = MQTT_ANCHOR_PASSWORD in edge_server/.env
    ```
 3. Re-flash every anchor after changing this file.
 
-If `secrets.h` is missing, the sketch stops compiling with a message telling you to create it.
+If `secrets.h` is missing, or lacks `SHIRO_MQTT_USER` or `SHIRO_MQTT_PASSWORD`, the sketch stops compiling with a message saying what to add.
 
 #### Mandatory Partition Scheme Setting:
 > [!IMPORTANT]
@@ -352,8 +424,9 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
   Ensure host laptop is on the same Wi-Fi network (or hotspot) as the anchors.
   Run 'ipconfig' and note your IPv4 address (e.g. 192.168.1.229).
 
-[Step 2: Start MySQL & Edge Server]
+[Step 2: Start MySQL, InfluxDB & Edge Server]
   Open XAMPP -> Start MySQL (Port 3306).
+  Double-click edge_server\tools\start_influxdb.bat (keep the window open).
   Open Terminal -> cd d:\RSW\FYP\Code\edge_server -> npm start
   Verify console outputs: [HTTP DASHBOARD], [MQTT BROKER], [WEBSOCKET] Ready.
 
@@ -383,7 +456,11 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 
 | Symptom / Error | Root Cause | Immediate Resolution |
 | :--- | :--- | :--- |
-| `rc=-4` or `rc=-2` in Anchor Serial Monitor | Board cannot reach Laptop MQTT broker. | 1. Check laptop IP via `ipconfig` and ensure `SHIRO_MQTT_SERVER` in `secrets.h` matches.<br>2. Ensure Windows Firewall allows incoming TCP port `1883`.<br>3. Verify `npm start` is running. |
+| `rc=-4` or `rc=-2` in Anchor Serial Monitor | Board cannot reach Laptop MQTT broker. | 1. Check laptop IP via `ipconfig` and ensure `SHIRO_MQTT_SERVER` in `secrets.h` matches.<br>2. Check that the laptop's Wi-Fi is a **private** network and the firewall rule allows TCP `1883` (Section 3.2 f). Windows stores this per network name: a laptop that moves to another network (or the other band of the same router, e.g. `…_5G`) may be on a **public** network again. Check with `Get-NetConnectionProfile`; fix with `Set-NetConnectionProfile -Name '<network>' -NetworkCategory Private` (administrator).<br>3. Verify `npm start` is running. |
+| `rc=4: login refused` (or `rc=5`) in Anchor Serial Monitor; server prints `[MQTT SECURITY] Refused SHIRO_Anchor_…` | The anchor's MQTT login does not match `edge_server/.env`, or its address is locked out for 60 s after 10 failed logins. | Make `SHIRO_MQTT_USER` / `SHIRO_MQTT_PASSWORD` in `secrets.h` equal to `MQTT_ANCHOR_USER` / `MQTT_ANCHOR_PASSWORD` in `.env`, reflash, and wait one minute. |
+| `[FATAL STARTUP ERROR] MQTT_ANCHOR_USER and MQTT_ANCHOR_PASSWORD must be set` | The MQTT anchor login is missing from `edge_server/.env`, or the password is shorter than 16 characters. | Section 3.2 a and b. |
+| `Access denied for user 'shiro_app'` on `npm start` | Wrong `DB_PASSWORD`, or the account was not created. | Section 3.2 c. Check the password in `.env`; in phpMyAdmin, User accounts must list `shiro_app` with host `127.0.0.1`. |
+| Live map toast: "1 Hz vitals stream not started: No anchor has heard wristband …" | No anchor has received the wristband for 3.5 s. | Check that the wristband is on and near an online anchor, then select the patient again. |
 | Edge server prints `[PROTOCOL] Wristband … sends a packet version this system does not support` | Wristband and anchors run different firmware versions. | Flash the wristband and all anchors from the same commit. |
 | Live map shows **SENSOR FAULT** | The wristband reports that its accelerometer or pulse sensor does not answer. | Check the sensor wiring (SDA `D4`, SCL `D5`, 3.3 V, GND) and restart the wristband. The Serial Monitor names the failed sensor. |
 | Live map shows **NO SIGNAL** | No packet from the wristband for 5 seconds. | Check that the wristband is powered and in range of at least one online anchor. |

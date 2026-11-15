@@ -6,6 +6,7 @@ const config = require('./config/app_config');
 const { initDatabase } = require('./database/db');
 const { handleRequest } = require('./routes/index');
 const { startMqttBroker } = require('./services/mqtt_service');
+const { readAnchorCredentials } = require('./services/mqtt_access');
 const { initWebSocketServer } = require('./services/websocket_service');
 const ipsService = require('./services/ips_service');
 const deviceService = require('./services/device_service');
@@ -15,6 +16,9 @@ async function bootstrap() {
   console.log('\n======================================================');
   console.log('  SHIRO Edge Server & Clinical IoT Gateway (Booting...)');
   console.log('======================================================');
+
+  // 0. Settings that must be present before anything starts (throws with what to fix)
+  const mqttCredentials = readAnchorCredentials();
 
   // 1. Connect and initialize MySQL Database schema & seed data
   console.log('[DATABASE] Connecting to MySQL Database...');
@@ -28,7 +32,7 @@ async function bootstrap() {
   ipsService.startOfflineWatchdog();
 
   // 2. Start Aedes MQTT Broker on TCP 1883
-  await startMqttBroker(config.MQTT_PORT);
+  await startMqttBroker(config.MQTT_PORT, mqttCredentials);
 
   // 3. Create HTTP Web & REST API Server
   const httpServer = http.createServer((req, res) => {

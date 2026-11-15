@@ -6,7 +6,7 @@ const { getCalibration, updateCalibration, setAnchorCalibration } = require('./k
 const { HttpError, isCrossSiteRequest } = require('../utils/http');
 const {
   requireId, optionalId, requireMac, optionalMac, requireDeviceRef, requireLabel,
-  optionalOneOf, optionalNumber, optionalInt, optionalText
+  optionalOneOf, optionalNumber, optionalInt, optionalText, normalizeMac
 } = require('../utils/validate');
 
 // Commands are short JSON objects. A larger message is refused by the socket.
@@ -77,50 +77,65 @@ function handleCalibration(cmd) {
   }
 }
 
+async function findWristbandMac(tagId) {
+  const deviceService = require('./device_service');
+  const dev = deviceService.findEnrolledDeviceByMac(tagId);
+  if (dev && dev.mac_address) return normalizeMac(dev.mac_address);
+
+  const ipsService = require('./ips_service');
+  const liveTag = ipsService.getTagPosition(tagId);
+  if (liveTag && liveTag.tag_mac) return normalizeMac(liveTag.tag_mac);
+
+  const { getPool } = require('../database/db');
+  const [rows] = await getPool().query('SELECT mac_address FROM devices WHERE device_id = ? LIMIT 1', [tagId]);
+  return rows.length > 0 && rows[0].mac_address ? normalizeMac(rows[0].mac_address) : null;
+}
+
+/**
+ * 1 Hz activation. The command goes out through ONE anchor: the one that hears
+ * the wristband most strongly now. Two anchors connecting to the same wristband
+ * at once would make both connections fail.
+ */
 async function handleActiveMode(cmd) {
   const { tagId, duration } = cmd;
-  let targetMac = cmd.targetMac;
 
   // The anchors address a wristband by its MAC address. Find it when the
   // command names the wristband by its device ID only.
+  const targetMac = cmd.targetMac || await findWristbandMac(tagId);
   if (!targetMac) {
-    try {
-      const deviceService = require('./device_service');
-      const dev = deviceService.findEnrolledDeviceByMac(tagId);
-      if (dev && dev.mac_address) targetMac = dev.mac_address;
-      else {
-        const ipsService = require('./ips_service');
-        const liveTag = ipsService.getTagPosition(tagId);
-        if (liveTag && liveTag.tag_mac) targetMac = liveTag.tag_mac;
-        else {
-          const { getPool } = require('../database/db');
-          const [rows] = await getPool().query('SELECT mac_address FROM devices WHERE device_id = ? LIMIT 1', [tagId]);
-          if (rows.length > 0 && rows[0].mac_address) targetMac = rows[0].mac_address;
-        }
-      }
-    } catch (err) {
-      console.warn(`[ACTIVE MODE] Could not look up the MAC address of ${tagId}:`, err.message);
-    }
+    throw new HttpError(404, `The MAC address of wristband ${tagId} is not known, so no anchor can reach it.`);
   }
 
-  console.log(`[ACTIVE MODE TRIGGER] Clinician engaged 1 Hz Active Monitoring for ${tagId} (MAC: ${targetMac || 'unknown'}, ${duration}s)`);
+  const tagHearing = require('./telemetry/tag_hearing');
+  const best = tagHearing.strongestAnchor(targetMac);
+  if (!best) {
+    throw new HttpError(409, `No anchor has heard wristband ${tagId} in the last ${tagHearing.HEARD_WITHIN_MS / 1000} s. Check that it is switched on and near an anchor, then try again.`);
+  }
+
+  const { publishMqtt } = require('./mqtt_service');
+  const sent = publishMqtt('shiro/control/mode', {
+    cmd: 'SET_ACTIVE',
+    target_tag: tagId,
+    target_mac: targetMac,
+    target_anchor: best.anchorMac,
+    duration
+  });
+  if (!sent) throw new HttpError(503, 'The MQTT broker is not running, so the command could not be sent.');
+
+  const deviceService = require('./device_service');
+  const enrolledAnchor = deviceService.findEnrolledDeviceByMac(best.anchorMac);
+  const viaAnchor = enrolledAnchor ? enrolledAnchor.device_id : best.anchorMac;
+  console.log(`[ACTIVE MODE TRIGGER] 1 Hz monitoring for ${tagId} (${targetMac}, ${duration}s) sent through anchor ${viaAnchor} (${best.rssi} dBm, heard by ${best.heardBy} anchor(s))`);
 
   broadcastToClients({
     type: 'ACTIVE_MODE_ENGAGED',
     tag_id: tagId,
     target_mac: targetMac,
+    via_anchor: viaAnchor,
+    anchor_mac: best.anchorMac,
     duration,
     timestamp: new Date().toLocaleTimeString()
   });
-
-  if (targetMac) {
-    try {
-      const { publishMqtt } = require('./mqtt_service');
-      publishMqtt('shiro/control/mode', { cmd: 'SET_ACTIVE', target_tag: tagId, target_mac: targetMac, duration });
-    } catch (e) {
-      console.warn('[MQTT ACTIVE TRIGGER ERROR]', e.message);
-    }
-  }
 }
 
 async function handleDevicePresence(cmd, ws, req) {

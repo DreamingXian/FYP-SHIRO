@@ -34,10 +34,17 @@
 #error "secrets.h not found: copy secrets.example.h to secrets.h and fill in your Wi-Fi and MQTT settings"
 #endif
 
+// The edge server refuses anchors without the MQTT login (edge_server/.env)
+#if !defined(SHIRO_MQTT_USER) || !defined(SHIRO_MQTT_PASSWORD)
+#error "secrets.h needs SHIRO_MQTT_USER and SHIRO_MQTT_PASSWORD: the same values as MQTT_ANCHOR_USER and MQTT_ANCHOR_PASSWORD in edge_server/.env (see secrets.example.h)"
+#endif
+
 const char* ssid        = SHIRO_WIFI_SSID;
 const char* password    = SHIRO_WIFI_PASSWORD;
 const char* mqtt_server = SHIRO_MQTT_SERVER;
 const int   mqtt_port   = SHIRO_MQTT_PORT;
+const char* mqtt_user   = SHIRO_MQTT_USER;
+const char* mqtt_pass   = SHIRO_MQTT_PASSWORD;
 
 // Shared MQTT Topic for all anchors
 const char* mqtt_topic  = "shiro/ward-A1/anchor/telemetry";
@@ -181,6 +188,23 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 // -----------------------------------------------------------------------------
 // MQTT Incoming Message Callback (Listens for Mode / Vitals Commands)
 // -----------------------------------------------------------------------------
+// Copies the text value of "key":"value" from a flat JSON message into out.
+// Returns false when the key is missing or the value does not fit.
+bool jsonTextField(const char* msg, const char* key, char* out, size_t outSize) {
+  char pattern[40];
+  snprintf(pattern, sizeof(pattern), "\"%s\":\"", key);
+  const char* p = strstr(msg, pattern);
+  if (!p || outSize == 0) return false;
+  p += strlen(pattern);
+  size_t i = 0;
+  while (*p && *p != '\"') {
+    if (i + 1 >= outSize) return false;
+    out[i++] = *p++;
+  }
+  out[i] = '\0';
+  return *p == '\"';
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   char msg[256];
   if (length >= sizeof(msg)) length = sizeof(msg) - 1;
@@ -189,14 +213,17 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
   if (strstr(msg, "SET_ACTIVE") != nullptr) {
     char targetMac[24] = {0};
-    char* macPtr = strstr(msg, "target_mac\":\"");
-    if (macPtr) {
-      macPtr += strlen("target_mac\":\"");
-      int i = 0;
-      while (*macPtr && *macPtr != '\"' && i < 20) {
-        targetMac[i++] = *macPtr++;
-      }
-      targetMac[i] = '\0';
+    char targetAnchor[24] = {0};
+    jsonTextField(msg, "target_mac", targetMac, sizeof(targetMac));
+
+    // The server sends the command through one anchor only: the one that hears
+    // the wristband best. Two anchors connecting at once would both fail.
+    if (!jsonTextField(msg, "target_anchor", targetAnchor, sizeof(targetAnchor))) {
+      Serial.println("[ANCHOR] 1 Hz command without target_anchor ignored (edge server too old?).");
+      return;
+    }
+    if (strcasecmp(targetAnchor, anchorMac) != 0) {
+      return; // meant for another anchor
     }
 
     if (strlen(targetMac) >= 12) {
@@ -216,7 +243,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         strncpy(pendingTargetMac, targetMac, sizeof(pendingTargetMac) - 1);
         pendingTargetMac[sizeof(pendingTargetMac) - 1] = '\0';
         pendingCmd = true;
-        Serial.printf("\n[ANCHOR] Nearest to tag %s (RSSI: %d). Queued 1 Hz Active Mode Escalation!\n", targetMac, heardRssi);
+        Serial.printf("\n[ANCHOR] Chosen for tag %s (RSSI: %d). Queued 1 Hz Active Mode Escalation!\n", targetMac, heardRssi);
+      } else {
+        Serial.printf("\n[ANCHOR] Chosen for tag %s, but it is not heard here now (weaker than -82 dBm or silent > 3.5 s). Command not carried out.\n", targetMac);
       }
     }
   }
@@ -287,11 +316,18 @@ void reconnectMQTT() {
     char clientId[50];
     snprintf(clientId, sizeof(clientId), "SHIRO_Anchor_%s", macClean.c_str());
 
-    if (mqttClient.connect(clientId)) {
+    if (mqttClient.connect(clientId, mqtt_user, mqtt_pass)) {
       Serial.println("[OK] Connected to MQTT Broker!");
-      mqttClient.subscribe("shiro/control/mode");
+      if (!mqttClient.subscribe("shiro/control/mode")) {
+        Serial.println("[WARN] Could not subscribe to shiro/control/mode: 1 Hz commands will not arrive.");
+      }
     } else {
-      Serial.printf("[FAILED] rc=%d. Retrying in 2 seconds...\n", mqttClient.state());
+      const int rc = mqttClient.state();
+      if (rc == MQTT_CONNECT_BAD_CREDENTIALS || rc == MQTT_CONNECT_UNAUTHORIZED) {
+        Serial.printf("[FAILED] rc=%d: login refused. Check SHIRO_MQTT_USER / SHIRO_MQTT_PASSWORD in secrets.h against edge_server/.env. Retrying in 2 seconds...\n", rc);
+      } else {
+        Serial.printf("[FAILED] rc=%d. Retrying in 2 seconds...\n", rc);
+      }
       delay(2000);
       break;
     }

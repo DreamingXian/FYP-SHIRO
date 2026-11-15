@@ -12,6 +12,10 @@ const timeSeriesService = require('./time_series_service');
 const bindingCache = require('./binding_cache');
 const { normalizeTelemetry } = require('./telemetry/normalize');
 const { checkAnchorMessage, checkDiscoveryMessage, MAX_PAYLOAD_BYTES } = require('./telemetry/anchor_message');
+const tagHearing = require('./telemetry/tag_hearing');
+const { createAccessControl, anchorMacFromClientId } = require('./mqtt_access');
+
+const DISCOVERY_TOPIC = 'shiro/discovery';
 
 let aedesInstance = null;
 let tcpServer = null;
@@ -53,29 +57,37 @@ function getAnchorFilter(anchorId) {
   return anchorFilters[anchorId];
 }
 
-async function startMqttBroker(port = 1883) {
-  aedesInstance = await Aedes.createBroker();
+/**
+ * Starts the broker. Only clients with the anchor login may connect, and they
+ * may use the anchor topics only (services/mqtt_access.js).
+ * @param {number} port
+ * @param {{username: string, password: string}} credentials  from readAnchorCredentials()
+ */
+async function startMqttBroker(port, credentials) {
+  if (!credentials || !credentials.username || !credentials.password) {
+    throw new Error('The MQTT broker needs the anchor login (MQTT_ANCHOR_USER, MQTT_ANCHOR_PASSWORD).');
+  }
+  aedesInstance = await Aedes.createBroker(createAccessControl(credentials));
   tcpServer = net.createServer(aedesInstance.handle);
 
-  tcpServer.listen(port, '0.0.0.0', () => {
-    console.log(`[MQTT BROKER] Listening on 0.0.0.0:${port}`);
+  await new Promise((resolve, reject) => {
+    tcpServer.once('error', reject);
+    tcpServer.listen(port, '0.0.0.0', () => {
+      tcpServer.off('error', reject);
+      console.log(`[MQTT BROKER] Listening on 0.0.0.0:${port} (anchor login required)`);
+      resolve();
+    });
   });
 
-  // Client lifecycle events
+  // Client lifecycle events. Only logged-in anchors get here.
   aedesInstance.on('client', (client) => {
     console.log(`[MQTT CLIENT CONNECTED] ID: ${client.id}`);
     const ip = client.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
-
-    if (client.id.includes('Anchor')) {
-      const hexMatch = client.id.match(/([0-9A-Fa-f]{12})$/);
-      const mac = hexMatch ? hexMatch[1].match(/.{1,2}/g).join(':').toUpperCase() : null;
-      // An anchor is known by its MAC address. Without one in the client ID,
-      // it appears with its first telemetry message instead.
-      if (mac) {
-        const enrolled = deviceService.findEnrolledDeviceByMac(mac);
-        const anchorId = enrolled ? enrolled.device_id : mac;
-        deviceService.recordActiveDeviceTraffic(anchorId, 'ANCHOR', { mac, clientId: client.id, ip, model: 'ESP32-WROOM-32E', rssi: null });
-      }
+    const mac = anchorMacFromClientId(client.id);
+    if (mac) {
+      const enrolled = deviceService.findEnrolledDeviceByMac(mac);
+      const anchorId = enrolled ? enrolled.device_id : mac;
+      deviceService.recordActiveDeviceTraffic(anchorId, 'ANCHOR', { mac, clientId: client.id, ip, model: 'ESP32-WROOM-32E', rssi: null });
     }
   });
 
@@ -87,7 +99,15 @@ async function startMqttBroker(port = 1883) {
   });
 
   aedesInstance.on('connectionError', (client, error) => {
+    // Refused logins are already reported, once per address, by mqtt_access.js
+    if (error && error.errorCode >= 2 && error.errorCode <= 5) return;
     console.error(`[MQTT ERROR] Client: ${client ? client.id : 'unknown'}`, error.message);
+  });
+
+  aedesInstance.on('clientError', (client, error) => {
+    // A refused publish ends the connection; mqtt_access.js has already said why
+    if (error && /not allowed/.test(error.message)) return;
+    console.warn(`[MQTT CLIENT ERROR] ${client ? client.id : 'unknown'}: ${error.message}`);
   });
 
   // Intercept incoming publish packets
@@ -105,7 +125,7 @@ async function startMqttBroker(port = 1883) {
       const parsed = JSON.parse(messageStr);
 
       // Device announcement (discovery topic)
-      if (topic.includes('discovery') || (parsed && (parsed.type === 'DISCOVERY' || parsed.type === 'ANNOUNCE'))) {
+      if (topic === DISCOVERY_TOPIC || (parsed && (parsed.type === 'DISCOVERY' || parsed.type === 'ANNOUNCE'))) {
         const announcement = checkDiscoveryMessage(parsed);
         if (announcement) deviceService.recordDiscoveredDevice(announcement);
         else warnRefusedMessage(client, topic, 'announcement without a valid MAC address');
@@ -117,6 +137,11 @@ async function startMqttBroker(port = 1883) {
       const message = checkAnchorMessage(parsed);
       if (!message.ok) {
         warnRefusedMessage(client, topic, message.reason);
+        return;
+      }
+      // An anchor reports under its own MAC address only: the one in its login client ID
+      if (message.anchorMac !== anchorMacFromClientId(client.id)) {
+        warnRefusedMessage(client, topic, `anchor_mac ${message.anchorMac} is not the MAC address of this anchor's client ID`);
         return;
       }
       if (message.tagMacInvalid) warnRefusedMessage(client, topic, 'tag_mac is not a MAC address, so the wristband part was skipped');
@@ -144,6 +169,7 @@ async function startMqttBroker(port = 1883) {
         // If anchor detected a wristband tag, update that tag's presence with its real MAC, RSSI, and live vitals
         if (!isStandby && message.tagMac) {
           const tagMac = message.tagMac;
+          tagHearing.recordHearing(tagMac, anchorMac, rawRssi);
           const enrolledTag = deviceService.findEnrolledDeviceByMac(tagMac);
           const detectedTag = enrolledTag ? enrolledTag.device_id : tagMac;
 

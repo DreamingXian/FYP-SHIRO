@@ -93,10 +93,20 @@ async function deleteInfluxPatientPoints(patientIds) {
 }
 
 // ----- the real server as a child process, on spare ports, against the test database -----
+// The anchor login of the test server (never the one in .env)
+const TEST_MQTT_LOGIN = { username: 'itest-anchor', password: 'itest-password-0123456789' };
+
 function startServer(extraEnv) {
   const child = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..', '..'),
-    env: { ...process.env, DB_NAME: process.env.DB_NAME, INFLUX_TOKEN: '', ...extraEnv }
+    env: {
+      ...process.env,
+      DB_NAME: process.env.DB_NAME,
+      INFLUX_TOKEN: '',
+      MQTT_ANCHOR_USER: TEST_MQTT_LOGIN.username,
+      MQTT_ANCHOR_PASSWORD: TEST_MQTT_LOGIN.password,
+      ...extraEnv
+    }
   });
   const state = { child, output: '' };
   child.stdout.on('data', d => { state.output += d; });
@@ -119,8 +129,11 @@ function startServer(extraEnv) {
   return state;
 }
 
-// ----- a minimal MQTT 3.1.1 client: CONNECT and QoS 0 PUBLISH are all an anchor uses -----
+// ----- a minimal MQTT 3.1.1 client: what an anchor uses (CONNECT, QoS 0 PUBLISH, SUBSCRIBE) -----
 const ANCHOR_TOPIC = 'shiro/ward-A1/anchor/telemetry';
+
+/** The client ID the anchor firmware uses for a MAC address: SHIRO_Anchor_A00000000011 */
+const anchorClientId = (mac) => `SHIRO_Anchor_${mac.replace(/:/g, '')}`;
 
 function mqttString(text) {
   const body = Buffer.from(text, 'utf8');
@@ -141,28 +154,99 @@ function mqttPacket(firstByte, body) {
   return Buffer.concat([Buffer.from([firstByte, ...lengthBytes]), body]);
 }
 
-/** Connects like an anchor. publish(payload, topic) sends text as it is and anything else as JSON. */
-function connectMqtt(port, clientId) {
+/**
+ * Splits a byte stream into MQTT packets. Calls onPacket(type, body) for each.
+ * Returns a function that takes the next chunk.
+ */
+function packetReader(onPacket) {
+  let pending = Buffer.alloc(0);
+  return (chunk) => {
+    pending = Buffer.concat([pending, chunk]);
+    for (;;) {
+      if (pending.length < 2) return;
+      let length = 0, multiplier = 1, i = 1, digit;
+      do {
+        if (i >= pending.length) return;
+        digit = pending[i++];
+        length += (digit & 0x7F) * multiplier;
+        multiplier *= 128;
+      } while (digit & 0x80);
+      if (pending.length < i + length) return;
+      const type = pending[0] >> 4;
+      const body = pending.subarray(i, i + length);
+      pending = pending.subarray(i + length);
+      onPacket(type, body);
+    }
+  };
+}
+
+/**
+ * Connects like an anchor, by default with the test server's login.
+ * login: { username, password } or null for no login.
+ * Resolves with publish(payload, topic), subscribe(topic) -> granted QoS byte
+ * (0x80 = refused), messages (received PUBLISH packets: { topic, payload }),
+ * closed (a promise that resolves when the server ends the connection) and close().
+ * Rejects with err.returnCode when the server refuses the connection.
+ */
+function connectMqtt(port, clientId, login = TEST_MQTT_LOGIN) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: '127.0.0.1', port });
+    const messages = [];
+    const subscribeWaiters = new Map();
+    let nextPacketId = 1;
+    let connected = false;
+    const closed = new Promise((resolveClosed) => socket.once('close', resolveClosed));
+
     socket.once('error', reject);
+    socket.on('error', () => {});
     socket.once('connect', () => {
-      const body = Buffer.concat([mqttString('MQTT'), Buffer.from([0x04, 0x02, 0x00, 0x3C]), mqttString(clientId)]);
+      let flags = 0x02; // clean session
+      const parts = [mqttString(clientId)];
+      if (login) {
+        flags |= 0x80 | 0x40;
+        parts.push(mqttString(login.username), mqttString(login.password));
+      }
+      const body = Buffer.concat([mqttString('MQTT'), Buffer.from([0x04, flags, 0x00, 0x3C]), ...parts]);
       socket.write(mqttPacket(0x10, body));
     });
-    socket.once('data', (data) => {
-      if (data[0] === 0x20 && data[3] === 0x00) {
+    socket.once('close', () => {
+      if (!connected) reject(Object.assign(new Error('MQTT connection closed before CONNACK'), { returnCode: null }));
+    });
+
+    socket.on('data', packetReader((type, body) => {
+      if (type === 2) { // CONNACK
+        if (body[1] !== 0x00) {
+          reject(Object.assign(new Error(`MQTT connection refused (return code ${body[1]})`), { returnCode: body[1] }));
+          return;
+        }
+        connected = true;
         resolve({
+          messages,
+          closed,
           publish: (payload, topic = ANCHOR_TOPIC) => socket.write(mqttPacket(0x30, Buffer.concat([
             mqttString(topic),
             Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload))
           ]))),
+          subscribe: (topic) => new Promise((resolveSub) => {
+            const id = nextPacketId++;
+            const idBytes = Buffer.alloc(2);
+            idBytes.writeUInt16BE(id);
+            subscribeWaiters.set(id, resolveSub);
+            socket.write(mqttPacket(0x82, Buffer.concat([idBytes, mqttString(topic), Buffer.from([0x00])])));
+          }),
           close: () => socket.destroy()
         });
-      } else {
-        reject(new Error('MQTT connection refused'));
+      } else if (type === 9) { // SUBACK
+        const waiter = subscribeWaiters.get(body.readUInt16BE(0));
+        if (waiter) waiter(body[2]);
+      } else if (type === 3) { // PUBLISH, QoS 0
+        const topicLength = body.readUInt16BE(0);
+        messages.push({
+          topic: body.subarray(2, 2 + topicLength).toString('utf8'),
+          payload: body.subarray(2 + topicLength).toString('utf8')
+        });
       }
-    });
+    }));
   });
 }
 
@@ -172,6 +256,8 @@ module.exports = {
   startServer,
   connectMqtt,
   ANCHOR_TOPIC,
+  TEST_MQTT_LOGIN,
+  anchorClientId,
   restart,
   dropTestDatabase,
   influxAvailable,
