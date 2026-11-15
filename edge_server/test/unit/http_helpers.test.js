@@ -85,6 +85,19 @@ describe('what a failed request tells the client', () => {
     }
   });
 
+  test('the same failure in the same handler is logged once per 30 s, a different one at once', () => {
+    const down = () => Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3306'), { code: 'ECONNREFUSED' });
+    const logged = quietly(() => {
+      for (let i = 0; i < 20; i++) h.sendFailure(fakeResponse(), down(), 'listDevicesRateTest');
+      h.sendFailure(fakeResponse(), down(), 'listWardsRateTest');
+      h.sendFailure(fakeResponse(), new TypeError('x is undefined'), 'listDevicesRateTest');
+    });
+    assert.equal(logged.length, 3);
+    const res = fakeResponse();
+    quietly(() => h.sendFailure(res, down(), 'listDevicesRateTest'));
+    assert.equal(res.status, 500, 'every request is still answered');
+  });
+
   test('nothing is written when the response has already started', () => {
     const res = fakeResponse();
     res.headersSent = true;
