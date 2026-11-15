@@ -84,7 +84,6 @@ async function initializeApp() {
       if (typeof window.resizeCanvases === 'function') {
         window.resizeCanvases();
       }
-      if (typeof window.drawPPG === 'function') window.drawPPG();
       if (typeof window.drawRSSI === 'function') window.drawRSSI();
     }
   }

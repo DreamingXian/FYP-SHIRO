@@ -39,19 +39,19 @@
             <span class="badge badge-live" id="finger-badge">No Finger</span>
           </div>
           <div class="metric-value" style="font-size: 26px; margin-top: 8px;" id="contact-status">Idle</div>
-          <div class="metric-unit mono" id="raw-ir-preview">IR: 0 | Red: 0</div>
         </div>
       </div>
 
-      <!-- Card: Full Width Optical PPG Waveform -->
+      <!-- Card: Telemetry packet stream. The raw pulse waveform is not transmitted (packet v2). -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Live Photoplethysmography (PPG) Pulse Stream (Infrared Absorption Waveform)</span>
-          <span style="font-size: 12px; color: var(--text-muted);" id="latency-display">Interval: 0 ms</span>
+          <span class="card-title">Wristband Telemetry Stream</span>
+          <span style="font-size: 12px; color: var(--text-muted);" id="latency-display">Interval: waiting for the first packet</span>
         </div>
-        <div class="canvas-container">
-          <canvas id="ppgCanvas"></canvas>
-        </div>
+        <p style="margin: 8px 0 0; font-size: 13px; color: var(--text-secondary);">
+          The wristband computes heart rate and SpO2 itself and sends only these results (telemetry packet v2, <span class="mono">docs/protocol.md</span>).
+          The raw pulse signal is not transmitted, so no pulse waveform is shown here.
+        </p>
       </div>
 
       <!-- Card: Anchor Radio Distance -->
