@@ -50,15 +50,17 @@ jobs:
         run: npm run lint
 
       - name: Unit tests
+        id: unit
         run: |
           set -o pipefail
           npm test 2>&1 | tee unit-tests.log
 
       - name: Show failed unit tests
-        if: failure()
+        if: failure() && steps.unit.outcome == 'failure'
         run: node ../.github/scripts/annotate_failures.js unit-tests.log "Unit tests failed"
 
       - name: Integration tests (temporary MariaDB, database shiro_test)
+        id: integration
         env:
           DB_HOST: 127.0.0.1
           DB_PORT: 3306
@@ -70,7 +72,7 @@ jobs:
           npm run test:integration 2>&1 | tee integration-tests.log
 
       - name: Show failed integration tests
-        if: failure()
+        if: failure() && steps.integration.outcome == 'failure'
         run: node ../.github/scripts/annotate_failures.js integration-tests.log "Integration tests failed"
 
   firmware:
