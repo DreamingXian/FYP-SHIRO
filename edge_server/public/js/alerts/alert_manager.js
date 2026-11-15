@@ -384,7 +384,7 @@ class EmergencyAlertManager {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           incident_id: incidentId,
-          attending_clinician: 'DOC-8821 (Dr. Tan)',
+          // The server records the signed-in clinician
           notes: 'Emergency acknowledged and staff dispatched via Web Dashboard.'
         })
       });

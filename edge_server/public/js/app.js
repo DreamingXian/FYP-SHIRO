@@ -22,9 +22,22 @@ async function loadViewPartial(targetId, viewPath) {
 async function initializeApp() {
   console.log('[App] Initializing Shiro Edge Healthcare Admin (MVC Architecture)...');
 
+  // 0. Signed in? Without a session the browser goes to the sign-in page.
+  let user;
+  try {
+    user = await window.shiroAuth.ready;
+  } catch (err) {
+    console.error('[App] Cannot check the sign-in:', err);
+    document.body.innerHTML = '<p style="padding: 40px; font-family: sans-serif;">The edge server does not answer. Check that it is running, then reload this page.</p>';
+    return;
+  }
+  const logoutBtn = document.getElementById('session-logout');
+  if (logoutBtn) logoutBtn.addEventListener('click', () => window.shiroAuth.logout());
+
   // 1. Concurrently hydrate all HTML View Partials
   try {
     await Promise.all([
+      user.role === 'ADMIN' ? loadViewPartial('tab-admin', '/views/admin/admin.html') : Promise.resolve(),
       loadViewPartial('tab-patients', '/views/patients/patients.html'),
       loadViewPartial('tab-devices', '/views/devices/devices.html'),
       loadViewPartial('tab-bindings', '/views/bindings/bindings.html'),
@@ -79,6 +92,10 @@ async function initializeApp() {
         window.forceReturnToWardDirectory();
       } else if (typeof window.returnToWardDirectory === 'function') {
         window.returnToWardDirectory(true);
+      }
+    } else if (targetTabId === 'tab-admin') {
+      if (typeof window.initAdminModule === 'function') {
+        window.initAdminModule();
       }
     } else if (targetTabId === 'tab-live-lab') {
       if (typeof window.resizeCanvases === 'function') {

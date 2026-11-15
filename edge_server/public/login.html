@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in | SHIRO Central Ward Admin</title>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <style>
+    body { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--bg-app, #F1F5F9); margin: 0; }
+    .login-card { width: 100%; max-width: 400px; margin: 16px; }
+    .login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+    .login-brand h1 { font-size: 20px; margin: 0; }
+    .login-note { font-size: 13px; color: var(--text-muted); margin: 0 0 16px; }
+    .login-error { display: none; background: #FEF2F2; border: 1px solid #FECACA; color: #B91C1C; border-radius: 6px; padding: 8px 10px; font-size: 13px; margin-bottom: 12px; }
+    .login-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+    .login-form { display: none; }
+    .login-form.visible { display: block; }
+  </style>
+</head>
+
+<body>
+  <div class="card login-card">
+    <div class="login-brand">
+      <span style="font-size: 26px;">🏥</span>
+      <h1>SHIRO Central Ward Admin</h1>
+    </div>
+
+    <p class="login-note" id="login-note">Checking the server...</p>
+    <div class="login-error" id="login-error" role="alert"></div>
+
+    <!-- Normal sign-in -->
+    <form class="login-form" id="form-login" autocomplete="on">
+      <div class="form-group">
+        <label class="form-label" for="login-username">Username</label>
+        <input class="form-control" id="login-username" name="username" autocomplete="username" required maxlength="64">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="login-password">Password</label>
+        <input class="form-control" id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="128">
+      </div>
+      <div class="login-actions">
+        <button class="btn btn-primary" type="submit" id="login-submit">Sign in</button>
+      </div>
+    </form>
+
+    <!-- First start: create the first admin (server PC only) -->
+    <form class="login-form" id="form-setup" autocomplete="off">
+      <div class="form-group">
+        <label class="form-label" for="setup-fullname">Full name</label>
+        <input class="form-control" id="setup-fullname" required maxlength="120" placeholder="e.g. Tan Shou Xian">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="setup-username">Username</label>
+        <input class="form-control" id="setup-username" required maxlength="32" placeholder="lowercase, e.g. admin" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="setup-password">Password (at least 10 characters)</label>
+        <input class="form-control" id="setup-password" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="setup-password2">Repeat the password</label>
+        <input class="form-control" id="setup-password2" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
+      </div>
+      <div class="login-actions">
+        <button class="btn btn-primary" type="submit" id="setup-submit">Create admin account</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="/js/auth/login_page.js?v=1.0"></script>
+</body>
+
+</html>
