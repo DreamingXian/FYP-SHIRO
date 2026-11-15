@@ -191,7 +191,7 @@ namespace ShiroMR
                     QuickReSync();
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("WardAlignmentTool.HandleInput", swallowed); }
 
             if (toggleRequested)
             {
@@ -806,8 +806,15 @@ namespace ShiroMR
             if (_point2Marker != null) _point2Marker.SetActive(false);
             if (_alignmentLine != null) _alignmentLine.enabled = false;
 
-            string wardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "WARD-005";
-            StartCoroutine(SendAnchorToServerRoutine(wardId, ""));
+            string wardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+            if (!string.IsNullOrEmpty(wardId))
+            {
+                StartCoroutine(SendAnchorToServerRoutine(wardId, ""));
+            }
+            else
+            {
+                Debug.LogWarning("[SHIRO ALIGN] No ward configured: the cleared anchor was not reported to the server.");
+            }
 
             UpdateStatusUi("UNALIGNED (Anchor Cleared)", new Color(0.95f, 0.45f, 0.2f));
             if (_instructionText != null)
@@ -861,7 +868,17 @@ namespace ShiroMR
         {
             if (!isAligned || spatialManager == null) return;
 
-            string wardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "WARD-005";
+            string wardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+            if (string.IsNullOrEmpty(wardId))
+            {
+                if (_instructionText != null)
+                {
+                    _instructionText.text = "⚠️ No ward configured. Choose a ward on the Ward tab first.";
+                    _instructionText.color = new Color(0.95f, 0.5f, 0.2f);
+                }
+                return;
+            }
+
             if (_instructionText != null)
             {
                 _instructionText.text = "⏳ Binding to Meta Quest SLAM Vision Map...";
@@ -869,9 +886,19 @@ namespace ShiroMR
             }
 
             string realUuid = await spatialManager.SaveNativeSpatialAnchorAsync(wardId);
-            string anchorUuid = !string.IsNullOrEmpty(realUuid) ? realUuid : $"ANCHOR-{wardId}-{DateTime.UtcNow.Ticks.ToString().Substring(10)}";
+            if (string.IsNullOrEmpty(realUuid))
+            {
+                // No anchor ID is made up: the server only stores an anchor the headset really saved
+                Debug.LogWarning($"[SHIRO ALIGN] The headset could not save a spatial anchor for {wardId}. Nothing was sent to the server.");
+                if (_instructionText != null)
+                {
+                    _instructionText.text = "⚠️ The headset could not save the anchor. Your alignment is still kept on this headset; try saving again.";
+                    _instructionText.color = new Color(0.95f, 0.5f, 0.2f);
+                }
+                return;
+            }
 
-            StartCoroutine(SendAnchorToServerRoutine(wardId, anchorUuid));
+            StartCoroutine(SendAnchorToServerRoutine(wardId, realUuid));
         }
 
         private IEnumerator SendAnchorToServerRoutine(string wardId, string anchorUuid)

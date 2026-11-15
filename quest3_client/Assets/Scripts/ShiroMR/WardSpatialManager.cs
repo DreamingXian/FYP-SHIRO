@@ -66,7 +66,7 @@ namespace ShiroMR
                 }
                 OVRManager.HMDMounted += HandleHeadsetMounted;
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("WardSpatialManager.Start", swallowed); }
 
             if (ShiroNetworkManager.Instance != null)
             {
@@ -118,7 +118,7 @@ namespace ShiroMR
                 }
                 OVRManager.HMDMounted -= HandleHeadsetMounted;
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("WardSpatialManager.OnDestroy", swallowed); }
         }
 
         private void HandleHeadsetRecentered()
@@ -154,7 +154,8 @@ namespace ShiroMR
         /// </summary>
         public bool ReSyncAlignment()
         {
-            string targetWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "WARD-005";
+            string targetWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+            if (string.IsNullOrEmpty(targetWard)) return false; // no ward chosen: nothing saved to restore
             return LoadAlignmentFromPrefs(targetWard);
         }
 
@@ -759,7 +760,12 @@ namespace ShiroMR
                 wardOrigin.rotation = Quaternion.identity;
             }
 
-            string targetWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "WARD-005";
+            string targetWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+            if (string.IsNullOrEmpty(targetWard))
+            {
+                Debug.Log("[SHIRO SPATIAL] Alignment reset to origin. No ward configured, so no saved alignment to remove.");
+                return;
+            }
             string key = $"WARD_ALIGN_{targetWard}";
             PlayerPrefs.DeleteKey($"{key}_PX");
             PlayerPrefs.DeleteKey($"{key}_PY");

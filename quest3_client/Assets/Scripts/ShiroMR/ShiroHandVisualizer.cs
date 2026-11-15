@@ -291,7 +291,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandVisualizer.UpdateLeftHandTracking", swallowed); }
 
             if (!IsLeftHandTracked)
             {
@@ -344,7 +344,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandVisualizer.UpdateRightHandTracking", swallowed); }
 
             if (!IsRightHandTracked)
             {

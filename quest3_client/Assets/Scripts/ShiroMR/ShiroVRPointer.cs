@@ -37,7 +37,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.GetPhysicalFloorHeight", swallowed); }
 
             // Tier 2: OVRManager FloorLevel Origin
             try
@@ -54,7 +54,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.GetPhysicalFloorHeight", swallowed); }
 
             // Tier 3: Standard OpenXR & Meta XR Floor Level Tracking
             // In Unity VR/MR on Meta Quest 3, FloorLevel tracking space sets the physical floor at Y = 0.0m.
@@ -262,7 +262,7 @@ namespace ShiroMR
                 Vector2 stick = OVRInput.Get(OVRInput.Axis2D.PrimaryThumbstick, OVRInput.Controller.RTouch);
                 if (Mathf.Abs(stick.y) > 0.15f) stickY = stick.y;
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.UpdatePointerRay", swallowed); }
 
 #if ENABLE_INPUT_SYSTEM
             if (UnityEngine.InputSystem.Mouse.current != null)
@@ -305,7 +305,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.UpdatePointerRay", swallowed); }
 
             Vector3 origin = Vector3.zero;
             Vector3 forward = Vector3.forward;
@@ -342,7 +342,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.UpdatePointerRay", swallowed); }
 
             // 2. Meta Quest Touch Controller Anchor (Right Hand Controller)
             if (!foundAim)
@@ -524,7 +524,7 @@ namespace ShiroMR
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.UpdatePointerRay", swallowed); }
                 }
 
                 // 2. Meta MR Utility Kit (MRUK) Room Mesh Raycast (Scanned room surfaces)
@@ -544,7 +544,7 @@ namespace ShiroMR
                             }
                         }
                     }
-                    catch { }
+                    catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.UpdatePointerRay", swallowed); }
                 }
 
                 // 3. Unity Physics Raycast against physical colliders (excluding virtual ward objects during calibration)
@@ -740,7 +740,7 @@ namespace ShiroMR
                     }
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.HandleTriggerInput", swallowed); }
 
             // 2. Meta Quest Touch Controller Trigger & A Button
             bool isControllerTrigger = false;
@@ -754,7 +754,7 @@ namespace ShiroMR
                     isControllerTrigger = true;
                 }
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.HandleTriggerInput", swallowed); }
 
             // 3. Unity Editor Mouse & Keyboard
             bool isEditorClick = false;
@@ -792,7 +792,7 @@ namespace ShiroMR
                     OVRInput.SetControllerVibration(0.6f, 0.3f, OVRInput.Controller.RTouch);
                     Invoke(nameof(StopHaptics), 0.15f);
                 }
-                catch { }
+                catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.HandleTriggerInput", swallowed); }
                 return;
             }
 
@@ -826,7 +826,7 @@ namespace ShiroMR
                             OVRInput.SetControllerVibration(0.6f, 0.4f, OVRInput.Controller.RTouch);
                             Invoke(nameof(StopHaptics), 0.12f);
                         }
-                        catch { }
+                        catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.HandleTriggerInput", swallowed); }
                     }
 
                     // Restore visual color
@@ -845,7 +845,7 @@ namespace ShiroMR
             {
                 OVRInput.SetControllerVibration(0, 0, OVRInput.Controller.RTouch);
             }
-            catch { }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroVRPointer.StopHaptics", swallowed); }
         }
     }
 }
