@@ -359,6 +359,19 @@ namespace ShiroMR
             }
 
             // 3. The hospital ward list
+            yield return StartCoroutine(FetchWardListRoutine());
+            if (!IsPaired) yield break; // the server refused the token
+
+            // Next, load active ward geometry and open WebSocket
+            yield return StartCoroutine(FetchWardConfigRoutine(() =>
+            {
+                StartWebSocketConnection();
+            }));
+        }
+
+        /// <summary>The hospital's ward list (for the Ward tab buttons).</summary>
+        private IEnumerator FetchWardListRoutine()
+        {
             using (UnityWebRequest listReq = UnityWebRequest.Get($"http://{serverIp}:{serverPort}/api/ward/list"))
             {
                 Authorize(listReq);
@@ -388,13 +401,49 @@ namespace ShiroMR
                         Debug.LogWarning($"[SHIRO NET] Ward directory parse warning on {serverIp}: {ex.Message}");
                     }
                 }
+                else
+                {
+                    Debug.LogWarning($"[SHIRO NET] Ward list not loaded ({listReq.error}). It is loaded again when the live connection comes up.");
+                }
             }
+        }
 
-            // Next, load active ward geometry and open WebSocket
-            yield return StartCoroutine(FetchWardConfigRoutine(() =>
+        /// <summary>True when the chosen ward's layout (and its spatial anchor ID) has been loaded.</summary>
+        public bool IsWardLoaded =>
+            HasWard && LastLoadedWardConfig != null &&
+            string.Equals(LastLoadedWardConfig.ward_id, targetWardId, StringComparison.OrdinalIgnoreCase);
+
+        private bool _reloadInProgress;
+
+        /// <summary>
+        /// Loads what is still missing: the ward list and the chosen ward's layout.
+        /// Called when the live connection comes up, so a headset started before the
+        /// edge server gets its ward (and restores its spatial anchor) once the server
+        /// answers; also from Re-Sync. Does nothing when everything is loaded.
+        /// </summary>
+        public void ReloadMissingWardData()
+        {
+            if (_reloadInProgress || !IsPaired) return;
+            if (_availableWards.Count > 0 && (!HasWard || IsWardLoaded)) return;
+            StartCoroutine(ReloadMissingWardDataRoutine());
+        }
+
+        private IEnumerator ReloadMissingWardDataRoutine()
+        {
+            _reloadInProgress = true;
+            try
             {
-                StartWebSocketConnection();
-            }));
+                if (_availableWards.Count == 0) yield return StartCoroutine(FetchWardListRoutine());
+                if (IsPaired && HasWard && !IsWardLoaded)
+                {
+                    Debug.Log($"[SHIRO NET] Loading ward {targetWardId}, which was not loaded before (edge server was not reachable).");
+                    yield return StartCoroutine(FetchWardConfigRoutine(null));
+                }
+            }
+            finally
+            {
+                _reloadInProgress = false;
+            }
         }
 
         /// <summary>
@@ -515,6 +564,8 @@ namespace ShiroMR
                         isWsConnected = true;
                         Debug.Log($"[SHIRO NET] WebSocket Connected to SHIRO Edge Server!");
                         OnConnectionStatusChanged?.Invoke(true);
+                        // Started before the server? Load the ward list and ward now.
+                        ReloadMissingWardData();
                     });
 
                     // Send Headset Identification Handshake to Edge Server

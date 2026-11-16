@@ -835,6 +835,22 @@ namespace ShiroMR
         /// </summary>
         public void QuickReSync()
         {
+            // The ward (with its saved spatial anchor ID) never arrived, for example because
+            // the app started before the edge server: load it; the anchor is restored on arrival.
+            var net = ShiroNetworkManager.Instance;
+            if (net != null && net.HasWard && !net.IsWardLoaded)
+            {
+                net.ReloadMissingWardData();
+                if (_instructionText != null)
+                {
+                    _instructionText.text = net.IsConnected
+                        ? $"⏳ Loading ward {net.targetWardId} from the edge server… the saved anchor is restored when it arrives."
+                        : $"⚠️ Ward {net.targetWardId} is not loaded: the edge server cannot be reached (System tab).";
+                    _instructionText.color = new Color(0.95f, 0.75f, 0.2f);
+                }
+                return;
+            }
+
             if (spatialManager != null)
             {
                 bool ok = spatialManager.ReSyncAlignment();
