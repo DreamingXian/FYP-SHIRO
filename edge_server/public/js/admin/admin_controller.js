@@ -125,9 +125,27 @@
     const body = document.getElementById('admin-headsets-body');
     if (!body) return;
     try {
-      const { pairings } = await api('/api/admin/headsets');
-      body.innerHTML = pairings.length === 0 ? emptyRow(5, 'No headset is paired yet.') : pairings.map((p) => {
+      const [{ pairings }, { clinicians }] = await Promise.all([api('/api/admin/headsets'), api('/api/admin/clinicians')]);
+      const activeClinicians = clinicians.filter(c => c.is_active);
+      body.innerHTML = pairings.length === 0 ? emptyRow(6, 'No headset is paired yet.') : pairings.map((p) => {
         const revoked = Boolean(p.revoked_at);
+        // Who uses the headset: what it does is recorded in this clinician's name
+        let assignCell;
+        if (revoked) {
+          assignCell = '<span style="font-size: 12px; color: var(--text-muted);">—</span>';
+        } else {
+          const assigned = p.assigned_clinician_id || '';
+          const stale = assigned && !p.assigned_user
+            ? `<option value="${escapeHtml(assigned)}" selected>${escapeHtml(assigned)} (deactivated: acts for nobody)</option>`
+            : '';
+          const clinicianOptions = activeClinicians.map(c =>
+            `<option value="${escapeHtml(c.clinician_id)}"${c.clinician_id === assigned ? ' selected' : ''}>${escapeHtml(c.full_name)} (${escapeHtml(c.clinician_id)})</option>`).join('');
+          assignCell = `<select class="form-control" style="font-size: 12px; padding: 4px 6px; width: auto;"${actionAttrs('adminAssignHeadset', [p.device_id], { event: 'change', value: true })}>
+              <option value=""${assigned ? '' : ' selected'}>— Nobody assigned —</option>
+              ${stale}
+              ${clinicianOptions}
+            </select>`;
+        }
         const statusBadgeHtml = revoked
           ? `<span class="badge badge-neutral">Revoked ${escapeHtml(formatTime(p.revoked_at))}</span>`
           : '<span class="badge badge-live">Paired</span>';
@@ -136,6 +154,7 @@
           : `<button class="btn btn-outline btn-sm"${actionAttrs('adminRevokeHeadset', [p.device_id])}>Revoke</button>`;
         return `<tr>
           <td class="mono">${escapeHtml(p.device_id)}</td>
+          <td>${assignCell}</td>
           <td class="mono">${escapeHtml(p.paired_by)}</td>
           <td style="font-size: 12px;">${escapeHtml(formatTime(p.paired_at))}</td>
           <td>${statusBadgeHtml}</td>
@@ -143,9 +162,23 @@
         </tr>`;
       }).join('');
     } catch (err) {
-      body.innerHTML = emptyRow(5, `Could not load the pairings: ${err.message}`);
+      body.innerHTML = emptyRow(6, `Could not load the pairings: ${err.message}`);
     }
   }
+
+  window.adminAssignHeadset = async function (deviceId, clinicianId) {
+    try {
+      const { assigned_user: user } = await api('/api/admin/headsets/assign', {
+        method: 'POST',
+        body: JSON.stringify({ device_id: deviceId, clinician_id: clinicianId || null })
+      });
+      showToast(user ? `${deviceId} is now used by ${user.name}. Its actions are recorded in this name.` : `${deviceId} is assigned to nobody.`, 'success');
+      loadAudit();
+    } catch (err) {
+      showToast(err.message, 'danger', 5000);
+    }
+    loadHeadsets();
+  };
 
   async function newPairingCode() {
     try {

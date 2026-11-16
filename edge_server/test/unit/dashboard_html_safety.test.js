@@ -153,6 +153,8 @@ const SAFE_EXPRESSIONS = [
   /^(textColor|barColor|batColor|deltaColor|dotColor|strokeColor|normalBgColor|badgeClass|icon|typePill|typeBadge|statusBadge|availBadge|riskBadge|powerDisplay|avatarHtml|photoImg|bedInfo|secondaryActionBtn|liveMapBtn|nodeDisplay|boundText|losText|statusBadgeHtml|optionsHtml|wardOptions|bedsList|anchorsList|obstaclesList|patternOptionsHtml|anchorCardsHtml|hrSvg|spo2Svg|gridLines|inUseDetail|inUseNote|genderLabel|isBest|pathD|startTimeStr|endTimeStr|timeStr|rotLabel|uuidShort|hVal|xVal|yVal|zVal|wVal|lVal|avgHR|minHR|maxHR|avgSpO2|minSpO2|maxSpO2|unit)$/,
   // incident_history.js: markup built in code from escaped parts
   /^(patientCell|summaryHtml|incidentRowsHtml|pillsHtml|idTag)$/,
+  // admin_controller.js: headset assignment cell and its options, from escaped parts
+  /^(assignCell|clinicianOptions|stale)$/,
   /^getRadar(Signal|Battery)Html\(d\)$/,
   /^statusBadge\(d\.status\)$/, // health_monitor.js: fixed class name, escaped text
   /^isBound \|\| isAssignedWard \? `<option value="IN_USE" selected>In Use \(Currently Deployed\)<\/option>` : ''$/,
