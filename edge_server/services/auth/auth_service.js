@@ -58,11 +58,14 @@ function clinicianActor(c) {
   return { type: 'CLINICIAN', id: c.clinician_id, username: c.username, name: c.full_name, role: c.role };
 }
 
-/** How an actor is written in records: "Dr Lim (CLN-002)" or "QUEST3-1A2B3C (paired by CLN-001)". */
+/** How an actor is written in records: "Dr Lim (CLN-002)" or "QUEST3-1A2B3C (Dr Lim, CLN-002)". */
 function actorLabel(actor) {
   if (!actor) return null;
   if (actor.type === 'CLINICIAN') return `${actor.name} (${actor.id})`;
-  if (actor.type === 'HEADSET') return `${actor.id} (paired by ${actor.pairedBy})`;
+  if (actor.type === 'HEADSET') {
+    // The clinician wearing it (assigned by an admin), not the admin who paired it
+    return actor.user ? `${actor.id} (${actor.user.name}, ${actor.user.id})` : `${actor.id} (no clinician assigned)`;
+  }
   return null;
 }
 
@@ -261,11 +264,41 @@ async function authenticateHeadset(token) {
   if (typeof token !== 'string' || token.length < 20 || token.length > 100) return null;
   const p = await store.findPairingByHash(hashToken(token));
   if (!p || p.revoked_at) return null;
-  return { type: 'HEADSET', id: p.device_id, pairedBy: p.paired_by };
+  return { type: 'HEADSET', id: p.device_id, pairedBy: p.paired_by, user: assignedUser(p) };
+}
+
+/** The clinician a pairing is assigned to, or null (none, or the account is deactivated). */
+function assignedUser(p) {
+  if (!p || !p.assigned_clinician_id || !p.assigned_name || !Number(p.assigned_active)) return null;
+  return { id: p.assigned_clinician_id, name: p.assigned_name };
 }
 
 async function listPairings() {
-  return store.listPairings();
+  const rows = await store.listPairings();
+  return rows.map((p) => ({ ...p, assigned_user: assignedUser(p) }));
+}
+
+/**
+ * Assigns a paired headset to a clinician (or to nobody with clinicianId null).
+ * From then on, what the headset does is recorded as that clinician's.
+ * Returns the assigned user ({ id, name }) or null.
+ */
+async function assignHeadset(deviceId, clinicianId, byActor) {
+  let user = null;
+  if (clinicianId !== null) {
+    const c = await store.findClinicianById(clinicianId);
+    if (!c) throw new HttpError(404, `No account ${clinicianId}.`);
+    if (!Number(c.is_active)) throw new HttpError(400, `${c.full_name} (${clinicianId}) is deactivated and cannot be assigned a headset.`);
+    user = { id: c.clinician_id, name: c.full_name };
+  }
+  const changed = await store.assignPairing(deviceId, clinicianId, byActor ? byActor.id : null);
+  if (!changed) throw new HttpError(404, `No active pairing for ${deviceId}.`);
+  return user;
+}
+
+/** Headsets currently assigned to a clinician (to update them when the account changes). */
+async function headsetsAssignedTo(clinicianId) {
+  return store.listPairingsAssignedTo(clinicianId);
 }
 
 async function revokePairing(deviceId, revokedBy) {
@@ -290,6 +323,8 @@ module.exports = {
   pairHeadset,
   authenticateHeadset,
   listPairings,
+  assignHeadset,
+  headsetsAssignedTo,
   revokePairing,
   SESSION_TTL_MS,
   LOGIN_MAX_FAILURES,

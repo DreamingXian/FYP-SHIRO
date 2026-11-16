@@ -154,7 +154,8 @@ describe('headset pairing', () => {
     const { token, pairedBy } = await authService.pairHeadset('QUEST3-AAA111', code, '10.0.0.5');
     assert.equal(pairedBy, 'CLN-001');
     const actor = await authService.authenticateHeadset(token);
-    assert.deepEqual(actor, { type: 'HEADSET', id: 'QUEST3-AAA111', pairedBy: 'CLN-001' });
+    assert.deepEqual(actor, { type: 'HEADSET', id: 'QUEST3-AAA111', pairedBy: 'CLN-001', user: null });
+    assert.equal(authService.actorLabel(actor), 'QUEST3-AAA111 (no clinician assigned)');
     await assert.rejects(authService.pairHeadset('QUEST3-BBB222', code, '10.0.0.6'), (e) => e.status === 401, 'used once only');
   });
 
@@ -177,6 +178,48 @@ describe('headset pairing', () => {
     const second = await authService.pairHeadset('QUEST3-EEE555', authService.createPairingCode('CLN-001').code, '10.0.0.9');
     assert.equal((await authService.authenticateHeadset(second.token)).id, 'QUEST3-EEE555');
     assert.equal(await authService.authenticateHeadset(first.token), null, 'the old token stays invalid');
+  });
+});
+
+describe('headset assignment', () => {
+  let token;
+  let nurse;
+  before(async () => {
+    freshAuth();
+    await authService.createClinician({ username: 'admin.one', fullName: 'Admin One', role: 'ADMIN', password: 'admin-password-1' });
+    nurse = await authService.createClinician({ username: 'nurse.lim', fullName: 'Nurse Lim', role: 'CLINICIAN', password: 'nurse-password-1' });
+    ({ token } = await authService.pairHeadset('QUEST3-ASG001', authService.createPairingCode('CLN-001').code, '10.0.1.1'));
+  });
+  const admin = { type: 'CLINICIAN', id: 'CLN-001' };
+
+  test('the headset acts for the clinician it is assigned to, not for the admin who paired it', async () => {
+    const user = await authService.assignHeadset('QUEST3-ASG001', nurse.clinician_id, admin);
+    assert.deepEqual(user, { id: nurse.clinician_id, name: 'Nurse Lim' });
+    const actor = await authService.authenticateHeadset(token);
+    assert.equal(authService.actorLabel(actor), `QUEST3-ASG001 (Nurse Lim, ${nurse.clinician_id})`);
+    const [listed] = await authService.listPairings();
+    assert.deepEqual(listed.assigned_user, user);
+  });
+
+  test('a deactivated clinician cannot be assigned, and a headset assigned to one acts for nobody', async () => {
+    await authService.setClinicianActive(nurse.clinician_id, false, admin);
+    assert.equal(authService.actorLabel(await authService.authenticateHeadset(token)), 'QUEST3-ASG001 (no clinician assigned)');
+    await assert.rejects(authService.assignHeadset('QUEST3-ASG001', nurse.clinician_id, admin), (e) => e.status === 400);
+    assert.deepEqual(await authService.headsetsAssignedTo(nurse.clinician_id), ['QUEST3-ASG001']);
+    await authService.setClinicianActive(nurse.clinician_id, true, admin);
+  });
+
+  test('unassigning, unknown accounts and headsets without a pairing', async () => {
+    assert.equal(await authService.assignHeadset('QUEST3-ASG001', null, admin), null);
+    assert.equal((await authService.authenticateHeadset(token)).user, null);
+    await assert.rejects(authService.assignHeadset('QUEST3-ASG001', 'CLN-999', admin), (e) => e.status === 404);
+    await assert.rejects(authService.assignHeadset('QUEST3-NOPE01', nurse.clinician_id, admin), (e) => e.status === 404);
+  });
+
+  test('pairing again starts unassigned', async () => {
+    await authService.assignHeadset('QUEST3-ASG001', nurse.clinician_id, admin);
+    const again = await authService.pairHeadset('QUEST3-ASG001', authService.createPairingCode('CLN-001').code, '10.0.1.1');
+    assert.equal((await authService.authenticateHeadset(again.token)).user, null);
   });
 });
 
@@ -272,8 +315,13 @@ describe('requests', () => {
   test('a paired headset may read what it needs, but not use clinician-only addresses', async () => {
     const forbidden = await call('/api/patients/admit', { method: 'POST', bearer: headsetToken, body: {} });
     assert.equal(forbidden.status, 403);
+    // The headset reads who it is assigned to; it learns nothing about other accounts
     const me = await call('/api/auth/me', { bearer: headsetToken });
-    assert.equal(me.status, 403, '/api/auth/me is for dashboard sessions');
+    assert.equal(me.status, 200);
+    const meBody = await me.json();
+    assert.equal(meBody.user.type, 'HEADSET');
+    assert.equal(meBody.user.assigned_clinician, null);
+    assert.equal(meBody.user.password_hash, undefined);
     const wrong = await call('/api/patients/list', { bearer: 'x'.repeat(43) });
     assert.equal(wrong.status, 401);
   });

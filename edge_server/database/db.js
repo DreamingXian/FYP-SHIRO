@@ -92,6 +92,8 @@ async function applySchema() {
   await migrateIncidentFreefall();
   const { migrate: migrateBindingBoundBy } = require('./migrate_binding_bound_by');
   await migrateBindingBoundBy();
+  const { migrate: migrateHeadsetAssignment } = require('./migrate_headset_assignment');
+  await migrateHeadsetAssignment();
 }
 
 /**

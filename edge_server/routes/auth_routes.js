@@ -18,7 +18,7 @@ function publicActor(actor) {
   if (actor.type === 'CLINICIAN') {
     return { type: actor.type, clinician_id: actor.id, username: actor.username, full_name: actor.name, role: actor.role };
   }
-  return { type: actor.type, device_id: actor.id, paired_by: actor.pairedBy };
+  return { type: actor.type, device_id: actor.id, paired_by: actor.pairedBy, assigned_clinician: actor.user || null };
 }
 
 async function startSession(res, username, password, ip) {

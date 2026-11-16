@@ -45,7 +45,11 @@ async function handleAdminRoutes(pathname, req, res, parsedUrl, body) {
       const data = parseJsonBody(body);
       if (typeof data.active !== 'boolean') throw new HttpError(400, 'active must be true or false.');
       const updated = await authService.setClinicianActive(data.clinician_id, data.active, actor);
-      if (!data.active) require('../services/websocket_service').closeClinicianConnections(updated.clinician_id);
+      const ws = require('../services/websocket_service');
+      if (!data.active) ws.closeClinicianConnections(updated.clinician_id);
+      // Headsets assigned to this clinician act for nobody while the account is deactivated
+      const user = data.active ? { id: updated.clinician_id, name: updated.full_name } : null;
+      for (const deviceId of await authService.headsetsAssignedTo(updated.clinician_id)) ws.updateHeadsetUser(deviceId, user);
       await audit.record({ actor, action: data.active ? 'CLINICIAN_ACTIVATE' : 'CLINICIAN_DEACTIVATE', targetType: 'CLINICIAN', targetId: updated.clinician_id, ip });
       sendJson(res, 200, { success: true, clinician: updated });
     } catch (err) {
@@ -86,6 +90,26 @@ async function handleAdminRoutes(pathname, req, res, parsedUrl, body) {
       sendJson(res, 201, { success: true, code: created.code, expires_at: created.expiresAt, valid_seconds: created.validSeconds });
     } catch (err) {
       sendFailure(res, err, 'createPairingCode');
+    }
+    return true;
+  }
+
+  // Assign a paired headset to the clinician who uses it (clinician_id null = nobody)
+  if (pathname === '/api/admin/headsets/assign' && req.method === 'POST') {
+    try {
+      const actor = await actorOf(req);
+      const data = parseJsonBody(body);
+      const deviceId = requireId(data.device_id, 'device_id');
+      const clinicianId = data.clinician_id === null ? null : requireId(data.clinician_id, 'clinician_id');
+      const user = await authService.assignHeadset(deviceId, clinicianId, actor);
+      require('../services/websocket_service').updateHeadsetUser(deviceId, user);
+      await audit.record({
+        actor, action: user ? 'HEADSET_ASSIGN' : 'HEADSET_UNASSIGN', targetType: 'HEADSET', targetId: deviceId,
+        details: user ? `assigned to ${user.id}` : 'assigned to nobody', ip
+      });
+      sendJson(res, 200, { success: true, device_id: deviceId, assigned_user: user });
+    } catch (err) {
+      sendFailure(res, err, 'assignHeadset');
     }
     return true;
   }

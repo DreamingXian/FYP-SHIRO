@@ -21,6 +21,7 @@ const RULES = [
   ['GET', '/api/auth/status', ACCESS.PUBLIC],
   ['POST', '/api/auth/login', ACCESS.PUBLIC],
   ['POST', '/api/auth/setup', ACCESS.PUBLIC],     // only from the server PC, and only before the first account exists
+  ['GET', '/api/auth/me', ACCESS.STAFF_OR_HEADSET], // a headset reads its assigned clinician here
   ['POST', '/api/headset/pair', ACCESS.PUBLIC],   // needs a pairing code made by an admin
 
   ['*', '/api/admin/*', ACCESS.ADMIN],

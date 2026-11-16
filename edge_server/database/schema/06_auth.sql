@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS `auth_sessions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Paired headsets: one row per headset, with the hash of its access token.
+-- assigned_clinician_id: the clinician an admin assigned the headset to; what
+-- the headset does is recorded in that clinician's name. NULL = nobody.
 CREATE TABLE IF NOT EXISTS `headset_pairings` (
   `device_id` VARCHAR(32) NOT NULL PRIMARY KEY,
   `token_hash` CHAR(64) NOT NULL,
@@ -38,6 +40,9 @@ CREATE TABLE IF NOT EXISTS `headset_pairings` (
   `paired_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `revoked_at` DATETIME NULL,
   `revoked_by` VARCHAR(16) NULL,
+  `assigned_clinician_id` VARCHAR(16) NULL,
+  `assigned_at` DATETIME NULL,
+  `assigned_by` VARCHAR(16) NULL,
   UNIQUE KEY `uk_headset_token` (`token_hash`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

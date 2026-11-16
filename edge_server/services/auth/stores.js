@@ -77,16 +77,21 @@ function mysqlStore() {
 
     async upsertPairing(p) {
       await pool().query(
-        `INSERT INTO headset_pairings (device_id, token_hash, paired_by, paired_at, revoked_at, revoked_by)
-         VALUES (?, ?, ?, NOW(), NULL, NULL)
+        `INSERT INTO headset_pairings (device_id, token_hash, paired_by, paired_at, revoked_at, revoked_by,
+           assigned_clinician_id, assigned_at, assigned_by)
+         VALUES (?, ?, ?, NOW(), NULL, NULL, NULL, NULL, NULL)
          ON DUPLICATE KEY UPDATE token_hash = VALUES(token_hash), paired_by = VALUES(paired_by),
-           paired_at = NOW(), revoked_at = NULL, revoked_by = NULL`,
+           paired_at = NOW(), revoked_at = NULL, revoked_by = NULL,
+           assigned_clinician_id = NULL, assigned_at = NULL, assigned_by = NULL`,
         [p.device_id, p.token_hash, p.paired_by]
       );
     },
     async findPairingByHash(tokenHash) {
       const [rows] = await pool().query(
-        'SELECT device_id, paired_by, paired_at, revoked_at FROM headset_pairings WHERE token_hash = ? LIMIT 1',
+        `SELECT p.device_id, p.paired_by, p.paired_at, p.revoked_at, p.assigned_clinician_id,
+                c.full_name AS assigned_name, c.is_active AS assigned_active
+         FROM headset_pairings p LEFT JOIN clinicians c ON c.clinician_id = p.assigned_clinician_id
+         WHERE p.token_hash = ? LIMIT 1`,
         [tokenHash]
       );
       return rows[0] || null;
@@ -100,9 +105,28 @@ function mysqlStore() {
     },
     async listPairings() {
       const [rows] = await pool().query(
-        'SELECT device_id, paired_by, paired_at, revoked_at, revoked_by FROM headset_pairings ORDER BY paired_at DESC'
+        `SELECT p.device_id, p.paired_by, p.paired_at, p.revoked_at, p.revoked_by,
+                p.assigned_clinician_id, p.assigned_at, p.assigned_by,
+                c.full_name AS assigned_name, c.is_active AS assigned_active
+         FROM headset_pairings p LEFT JOIN clinicians c ON c.clinician_id = p.assigned_clinician_id
+         ORDER BY p.paired_at DESC`
       );
       return rows;
+    },
+    async assignPairing(deviceId, clinicianId, assignedBy) {
+      const [result] = await pool().query(
+        `UPDATE headset_pairings SET assigned_clinician_id = ?, assigned_at = IF(? IS NULL, NULL, NOW()), assigned_by = ?
+         WHERE device_id = ? AND revoked_at IS NULL`,
+        [clinicianId, clinicianId, clinicianId ? assignedBy : null, deviceId]
+      );
+      return result.affectedRows > 0;
+    },
+    async listPairingsAssignedTo(clinicianId) {
+      const [rows] = await pool().query(
+        'SELECT device_id FROM headset_pairings WHERE assigned_clinician_id = ? AND revoked_at IS NULL',
+        [clinicianId]
+      );
+      return rows.map(r => r.device_id);
     }
   };
 }
@@ -112,6 +136,12 @@ function memoryStore() {
   const sessions = new Map();
   const pairings = new Map();
   const copy = (row) => (row ? { ...row } : null);
+  // As the SQL join: the assigned clinician's name and state with the pairing
+  const withClinician = (p) => {
+    if (!p) return null;
+    const c = p.assigned_clinician_id ? clinicians.get(p.assigned_clinician_id) : null;
+    return { ...p, assigned_name: c ? c.full_name : null, assigned_active: c ? c.is_active : null };
+  };
 
   return {
     async countClinicians() { return clinicians.size; },
@@ -141,8 +171,10 @@ function memoryStore() {
     },
     async deleteExpiredSessions() {},
 
-    async upsertPairing(p) { pairings.set(p.device_id, { ...p, paired_at: new Date(), revoked_at: null, revoked_by: null }); },
-    async findPairingByHash(tokenHash) { return copy([...pairings.values()].find(p => p.token_hash === tokenHash)); },
+    async upsertPairing(p) {
+      pairings.set(p.device_id, { ...p, paired_at: new Date(), revoked_at: null, revoked_by: null, assigned_clinician_id: null, assigned_at: null, assigned_by: null });
+    },
+    async findPairingByHash(tokenHash) { return withClinician([...pairings.values()].find(p => p.token_hash === tokenHash)); },
     async revokePairing(deviceId, revokedBy) {
       const p = pairings.get(deviceId);
       if (!p || p.revoked_at) return false;
@@ -150,7 +182,18 @@ function memoryStore() {
       p.revoked_by = revokedBy;
       return true;
     },
-    async listPairings() { return [...pairings.values()].map(copy); }
+    async listPairings() { return [...pairings.values()].map(withClinician); },
+    async assignPairing(deviceId, clinicianId, assignedBy) {
+      const p = pairings.get(deviceId);
+      if (!p || p.revoked_at) return false;
+      p.assigned_clinician_id = clinicianId;
+      p.assigned_at = clinicianId ? new Date() : null;
+      p.assigned_by = clinicianId ? assignedBy : null;
+      return true;
+    },
+    async listPairingsAssignedTo(clinicianId) {
+      return [...pairings.values()].filter(p => p.assigned_clinician_id === clinicianId && !p.revoked_at).map(p => p.device_id);
+    }
   };
 }
 

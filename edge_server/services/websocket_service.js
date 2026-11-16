@@ -313,6 +313,24 @@ function closeConnectionsOf(type, id) {
   return closed;
 }
 
+/**
+ * A headset was assigned to another clinician (or to nobody): its open sockets
+ * act for the new clinician from now on, and the headset is told who it is.
+ */
+function updateHeadsetUser(deviceId, user) {
+  if (!wss) return 0;
+  let updated = 0;
+  const payload = JSON.stringify({ type: 'HEADSET_ASSIGNMENT', device_id: deviceId, assigned_clinician: user || null });
+  wss.clients.forEach((client) => {
+    if (client.actor && client.actor.type === 'HEADSET' && client.actor.id === deviceId) {
+      client.actor = { ...client.actor, user: user || null };
+      if (client.readyState === 1) client.send(payload);
+      updated++;
+    }
+  });
+  return updated;
+}
+
 const closeHeadsetConnections = (deviceId) => closeConnectionsOf('HEADSET', deviceId);
 const closeClinicianConnections = (clinicianId) => closeConnectionsOf('CLINICIAN', clinicianId);
 
@@ -346,6 +364,7 @@ module.exports = {
   getConnectedClientsCount,
   closeHeadsetConnections,
   closeClinicianConnections,
+  updateHeadsetUser,
   validateCommand,
   MAX_MESSAGE_BYTES
 };

@@ -140,3 +140,20 @@ describe('seed data is only for an empty database', () => {
     assert.equal(await db.isDatabaseEmpty(), true);
   });
 });
+
+describe('headset assignment columns', () => {
+  after(async () => { await db.closePool(); });
+
+  test('a database from before headset assignment gains the columns and keeps its pairings', async () => {
+    let pool = await freshDatabase();
+    await pool.query("INSERT INTO headset_pairings (device_id, token_hash, paired_by) VALUES ('QUEST3-OLD001', ?, 'CLN-001')", ['a'.repeat(64)]);
+    await pool.query('ALTER TABLE headset_pairings DROP COLUMN assigned_clinician_id, DROP COLUMN assigned_at, DROP COLUMN assigned_by');
+
+    pool = await restart();
+
+    const [cols] = await pool.query("SHOW COLUMNS FROM headset_pairings LIKE 'assigned_%'");
+    assert.deepEqual(cols.map(c => c.Field).sort(), ['assigned_at', 'assigned_by', 'assigned_clinician_id']);
+    const [[row]] = await pool.query("SELECT device_id, assigned_clinician_id FROM headset_pairings WHERE device_id = 'QUEST3-OLD001'");
+    assert.equal(row.assigned_clinician_id, null, 'existing pairings stay unassigned');
+  });
+});

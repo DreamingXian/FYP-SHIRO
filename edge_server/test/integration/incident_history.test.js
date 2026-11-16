@@ -129,15 +129,35 @@ describe('incident history and acknowledgement', () => {
     assert.equal((await call('/api/alerts/history?patient_id=P-901')).status, 401);
   });
 
-  test('the headset sees pending alerts and acknowledges as "headset (paired by admin)"', async () => {
+  test('only an admin assigns a headset; the headset then reads who it is assigned to', async () => {
+    const byNurse = await call('/api/admin/headsets/assign', { method: 'POST', cookie: nurse, body: { device_id: 'QUEST3-HIST01', clinician_id: 'CLN-002' } });
+    assert.equal(byNurse.status, 403);
+    const res = await call('/api/admin/headsets/assign', { method: 'POST', cookie: admin, body: { device_id: 'QUEST3-HIST01', clinician_id: 'CLN-002' } });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).assigned_user.id, 'CLN-002');
+    const me = await (await call('/api/auth/me', { bearer: headsetToken })).json();
+    assert.equal(me.user.assigned_clinician.id, 'CLN-002');
+    const [[row]] = await pool.query("SELECT actor_id, details FROM audit_log WHERE action = 'HEADSET_ASSIGN' AND target_id = 'QUEST3-HIST01'");
+    assert.equal(row.actor_id, 'CLN-001');
+    assert.match(row.details, /CLN-002/);
+  });
+
+  test('the headset sees pending alerts and acknowledges in the name of the clinician using it', async () => {
     const active = await (await call('/api/alerts/active', { bearer: headsetToken })).json();
     assert.ok(active.alerts.some(a => a.incident_id === 'IT-INC-1'));
 
     const res = await call('/api/alerts/acknowledge', { method: 'POST', bearer: headsetToken, body: { incident_id: 'IT-INC-1', notes: 'Acknowledged on the Meta Quest 3 headset.' } });
     assert.equal(res.status, 200);
-    assert.match((await res.json()).attending_clinician, /^QUEST3-HIST01 \(paired by CLN-001\)$/);
+    assert.match((await res.json()).attending_clinician, /^QUEST3-HIST01 \(.+, CLN-002\)$/);
 
-    const [[audit]] = await pool.query("SELECT actor_type, actor_id, target_id FROM audit_log WHERE action = 'ALERT_ACKNOWLEDGE' AND target_id = 'IT-INC-1'");
+    // The audit row is written when the response has finished: wait for it briefly
+    let audit;
+    for (let i = 0; i < 20 && !audit; i++) {
+      [[audit]] = await pool.query("SELECT actor_type, actor_id, actor_label, target_id FROM audit_log WHERE action = 'ALERT_ACKNOWLEDGE' AND target_id = 'IT-INC-1'");
+      if (!audit) await new Promise(r => setTimeout(r, 100));
+    }
+    assert.ok(audit, 'the acknowledgement is in the audit log');
+    assert.match(audit.actor_label, /CLN-002/);
     assert.equal(audit.actor_type, 'HEADSET');
     assert.equal(audit.actor_id, 'QUEST3-HIST01');
   });
