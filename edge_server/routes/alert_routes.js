@@ -9,8 +9,7 @@ const { getPool } = require('../database/db');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const { requireId, requireOneOf, optionalNumber, optionalInt, optionalText } = require('../utils/validate');
 const { actorLabel } = require('../services/auth/auth_service');
-
-const INCIDENT_CATEGORIES = ['FALL_ACCIDENT', 'CRITICAL_VITALS', 'GEOFENCE_BREACH'];
+const { HISTORY_RANGES, CATEGORIES: INCIDENT_CATEGORIES } = require('../services/alerts/incident_history');
 const INCIDENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$/;
 
 // Test inputs of the Live Lab test bench. They are not measurements: every
@@ -45,12 +44,29 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
-  // 2. GET /api/alerts/history - Retrieve historical incident audit logs
+  // 2. GET /api/alerts/history - Incident history, of one patient or of everyone
+  //    ?patient_id=P-001  &range=24h|7d|30d|all  &category=FALL_ACCIDENT|...
+  //    &simulated=include|exclude  &limit=1..500
   if (pathname === '/api/alerts/history' && req.method === 'GET') {
     try {
-      const limit = optionalInt(parsedUrl.searchParams.get('limit'), 'limit', { min: 1, max: 500 }, 50);
-      const history = await alertService.getIncidentHistory(limit);
-      sendJson(res, 200, { success: true, count: history.length, history });
+      const q = parsedUrl.searchParams;
+      const limit = optionalInt(q.get('limit'), 'limit', { min: 1, max: 500 }, 50);
+      const patientId = q.get('patient_id') ? requireId(q.get('patient_id'), 'patient_id') : null;
+      const range = q.get('range') ? requireOneOf(q.get('range'), Object.keys(HISTORY_RANGES), 'range') : 'all';
+      const category = q.get('category') ? requireOneOf(q.get('category'), INCIDENT_CATEGORIES, 'category') : null;
+      const simulated = q.get('simulated') ? requireOneOf(q.get('simulated'), ['include', 'exclude'], 'simulated') : 'include';
+      const { history, summary } = await alertService.getIncidentHistory({
+        limit, patientId, range, category, includeSimulated: simulated === 'include'
+      });
+      sendJson(res, 200, {
+        success: true,
+        filter: { patient_id: patientId, range, category, simulated, limit },
+        count: history.length,
+        // more incidents match than were returned
+        truncated: summary.total > history.length,
+        summary,
+        history
+      });
     } catch (err) {
       sendFailure(res, err, 'getIncidentHistory');
     }

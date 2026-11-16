@@ -181,6 +181,10 @@ describe('API requests', () => {
     await expectError(await get('/api/patients/list?status=' + encodeURIComponent('ADMITTED; DROP TABLE patients')), 400);
     await expectError(await get('/api/devices/list?type=TOASTER'), 400);
     await expectError(await get('/api/alerts/history?limit=' + encodeURIComponent('5; DROP TABLE x')), 400);
+    assert.match((await expectError(await get('/api/alerts/history?patient_id=' + encodeURIComponent("P-001' OR 1=1 -- ")), 400)).error, /patient_id/);
+    assert.match((await expectError(await get('/api/alerts/history?range=' + encodeURIComponent('1 HOUR) OR (1=1')), 400)).error, /range/);
+    assert.match((await expectError(await get('/api/alerts/history?category=FIRE'), 400)).error, /category/);
+    assert.match((await expectError(await get('/api/alerts/history?simulated=only'), 400)).error, /simulated/);
     await expectError(await post('/api/bindings/bind', { patient_id: 'P-001', device_id: '<img src=x>' }), 400);
     await expectError(await post('/api/devices/enroll', { device_id: 'TAG-900', mac_address: 'not-a-mac', device_type: 'WRISTBAND' }), 400);
     await expectError(await post('/api/alerts/acknowledge', { incident_id: { $ne: null } }), 400);

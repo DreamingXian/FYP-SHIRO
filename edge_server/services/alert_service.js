@@ -15,6 +15,8 @@ const { nextIncidentId } = require('./alerts/incident_id');
 const { createFallTracker } = require('./alerts/fall_tracker');
 const { createVitalsEvaluator } = require('./alerts/vitals_evaluator');
 const thresholds = require('../config/clinical_thresholds');
+const { HttpError } = require('../utils/http');
+const { buildHistoryFilter, normalizeSummary } = require('./alerts/incident_history');
 
 // One open fall session per wristband: see alerts/fall_tracker.js
 const fallTracker = createFallTracker();
@@ -304,80 +306,112 @@ async function evaluateTelemetry(telemetry, detectedTag, tagMac) {
 }
 
 /**
- * Clinician Acknowledges an active emergency incident
+ * A clinician (or a paired headset) acknowledges a pending incident.
+ * Only a PENDING incident can be acknowledged: the first acknowledgement is
+ * the record (who responded, how fast) and is never overwritten by a second
+ * one from another screen. 404 when the incident does not exist, 409 when it
+ * was already handled.
  */
 async function acknowledgeIncident(incidentId, clinicianId, notes) {
   const pool = getPool();
   const clinician = clinicianId || UNVERIFIED_CLINICIAN;
-  const incidentNotes = notes || 'Acknowledged from the web dashboard.';
+  const incidentNotes = notes || null;
 
-  try {
-    await pool.query(`
-      UPDATE emergency_incident_logs
-      SET resolution_status = 'ACKNOWLEDGED',
-          acknowledgment_time = CURRENT_TIMESTAMP,
-          response_latency_seconds = TIMESTAMPDIFF(SECOND, trigger_timestamp, CURRENT_TIMESTAMP),
-          attending_clinician = ?,
-          notes = ?
-      WHERE incident_id = ?
-    `, [clinician, incidentNotes, incidentId]);
+  const [result] = await pool.query(`
+    UPDATE emergency_incident_logs
+    SET resolution_status = 'ACKNOWLEDGED',
+        acknowledgment_time = CURRENT_TIMESTAMP,
+        response_latency_seconds = TIMESTAMPDIFF(SECOND, trigger_timestamp, CURRENT_TIMESTAMP),
+        attending_clinician = ?,
+        notes = ?
+    WHERE incident_id = ? AND resolution_status = 'PENDING'
+  `, [clinician, incidentNotes, incidentId]);
 
-    logger.info(`[ALERT ACKNOWLEDGED] Incident ${incidentId} acknowledged by ${clinician}.`);
-
-    // The wristband keeps repeating its fall flag for a while: the open session stays
-    // in place so those packets do not raise the same fall again.
-    fallTracker.markAcknowledged(incidentId);
-
-    broadcastToClients({
-      type: 'EMERGENCY_ACKNOWLEDGED',
-      incident_id: incidentId,
-      attending_clinician: clinician,
-      notes: incidentNotes,
-      timestamp: new Date().toLocaleTimeString()
-    });
-
-    return { success: true, incident_id: incidentId, status: 'ACKNOWLEDGED' };
-  } catch (err) {
-    logger.error('[ALERT ACKNOWLEDGE ERROR]', err.message);
-    throw err;
+  if (result.affectedRows === 0) {
+    const [rows] = await pool.query(
+      'SELECT resolution_status, attending_clinician FROM emergency_incident_logs WHERE incident_id = ?',
+      [incidentId]
+    );
+    if (rows.length === 0) throw new HttpError(404, `Incident "${incidentId}" not found.`);
+    const by = rows[0].attending_clinician || 'a clinician who was not recorded';
+    throw new HttpError(409, `Incident ${incidentId} was already ${String(rows[0].resolution_status).toLowerCase()} by ${by}.`);
   }
+
+  logger.info(`[ALERT ACKNOWLEDGED] Incident ${incidentId} acknowledged by ${clinician}.`);
+
+  // The wristband keeps repeating its fall flag for a while: the open session stays
+  // in place so those packets do not raise the same fall again.
+  fallTracker.markAcknowledged(incidentId);
+
+  broadcastToClients({
+    type: 'EMERGENCY_ACKNOWLEDGED',
+    incident_id: incidentId,
+    attending_clinician: clinician,
+    notes: incidentNotes,
+    timestamp: new Date().toISOString()
+  });
+
+  return { success: true, incident_id: incidentId, status: 'ACKNOWLEDGED', attending_clinician: clinician };
 }
 
 /**
- * Retrieve active pending alerts
+ * Incidents still waiting for a response, newest first.
+ * A database error is passed on: an empty list would tell the dashboard
+ * "no emergencies" while the database cannot be asked.
  */
 async function getActiveAlerts() {
-  const pool = getPool();
-  try {
-    const [rows] = await pool.query(`
-      SELECT * FROM emergency_incident_logs
-      WHERE resolution_status = 'PENDING'
-      ORDER BY trigger_timestamp DESC
-      LIMIT 10
-    `);
-    return rows;
-  } catch (err) {
-    logger.error('[GET ACTIVE ALERTS ERROR]', err.message);
-    return [];
-  }
+  const [rows] = await getPool().query(`
+    SELECT * FROM emergency_incident_logs
+    WHERE resolution_status = 'PENDING'
+    ORDER BY trigger_timestamp DESC
+    LIMIT 50
+  `);
+  return rows;
 }
 
 /**
- * Retrieve full emergency incident history (for audits and shift reports)
+ * Incident history for audits, shift reports and one patient's record.
+ * @param {object} options
+ * @param {number} [options.limit=50]
+ * @param {string|null} [options.patientId]
+ * @param {string} [options.range='all']  '24h' | '7d' | '30d' | 'all'
+ * @param {string|null} [options.category]
+ * @param {boolean} [options.includeSimulated=true]
+ * @returns {Promise<{history: object[], summary: object}>} the summary counts
+ *   every incident matching the filter, not only the rows returned
  */
-async function getIncidentHistory(limit = 50) {
+async function getIncidentHistory({ limit = 50, patientId = null, range = 'all', category = null, includeSimulated = true } = {}) {
   const pool = getPool();
-  try {
-    const [rows] = await pool.query(`
-      SELECT * FROM emergency_incident_logs
-      ORDER BY trigger_timestamp DESC
-      LIMIT ?
-    `, [parseInt(limit, 10)]);
-    return rows;
-  } catch (err) {
-    logger.error('[GET INCIDENT HISTORY ERROR]', err.message);
-    return [];
-  }
+  const { where, params } = buildHistoryFilter({ patientId, range, category, includeSimulated });
+
+  const [rows] = await pool.query(`
+    SELECT incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id,
+           incident_category, trigger_timestamp, pos_x, pos_y,
+           kinematic_impact_force, post_impact_stillness, freefall_min_g,
+           heart_rate, spo2, alert_message, is_simulated,
+           acknowledgment_time, response_latency_seconds, attending_clinician,
+           resolution_status, notes
+    FROM emergency_incident_logs
+    ${where}
+    ORDER BY trigger_timestamp DESC, incident_id DESC
+    LIMIT ?
+  `, [...params, parseInt(limit, 10)]);
+
+  const [summaryRows] = await pool.query(`
+    SELECT COUNT(*) AS total,
+           SUM(incident_category = 'FALL_ACCIDENT') AS falls,
+           SUM(incident_category = 'CRITICAL_VITALS') AS critical_vitals,
+           SUM(incident_category = 'GEOFENCE_BREACH') AS geofence,
+           SUM(resolution_status = 'PENDING') AS pending,
+           SUM(resolution_status <> 'PENDING') AS acknowledged,
+           SUM(is_simulated = 1) AS simulated,
+           AVG(CASE WHEN resolution_status <> 'PENDING' THEN response_latency_seconds END) AS avg_response_seconds,
+           MAX(CASE WHEN resolution_status <> 'PENDING' THEN response_latency_seconds END) AS max_response_seconds
+    FROM emergency_incident_logs
+    ${where}
+  `, params);
+
+  return { history: rows, summary: normalizeSummary(summaryRows[0]) };
 }
 
 module.exports = {
@@ -388,4 +422,3 @@ module.exports = {
   getActiveAlerts,
   getIncidentHistory
 };
-
