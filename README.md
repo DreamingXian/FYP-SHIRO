@@ -151,7 +151,7 @@ The HW-605 (MAX30102) and MPU-6050 share the hardware I2C bus, with battery sens
 
 
 ### Prototype:
-<img width="4608" height="3456" alt="IMG_20261108_073603" src="https://github.com/user-attachments/assets/161d6580-bc69-401d-99b6-7488180824b3" />
+<img width="4608" height="3456" alt="IMG_20261108_073603" src="https://github.com/user-attachments/assets/53cd1721-7a8f-435f-8464-96460933887f" />
 
 ---
 
