@@ -59,6 +59,10 @@ namespace ShiroMR
         public event Action<bool> OnConnectionStatusChanged;
         public event Action<List<WardSummary>> OnWardListLoaded;
         public event Action<string> OnActiveWardChanged;
+        /// <summary>A new incident (fall, critical vitals, geofence) from the edge server.</summary>
+        public event Action<IncidentAlert> OnEmergencyAlert;
+        /// <summary>An incident was acknowledged (incident ID, by whom, ISO time).</summary>
+        public event Action<string, string, string> OnEmergencyAcknowledged;
 
         // Hospital Ward Directory
         private readonly List<WardSummary> _availableWards = new List<WardSummary>();
@@ -408,6 +412,74 @@ namespace ShiroMR
             }
         }
 
+        /// <summary>
+        /// Incidents still waiting for a response (GET /api/alerts/active), for alerts
+        /// raised while this headset was not connected. onDone(alerts, error): alerts is
+        /// null when the request failed.
+        /// </summary>
+        public IEnumerator FetchActiveAlertsRoutine(Action<List<IncidentAlert>, string> onDone)
+        {
+            if (!IsPaired) { onDone?.Invoke(null, "not paired"); yield break; }
+            using (UnityWebRequest req = UnityWebRequest.Get($"http://{serverIp}:{serverPort}/api/alerts/active"))
+            {
+                Authorize(req);
+                req.timeout = 5;
+                yield return req.SendWebRequest();
+                if (req.responseCode == 401)
+                {
+                    ForgetPairing("The edge server no longer accepts this headset (pairing revoked or a new database). Pair it again.");
+                    onDone?.Invoke(null, "not paired");
+                    yield break;
+                }
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    onDone?.Invoke(null, req.error);
+                    yield break;
+                }
+                ActiveAlertsResponse resp = null;
+                try { resp = JsonUtility.FromJson<ActiveAlertsResponse>(req.downloadHandler.text); }
+                catch (Exception ex) { onDone?.Invoke(null, $"unreadable answer ({ex.Message})"); yield break; }
+                if (resp == null || !resp.success) onDone?.Invoke(null, resp?.error ?? "unreadable answer");
+                else onDone?.Invoke(resp.alerts ?? new List<IncidentAlert>(), null);
+            }
+        }
+
+        /// <summary>
+        /// Acknowledges an incident as this headset (POST /api/alerts/acknowledge).
+        /// The server records "QUEST3-… (paired by …)". onDone(HTTP status, answer):
+        /// 200 acknowledged, 409 someone else was first (answer.error names them),
+        /// 404 unknown incident, 0 no answer.
+        /// </summary>
+        public IEnumerator AcknowledgeIncidentRoutine(string incidentId, Action<long, AcknowledgeResponse> onDone)
+        {
+            // Incident IDs are letters, digits, '-' and '_' (server rule); anything else is dropped
+            string safeId = System.Text.RegularExpressions.Regex.Replace(incidentId ?? "", "[^A-Za-z0-9_-]", "");
+            string body = "{\"incident_id\":\"" + safeId + "\",\"notes\":\"Acknowledged on the Meta Quest 3 headset.\"}";
+            using (UnityWebRequest req = new UnityWebRequest($"http://{serverIp}:{serverPort}/api/alerts/acknowledge", "POST"))
+            {
+                req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
+                req.downloadHandler = new DownloadHandlerBuffer();
+                req.SetRequestHeader("Content-Type", "application/json");
+                Authorize(req);
+                req.timeout = 6;
+                yield return req.SendWebRequest();
+
+                if (req.responseCode == 401)
+                {
+                    ForgetPairing("The edge server no longer accepts this headset (pairing revoked or a new database). Pair it again.");
+                }
+                AcknowledgeResponse resp = null;
+                try
+                {
+                    if (!string.IsNullOrEmpty(req.downloadHandler?.text))
+                        resp = JsonUtility.FromJson<AcknowledgeResponse>(req.downloadHandler.text);
+                }
+                catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.AcknowledgeIncidentRoutine", swallowed); }
+                if (resp == null) resp = new AcknowledgeResponse { success = false, error = req.error ?? "no answer from the edge server" };
+                onDone?.Invoke(req.responseCode, resp);
+            }
+        }
+
         /// <summary>True when the chosen ward's layout (and its spatial anchor ID) has been loaded.</summary>
         public bool IsWardLoaded =>
             HasWard && LastLoadedWardConfig != null &&
@@ -693,6 +765,22 @@ namespace ShiroMR
                         if (!string.IsNullOrEmpty(tagToPurge))
                         {
                             _mainThreadQueue.Enqueue(() => OnTagPurged?.Invoke(tagToPurge));
+                        }
+                        break;
+
+                    case "EMERGENCY_ALERT":
+                        var alertMsg = JsonUtility.FromJson<EmergencyAlertMessage>(json);
+                        if (alertMsg?.incident != null && !string.IsNullOrEmpty(alertMsg.incident.incident_id))
+                        {
+                            _mainThreadQueue.Enqueue(() => OnEmergencyAlert?.Invoke(alertMsg.incident));
+                        }
+                        break;
+
+                    case "EMERGENCY_ACKNOWLEDGED":
+                        var ackMsg = JsonUtility.FromJson<EmergencyAcknowledgedMessage>(json);
+                        if (ackMsg != null && !string.IsNullOrEmpty(ackMsg.incident_id))
+                        {
+                            _mainThreadQueue.Enqueue(() => OnEmergencyAcknowledged?.Invoke(ackMsg.incident_id, ackMsg.attending_clinician, ackMsg.timestamp));
                         }
                         break;
 

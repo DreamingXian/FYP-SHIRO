@@ -199,5 +199,74 @@ namespace ShiroMR
         public string canonical_id;
         public string mac;
     }
+
+    /// <summary>
+    /// An incident from the edge server (fall, critical vitals, geofence): the
+    /// EMERGENCY_ALERT broadcast and the rows of /api/alerts/active.
+    /// A value the server sends as null is 0 here: 0 is shown as "not measured".
+    /// </summary>
+    [Serializable]
+    public class IncidentAlert
+    {
+        public string incident_id;
+        public string patient_id;
+        public string patient_name;
+        public string ward_id;
+        public string bed_id;
+        public string wristband_mac;
+        public string device_id;
+        public string incident_category; // FALL_ACCIDENT, CRITICAL_VITALS, GEOFENCE_BREACH
+        public string trigger_timestamp;
+        public float pos_x;
+        public float pos_y;
+        public float kinematic_impact_force;
+        public float post_impact_stillness;
+        public float freefall_min_g;
+        public int heart_rate;
+        public float spo2;
+        public string alert_message;
+        public string resolution_status;
+        public string attending_clinician;
+
+        // is_simulated is true/false in the broadcast and 0/1 in database rows; the
+        // server always starts the message of a test alarm with "[SIMULATION]".
+        public bool IsSimulated => !string.IsNullOrEmpty(alert_message) && alert_message.StartsWith("[SIMULATION]");
+
+        public string CategoryLabel =>
+            incident_category == "FALL_ACCIDENT" ? "FALL" :
+            incident_category == "CRITICAL_VITALS" ? "CRITICAL VITALS" :
+            incident_category == "GEOFENCE_BREACH" ? "LEFT THE WARD" : (incident_category ?? "INCIDENT");
+    }
+
+    [Serializable]
+    public class EmergencyAlertMessage : WsMessageBase
+    {
+        public IncidentAlert incident;
+    }
+
+    [Serializable]
+    public class EmergencyAcknowledgedMessage : WsMessageBase
+    {
+        public string incident_id;
+        public string attending_clinician;
+        public string timestamp;
+    }
+
+    [Serializable]
+    public class ActiveAlertsResponse
+    {
+        public bool success;
+        public List<IncidentAlert> alerts;
+        public string error;
+    }
+
+    [Serializable]
+    public class AcknowledgeResponse
+    {
+        public bool success;
+        public string incident_id;
+        public string attending_clinician;
+        public string error;
+    }
 }
 

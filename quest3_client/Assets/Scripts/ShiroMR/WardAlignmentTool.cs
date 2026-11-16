@@ -829,9 +829,28 @@ namespace ShiroMR
             Debug.Log("[SHIRO ALIGN] Native anchor purged and room alignment reset.");
         }
 
+        /// <summary>Raised with every message of this tool (text, colour), for the hand slate's Ward tab.</summary>
+        public event Action<string, Color> OnAlignmentMessage;
+
+        /// <summary>Shows a message on this tool's panel and on the hand slate.</summary>
+        private void Notify(string text, Color color)
+        {
+            if (_instructionText != null)
+            {
+                _instructionText.text = text;
+                _instructionText.color = color;
+            }
+            OnAlignmentMessage?.Invoke(text, color);
+        }
+
+        private static readonly Color MsgOk = new Color(0.1f, 0.95f, 0.4f);
+        private static readonly Color MsgBusy = new Color(0.95f, 0.75f, 0.2f);
+        private static readonly Color MsgProblem = new Color(0.95f, 0.5f, 0.2f);
+
         /// <summary>
-        /// 1-Click Instant Re-Sync: Restores saved room calibration immediately.
-        /// Useful when taking off the headset and putting it back on.
+        /// 1-Click Re-Sync. With a saved spatial anchor, the anchor is looked up in the room
+        /// again (correct after sleep or a guardian reset). Without one, the position saved
+        /// on this headset is restored, which can be off after the tracking origin changed.
         /// </summary>
         public void QuickReSync()
         {
@@ -841,43 +860,56 @@ namespace ShiroMR
             if (net != null && net.HasWard && !net.IsWardLoaded)
             {
                 net.ReloadMissingWardData();
-                if (_instructionText != null)
-                {
-                    _instructionText.text = net.IsConnected
-                        ? $"⏳ Loading ward {net.targetWardId} from the edge server… the saved anchor is restored when it arrives."
-                        : $"⚠️ Ward {net.targetWardId} is not loaded: the edge server cannot be reached (System tab).";
-                    _instructionText.color = new Color(0.95f, 0.75f, 0.2f);
-                }
+                Notify(net.IsConnected
+                    ? $"⏳ Loading ward {net.targetWardId} from the edge server… the saved anchor is restored when it arrives."
+                    : $"⚠️ Ward {net.targetWardId} is not loaded: the edge server cannot be reached (System tab).", MsgBusy);
+                return;
+            }
+            if (spatialManager == null) return;
+
+            string ward = net != null ? net.targetWardId : "";
+            string uuid = spatialManager.KnownAnchorUuid(ward);
+            if (!string.IsNullOrEmpty(uuid))
+            {
+                Notify("⏳ Looking for the saved spatial anchor in the room…", MsgBusy);
+                ReSyncFromAnchor(uuid);
                 return;
             }
 
-            if (spatialManager != null)
+            if (spatialManager.ReSyncAlignment())
             {
-                bool ok = spatialManager.ReSyncAlignment();
-                if (ok)
-                {
-                    isAligned = true;
-                    if (wardVisualizer != null)
-                {
-                    wardVisualizer.ToggleOverlay(true);
-                    wardVisualizer.SetCollidersEnabled(true);
-                }
-                    UpdateStatusUi("RE-SYNCED (Saved Preference)", new Color(0.1f, 0.95f, 0.4f));
-                    if (_instructionText != null)
-                    {
-                        _instructionText.text = "⚡ Ward digital twin re-locked to saved coordinates!\n(Tracking recenter compensated)";
-                        _instructionText.color = new Color(0.1f, 0.95f, 0.4f);
-                    }
-                }
-                else
-                {
-                    if (_instructionText != null)
-                    {
-                        _instructionText.text = "⚠️ No saved alignment found yet. Please calibrate first.";
-                        _instructionText.color = new Color(0.95f, 0.5f, 0.2f);
-                    }
-                }
+                MarkAligned("RE-SYNCED (position saved on this headset)");
+                Notify("⚡ Restored the position saved on this headset. No spatial anchor is saved for this ward, so it can be off after the headset slept: save a spatial anchor for a stable alignment.", MsgBusy);
             }
+            else
+            {
+                Notify("⚠️ No saved alignment for this ward yet. Calibrate at the door frame, then save the spatial anchor.", MsgProblem);
+            }
+        }
+
+        private async void ReSyncFromAnchor(string uuid)
+        {
+            spatialManager.DetachCurrentAnchor(); // a handle from before sleep may be invalid
+            if (await spatialManager.LoadNativeSpatialAnchorAsync(uuid))
+            {
+                MarkAligned("RE-SYNCED (Native Spatial Anchor)");
+                Notify("🎯 Re-synced: the saved spatial anchor was found in the room.", MsgOk);
+            }
+            else
+            {
+                Notify("⚠️ The saved spatial anchor was not found in the room. Look around the ward for a few seconds and press Re-Sync again, or calibrate at the door frame and save a new anchor.", MsgProblem);
+            }
+        }
+
+        private void MarkAligned(string status)
+        {
+            isAligned = true;
+            if (wardVisualizer != null)
+            {
+                wardVisualizer.ToggleOverlay(true);
+                wardVisualizer.SetCollidersEnabled(true);
+            }
+            UpdateStatusUi(status, MsgOk);
         }
 
         public async void SavePersistentAnchor()
@@ -887,30 +919,18 @@ namespace ShiroMR
             string wardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
             if (string.IsNullOrEmpty(wardId))
             {
-                if (_instructionText != null)
-                {
-                    _instructionText.text = "⚠️ No ward configured. Choose a ward on the Ward tab first.";
-                    _instructionText.color = new Color(0.95f, 0.5f, 0.2f);
-                }
+                Notify("⚠️ No ward configured. Choose a ward on the Ward tab first.", MsgProblem);
                 return;
             }
 
-            if (_instructionText != null)
-            {
-                _instructionText.text = "⏳ Binding to Meta Quest SLAM Vision Map...";
-                _instructionText.color = new Color(0.95f, 0.85f, 0.2f);
-            }
+            Notify("⏳ Saving the spatial anchor on the headset…", MsgBusy);
 
             string realUuid = await spatialManager.SaveNativeSpatialAnchorAsync(wardId);
             if (string.IsNullOrEmpty(realUuid))
             {
                 // No anchor ID is made up: the server only stores an anchor the headset really saved
                 Debug.LogWarning($"[SHIRO ALIGN] The headset could not save a spatial anchor for {wardId}. Nothing was sent to the server.");
-                if (_instructionText != null)
-                {
-                    _instructionText.text = "⚠️ The headset could not save the anchor. Your alignment is still kept on this headset; try saving again.";
-                    _instructionText.color = new Color(0.95f, 0.5f, 0.2f);
-                }
+                Notify($"⚠️ The headset could not save the anchor ({spatialManager.LastAnchorProblem ?? "unknown reason"}). The alignment stays as it is; try saving again. If it keeps failing, restart the app.", MsgProblem);
                 return;
             }
 
@@ -937,15 +957,12 @@ namespace ShiroMR
                 if (req.result == UnityWebRequest.Result.Success)
                 {
                     Debug.Log($"[SHIRO ALIGN] Persistent Spatial Anchor synced to Edge Server: {anchorUuid}");
-                    if (_instructionText != null)
-                    {
-                        _instructionText.text = "💾 Native Spatial Anchor synced to Hospital DB!\nAuto-restores on restart & headset re-mount.";
-                        _instructionText.color = new Color(0.1f, 0.95f, 0.4f);
-                    }
+                    Notify("💾 Spatial anchor saved on the headset and sent to the edge server. It is restored on restart and after the headset sleeps.", MsgOk);
                 }
                 else
                 {
                     Debug.LogWarning($"[SHIRO ALIGN] Could not sync anchor to server: {req.error}");
+                    Notify($"⚠️ Spatial anchor saved on this headset, but the edge server did not take it ({req.error}). Save again when the server is reachable.", MsgProblem);
                 }
             }
         }
@@ -1106,12 +1123,12 @@ namespace ShiroMR
             if (await spatialManager.LoadNativeSpatialAnchorAsync(uuid))
             {
                 isAligned = true;
-                UpdateStatusUi("AUTO-ALIGNED (Native Spatial Anchor)", new Color(0.1f, 0.95f, 0.4f));
-                if (_instructionText != null)
-                {
-                    _instructionText.text = "🎯 Auto-localized to physical room via Meta Quest SLAM map!";
-                    _instructionText.color = new Color(0.1f, 0.95f, 0.4f);
-                }
+                UpdateStatusUi("AUTO-ALIGNED (Native Spatial Anchor)", MsgOk);
+                Notify("🎯 Aligned to the room from the saved spatial anchor.", MsgOk);
+            }
+            else
+            {
+                Notify("⚠️ The saved spatial anchor of this ward was not found on this headset or in the room. Calibrate at the door frame and save the anchor.", MsgProblem);
             }
         }
 

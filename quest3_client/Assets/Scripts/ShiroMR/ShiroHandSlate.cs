@@ -36,7 +36,7 @@ namespace ShiroMR
         [Tooltip("Distance threshold (meters) from fingertip to button to show hover glow.")]
         public float touchHoverDistance = 0.048f; // 4.8 cm
 
-        // Active Tab Index: 0 = Ward Setup, 1 = IPS Location, 2 = Patient Vitals, 3 = System
+        // Active Tab Index: 0 = Ward Setup, 1 = IPS Location, 2 = Patient Vitals, 3 = System, 4 = Live Map
         private int _currentTabIndex = 1; // Default to IPS Location tab
 
         // Tracking References
@@ -60,9 +60,11 @@ namespace ShiroMR
         private Button _wristBadgeBtn;
 
         // UI Panels & Dynamic Text
-        private GameObject[] _tabPanels = new GameObject[4];
-        private Image[] _tabHeaderButtons = new Image[4];
-        private Text[] _tabHeaderTexts = new Text[4];
+        private const int TabCount = 5;
+        private GameObject[] _tabPanels = new GameObject[TabCount];
+        private Image[] _tabHeaderButtons = new Image[TabCount];
+        private Text[] _tabHeaderTexts = new Text[TabCount];
+        private GameObject _tabBarObj;
 
         // Tab 0 (Ward Setup) UI References
         private Text _wardInfoText;
@@ -171,6 +173,13 @@ namespace ShiroMR
                 ShiroNetworkManager.Instance.OnActiveWardChanged -= OnActiveWardChanged;
                 ShiroNetworkManager.Instance.OnPairingStatusChanged -= OnPairingStatusChanged;
             }
+            if (_alignSubscribed && WardAlignmentTool.Instance != null) WardAlignmentTool.Instance.OnAlignmentMessage -= ShowWardStatus;
+            if (_alignSubscribed && WardSpatialManager.Instance != null) WardSpatialManager.Instance.OnRelocalized -= HandleRelocalized;
+            if (_alertSubscribed && ShiroAlertManager.Instance != null)
+            {
+                ShiroAlertManager.Instance.OnAlertsChanged -= RefreshAlertUi;
+                ShiroAlertManager.Instance.OnAlertRaised -= HandleAlertRaised;
+            }
         }
 
         private void Update()
@@ -180,6 +189,7 @@ namespace ShiroMR
             UpdateSlateTransform();
             UpdateRightFingertipPosition();
             UpdateDirectTouchInteraction();
+            UpdateAlertBlink();
 
             // Auto-refresh IPS location if active
             if (_isAutoRefreshIps && _currentTabIndex == 1 && isSlateVisible)
@@ -737,9 +747,9 @@ namespace ShiroMR
 
         public void SelectTab(int tabIndex)
         {
-            _currentTabIndex = Mathf.Clamp(tabIndex, 0, 3);
+            _currentTabIndex = Mathf.Clamp(tabIndex, 0, TabCount - 1);
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < TabCount; i++)
             {
                 if (_tabPanels[i] != null)
                 {
@@ -930,12 +940,13 @@ namespace ShiroMR
         {
             if (WardAlignmentTool.Instance != null)
             {
-                WardAlignmentTool.Instance.SavePersistentAnchor();
+                // The result (saved, sent, or why not) arrives through OnAlignmentMessage
                 if (_wardStatusText != null)
                 {
-                    _wardStatusText.text = "💾 Spatial Anchor saved to Quest persistent storage & synced to Hospital Edge Server!";
-                    _wardStatusText.color = new Color(0.1f, 0.95f, 0.4f);
+                    _wardStatusText.text = "⏳ Saving the spatial anchor…";
+                    _wardStatusText.color = new Color(0.95f, 0.75f, 0.2f);
                 }
+                WardAlignmentTool.Instance.SavePersistentAnchor();
             }
             PlayClickTone();
         }
@@ -1265,6 +1276,10 @@ namespace ShiroMR
             BuildTab1_IpsLocation(_slateRoot.transform);
             BuildTab2_PatientVitals(_slateRoot.transform);
             BuildTab3_System(_slateRoot.transform);
+            BuildTab4_LiveMap(_slateRoot.transform);
+
+            // Emergency alert overlay: above every tab
+            BuildAlertOverlay(_slateRoot.transform);
 
             // Build Mini Wrist Badge (Shown when collapsed so user can tap wrist to reopen!)
             BuildMiniWristBadge();
@@ -1296,15 +1311,16 @@ namespace ShiroMR
         {
             GameObject tabGroup = CreatePanel(parent, "TabBar", new Vector2(1080f, 65f), Color.clear);
             tabGroup.transform.localPosition = new Vector3(0, 255f, 0);
+            _tabBarObj = tabGroup;
 
-            string[] tabNames = { "🚪 Ward Setup", "📍 IPS Location", "🛏️ Patient Vitals", "⚙️ System" };
-            float startX = -390f;
-            float stepX = 260f;
+            string[] tabNames = { "🚪 Ward Setup", "📍 Location", "🛏️ Patient", "⚙️ System", "🗺️ Live Map" };
+            float stepX = 212f;
+            float startX = -stepX * (TabCount - 1) / 2f;
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < TabCount; i++)
             {
                 int index = i;
-                Button btn = CreateButton(tabGroup.transform, $"TabBtn_{i}", tabNames[i], new Vector2(245f, 60f), new Color(0.08f, 0.12f, 0.18f), () => SelectTab(index));
+                Button btn = CreateButton(tabGroup.transform, $"TabBtn_{i}", tabNames[i], new Vector2(204f, 60f), new Color(0.08f, 0.12f, 0.18f), () => SelectTab(index));
                 btn.transform.localPosition = new Vector3(startX + i * stepX, 0, 0);
 
                 _tabHeaderButtons[i] = btn.GetComponent<Image>();
@@ -1701,6 +1717,304 @@ namespace ShiroMR
             {
                 _sysServerStatus.text = $"Edge Server: 🔑 NOT PAIRED ({net.serverIp}:{net.serverPort}) – tap \"Pair headset\"";
                 _sysServerStatus.color = new Color(1f, 0.75f, 0.2f);
+            }
+        }
+
+        private void BuildTab4_LiveMap(Transform parent)
+        {
+            GameObject p = CreatePanel(parent, "Tab4_LiveMap", new Vector2(1080f, 480f), Color.clear);
+            p.transform.localPosition = new Vector3(0, -30f, 0);
+            _tabPanels[4] = p;
+            p.AddComponent<ShiroWardMiniMap>().Build(p.transform);
+        }
+
+        // ----- Emergency alert overlay (ShiroAlertManager) -----
+        private GameObject _alertPanel;
+        private Image _alertPanelImage;
+        private Text _alertTitle;
+        private Text _alertPatient;
+        private Text _alertDetails;
+        private Text _alertState;
+        private Button _alertAckBtn;
+        private Text _alertAckBtnText;
+        private Button _alertOkBtn;
+        private Text _alertMuteBtnText;
+        private Button _headerAlertBtn;
+        private Text _headerAlertBtnText;
+        private Text _wristBadgeText;
+        private bool _alertOverlayHidden;     // "Show on map" hides it until the next alert
+        private bool _alertSubscribed;
+        private float _alertBlinkTimer;
+        private float _ownAckNoticeUntil;
+        private string _lastOwnAckShown;
+
+        private void BuildAlertOverlay(Transform parent)
+        {
+            _alertPanel = CreatePanel(parent, "AlertOverlay", new Vector2(1080f, 560f), new Color(0.30f, 0.03f, 0.05f, 0.97f));
+            _alertPanel.transform.localPosition = new Vector3(0, -10f, 0);
+            _alertPanelImage = _alertPanel.GetComponent<Image>();
+
+            _alertTitle = CreateText(_alertPanel.transform, "AlertTitle", "", 38, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _alertTitle.rectTransform.anchoredPosition = new Vector2(0, 225f);
+            _alertTitle.rectTransform.sizeDelta = new Vector2(1040f, 60f);
+
+            _alertPatient = CreateText(_alertPanel.transform, "AlertPatient", "", 30, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _alertPatient.rectTransform.anchoredPosition = new Vector2(0, 160f);
+            _alertPatient.rectTransform.sizeDelta = new Vector2(1040f, 50f);
+
+            _alertDetails = CreateText(_alertPanel.transform, "AlertDetails", "", 23, FontStyle.Normal, TextAnchor.UpperCenter, new Color(1f, 0.88f, 0.88f));
+            _alertDetails.rectTransform.anchoredPosition = new Vector2(0, 65f);
+            _alertDetails.rectTransform.sizeDelta = new Vector2(1020f, 120f);
+
+            _alertState = CreateText(_alertPanel.transform, "AlertState", "", 24, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.85f, 0.4f));
+            _alertState.rectTransform.anchoredPosition = new Vector2(0, -35f);
+            _alertState.rectTransform.sizeDelta = new Vector2(1020f, 70f);
+
+            _alertAckBtn = CreateButton(_alertPanel.transform, "AlertAck", "✓ ACKNOWLEDGE & RESPOND", new Vector2(560f, 80f), new Color(0.80f, 0.10f, 0.12f), () =>
+            {
+                var am = ShiroAlertManager.Instance;
+                if (am != null) am.Acknowledge(am.Current);
+                PlayClickTone();
+            });
+            _alertAckBtn.transform.localPosition = new Vector3(-215f, -130f, 0);
+            _alertAckBtnText = _alertAckBtn.GetComponentInChildren<Text>();
+            _alertAckBtnText.fontSize = 30;
+
+            _alertOkBtn = CreateButton(_alertPanel.transform, "AlertOk", "OK, close", new Vector2(560f, 80f), new Color(0.05f, 0.55f, 0.35f), () =>
+            {
+                var am = ShiroAlertManager.Instance;
+                if (am != null) am.Dismiss(am.Current);
+                PlayClickTone();
+            });
+            _alertOkBtn.transform.localPosition = new Vector3(-215f, -130f, 0);
+            _alertOkBtn.GetComponentInChildren<Text>().fontSize = 30;
+
+            Button mapBtn = CreateButton(_alertPanel.transform, "AlertMap", "🗺️ Show on map", new Vector2(300f, 80f), new Color(0.10f, 0.35f, 0.60f), () =>
+            {
+                _alertOverlayHidden = true;
+                RefreshAlertUi();
+                SelectTab(4);
+            });
+            mapBtn.transform.localPosition = new Vector3(225f, -130f, 0);
+
+            Button muteBtn = CreateButton(_alertPanel.transform, "AlertMute", "🔔 Mute", new Vector2(150f, 80f), new Color(0.25f, 0.20f, 0.22f), () =>
+            {
+                if (ShiroAlertManager.Instance != null) ShiroAlertManager.Instance.ToggleMute();
+                PlayClickTone();
+            });
+            muteBtn.transform.localPosition = new Vector3(450f, -130f, 0);
+            _alertMuteBtnText = muteBtn.GetComponentInChildren<Text>();
+
+            Text hint = CreateText(_alertPanel.transform, "AlertHint", "The acknowledgement is recorded for this headset and its pairing, and every dashboard sees it.", 19, FontStyle.Italic, TextAnchor.MiddleCenter, new Color(1f, 0.8f, 0.8f, 0.85f));
+            hint.rectTransform.anchoredPosition = new Vector2(0, -220f);
+            hint.rectTransform.sizeDelta = new Vector2(1040f, 40f);
+
+            _alertPanel.SetActive(false);
+
+            // Header button: brings the alert back after "Show on map"
+            Transform header = _slateRoot.transform.Find("HeaderBar");
+            if (header != null)
+            {
+                _headerAlertBtn = CreateButton(header, "HeaderAlertBtn", "🚨 ALERT", new Vector2(190f, 55f), new Color(0.75f, 0.08f, 0.10f), () =>
+                {
+                    _alertOverlayHidden = false;
+                    RefreshAlertUi();
+                    PlayClickTone();
+                });
+                _headerAlertBtn.transform.localPosition = new Vector3(120f, 0, 0);
+                _headerAlertBtnText = _headerAlertBtn.GetComponentInChildren<Text>();
+                _headerAlertBtn.gameObject.SetActive(false);
+            }
+        }
+
+        private bool _alignSubscribed;
+
+        /// <summary>Alignment messages (save, re-sync, re-localization after sleep) on the Ward tab.</summary>
+        private void TrySubscribeAlignment()
+        {
+            if (WardAlignmentTool.Instance == null || WardSpatialManager.Instance == null) return;
+            WardAlignmentTool.Instance.OnAlignmentMessage += ShowWardStatus;
+            WardSpatialManager.Instance.OnRelocalized += HandleRelocalized;
+            _alignSubscribed = true;
+        }
+
+        private void ShowWardStatus(string text, Color color)
+        {
+            if (_wardStatusText == null) return;
+            _wardStatusText.text = text;
+            _wardStatusText.color = color;
+        }
+
+        private void HandleRelocalized(bool ok, string message)
+        {
+            ShowWardStatus(message, ok ? new Color(0.1f, 0.95f, 0.4f) : new Color(0.95f, 0.5f, 0.2f));
+        }
+
+        private void TrySubscribeAlerts()
+        {
+            var am = ShiroAlertManager.Instance;
+            if (am == null) return;
+            am.OnAlertsChanged += RefreshAlertUi;
+            am.OnAlertRaised += HandleAlertRaised;
+            _alertSubscribed = true;
+            RefreshAlertUi();
+        }
+
+        private void HandleAlertRaised(ShiroAlertManager.HeadsetAlert alert)
+        {
+            // A new alert always comes to the front: open the slate and the overlay
+            _alertOverlayHidden = false;
+            if (!isSlateVisible) ToggleSlateVisibility();
+            try { OVRInput.SetControllerVibration(0.6f, 0.6f, OVRInput.Controller.LTouch); }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleAlertRaised", swallowed); }
+            RefreshAlertUi();
+        }
+
+        /// <summary>Shows the current alert, the header button, the wrist badge and the Patient tab banner.</summary>
+        private void RefreshAlertUi()
+        {
+            var am = ShiroAlertManager.Instance;
+            var current = am != null ? am.Current : null;
+            int pending = am != null ? am.PendingCount : 0;
+            int total = am != null ? am.Alerts.Count : 0;
+
+            bool showOverlay = current != null && !_alertOverlayHidden;
+            if (_alertPanel != null)
+            {
+                _alertPanel.SetActive(showOverlay);
+                // Buttons of the hidden tab must not be touchable through the overlay
+                if (_tabBarObj != null) _tabBarObj.SetActive(!showOverlay);
+                if (_tabPanels[_currentTabIndex] != null) _tabPanels[_currentTabIndex].SetActive(!showOverlay);
+            }
+
+            if (showOverlay) FillAlertOverlay(current, total);
+
+            if (_headerAlertBtn != null)
+            {
+                _headerAlertBtn.gameObject.SetActive(current != null && _alertOverlayHidden);
+                if (_headerAlertBtnText != null) _headerAlertBtnText.text = pending > 0 ? $"🚨 {pending} ALERT{(pending > 1 ? "S" : "")}" : "✔ ALERT";
+            }
+
+            if (_wristBadgeBtn != null)
+            {
+                if (_wristBadgeText == null) _wristBadgeText = _wristBadgeBtn.GetComponentInChildren<Text>();
+                var img = _wristBadgeBtn.GetComponent<Image>();
+                if (pending > 0)
+                {
+                    if (_wristBadgeText != null) _wristBadgeText.text = "🚨 ALERT – TAP TO OPEN";
+                    if (img != null) img.color = new Color(0.80f, 0.08f, 0.10f, 0.95f);
+                }
+                else
+                {
+                    if (_wristBadgeText != null) _wristBadgeText.text = "📱 TAP TO OPEN MENU";
+                    if (img != null) img.color = new Color(0.06f, 0.45f, 0.65f, 0.95f);
+                }
+            }
+
+            if (_vitalsEmergencyStatus != null)
+            {
+                var net = ShiroNetworkManager.Instance;
+                Image banner = _vitalsEmergencyStatus.transform.parent != null ? _vitalsEmergencyStatus.transform.parent.GetComponent<Image>() : null;
+                if (pending > 0)
+                {
+                    _vitalsEmergencyStatus.text = $"🚨 {pending} ALERT{(pending > 1 ? "S" : "")} WAITING FOR RESPONSE: {current.incident.CategoryLabel} – {current.incident.patient_name ?? "unknown patient"}";
+                    _vitalsEmergencyStatus.color = Color.white;
+                    if (banner != null) banner.color = new Color(0.70f, 0.06f, 0.08f, 0.95f);
+                }
+                else if (net != null && net.IsConnected)
+                {
+                    _vitalsEmergencyStatus.text = $"🟢 No alert waiting for response ({am?.ServerCheckText ?? "connected"})";
+                    _vitalsEmergencyStatus.color = new Color(0.2f, 0.95f, 0.5f);
+                    if (banner != null) banner.color = new Color(0.08f, 0.25f, 0.18f, 0.95f);
+                }
+                else
+                {
+                    _vitalsEmergencyStatus.text = "⚪ ALERTS: not connected to the edge server – alerts cannot arrive";
+                    _vitalsEmergencyStatus.color = new Color(0.85f, 0.88f, 0.92f);
+                    if (banner != null) banner.color = new Color(0.12f, 0.15f, 0.20f, 0.95f);
+                }
+            }
+
+            // A new confirmation from this headset: shown on the banner for 6 s
+            if (am != null && !string.IsNullOrEmpty(am.LastOwnAcknowledgement) && am.LastOwnAcknowledgement != _lastOwnAckShown)
+            {
+                _lastOwnAckShown = am.LastOwnAcknowledgement;
+                _ownAckNoticeUntil = Time.time + 6f;
+            }
+        }
+
+        private void FillAlertOverlay(ShiroAlertManager.HeadsetAlert alert, int total)
+        {
+            var inc = alert.incident;
+            bool elsewhere = alert.status == ShiroAlertManager.AlertStatus.AcknowledgedElsewhere;
+
+            _alertTitle.text = $"{(elsewhere ? "✔" : "🚨")} {(inc.IsSimulated ? "[TEST] " : "")}{inc.CategoryLabel}{(total > 1 ? $"   (1 of {total})" : "")}";
+            string place = string.IsNullOrEmpty(inc.ward_id) ? "ward unknown" : inc.ward_id + (string.IsNullOrEmpty(inc.bed_id) ? "" : $" · {inc.bed_id}");
+            _alertPatient.text = $"{inc.patient_name ?? "Unknown patient"} ({inc.patient_id ?? "no patient record"}) – {place}";
+
+            var parts = new List<string>();
+            if (inc.kinematic_impact_force > 0) parts.Add($"impact {inc.kinematic_impact_force:F2} g");
+            if (inc.freefall_min_g > 0) parts.Add($"free-fall min {inc.freefall_min_g:F2} g");
+            if (inc.post_impact_stillness > 0) parts.Add($"stillness {inc.post_impact_stillness:F2} g");
+            if (inc.heart_rate > 0) parts.Add($"HR {inc.heart_rate} bpm");
+            if (inc.spo2 > 0) parts.Add($"SpO2 ~{Mathf.RoundToInt(inc.spo2)} %");
+            string measured = parts.Count > 0 ? string.Join(" · ", parts) : "no measurements reported";
+            bool here = ShiroAlertManager.Instance != null && ShiroAlertManager.Instance.FindHologram(inc) != null;
+            _alertDetails.text = $"{measured}\n{(here ? "The patient's panel is flashing red in the room." : "This patient has no panel in this ward view.")}\n{inc.alert_message}";
+
+            _alertAckBtn.gameObject.SetActive(!elsewhere);
+            _alertOkBtn.gameObject.SetActive(elsewhere);
+            if (_alertMuteBtnText != null) _alertMuteBtnText.text = ShiroAlertManager.Instance != null && ShiroAlertManager.Instance.IsMuted ? "🔕 Muted" : "🔔 Mute";
+
+            if (elsewhere)
+            {
+                _alertPanelImage.color = new Color(0.03f, 0.28f, 0.18f, 0.97f);
+                _alertState.text = alert.acknowledgedBy != null
+                    ? $"Acknowledged by {alert.acknowledgedBy}{(alert.acknowledgedAt != null ? $" at {alert.acknowledgedAt}" : "")}. No action needed from this headset."
+                    : "Handled while this headset was not connected (the responder is in the dashboard's incident history).";
+                _alertState.color = new Color(0.7f, 1f, 0.8f);
+            }
+            else if (alert.status == ShiroAlertManager.AlertStatus.Sending)
+            {
+                _alertState.text = "⏳ Sending the acknowledgement to the edge server…";
+                _alertState.color = new Color(1f, 0.9f, 0.5f);
+                _alertAckBtnText.text = "⏳ Sending…";
+            }
+            else
+            {
+                _alertAckBtnText.text = "✓ ACKNOWLEDGE & RESPOND";
+                _alertState.text = alert.note ?? "Waiting for a clinician to respond.";
+                _alertState.color = alert.note != null ? new Color(1f, 0.6f, 0.4f) : new Color(1f, 0.85f, 0.4f);
+            }
+        }
+
+        /// <summary>Called every frame: the pending overlay blinks; a short notice after acknowledging here.</summary>
+        private void UpdateAlertBlink()
+        {
+            if (!_alignSubscribed) TrySubscribeAlignment();
+            if (!_alertSubscribed) { TrySubscribeAlerts(); return; }
+            var am = ShiroAlertManager.Instance;
+            if (_alertPanel != null && _alertPanel.activeSelf && am != null && am.Current != null &&
+                am.Current.status != ShiroAlertManager.AlertStatus.AcknowledgedElsewhere)
+            {
+                _alertBlinkTimer += Time.deltaTime;
+                bool on = Mathf.Repeat(_alertBlinkTimer, 0.8f) < 0.4f;
+                _alertPanelImage.color = on ? new Color(0.55f, 0.04f, 0.07f, 0.97f) : new Color(0.30f, 0.03f, 0.05f, 0.97f);
+            }
+
+            // "Acknowledged by this headset" on the Patient tab banner for a few seconds
+            if (_ownAckNoticeUntil > 0f && am != null && _vitalsEmergencyStatus != null && am.PendingCount == 0)
+            {
+                if (Time.time < _ownAckNoticeUntil)
+                {
+                    _vitalsEmergencyStatus.text = am.LastOwnAcknowledgement;
+                    _vitalsEmergencyStatus.color = new Color(0.2f, 0.95f, 0.5f);
+                }
+                else
+                {
+                    _ownAckNoticeUntil = 0f;
+                    RefreshAlertUi();
+                }
             }
         }
 

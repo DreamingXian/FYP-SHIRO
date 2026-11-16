@@ -237,6 +237,66 @@ namespace ShiroMR
 
             // 5. Refresh UI Badges & Text
             RefreshUiText();
+
+            // 6. Emergency alarm: flashing red card and floor ring until it is handled
+            if (isAlarmActive) UpdateAlarmVisuals();
+        }
+
+        // ----- Emergency alarm (set by ShiroAlertManager) -----
+        public bool isAlarmActive { get; private set; }
+        private string _alarmLabel = "";
+        private float _alarmTimer;
+        private static readonly Color CardNormalColor = new Color(0.06f, 0.10f, 0.18f, 0.92f);
+
+        /// <summary>
+        /// Shows or clears the emergency state of this patient's panel: the card and
+        /// the floor ring flash red and the status line names the alert.
+        /// </summary>
+        public void SetAlarm(bool active, string label = "")
+        {
+            isAlarmActive = active;
+            _alarmLabel = label ?? "";
+            _alarmTimer = 0f;
+            if (active)
+            {
+                if (_floorRingObj != null) _floorRingObj.SetActive(true);
+                return;
+            }
+            // Back to the normal look of the current tracking state
+            if (_cardBackground != null) _cardBackground.color = CardNormalColor;
+            if (_floorRingObj != null)
+            {
+                _floorRingObj.transform.localScale = new Vector3(0.65f, 0.005f, 0.65f);
+                _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+                _floorRingObj.SetActive(trackingState != PatientTrackingState.BedDocked);
+            }
+            RefreshStatusBanner();
+        }
+
+        private void UpdateAlarmVisuals()
+        {
+            _alarmTimer += Time.deltaTime;
+            bool on = Mathf.Repeat(_alarmTimer, 0.6f) < 0.3f; // ~1.7 flashes per second
+            if (_cardBackground != null)
+            {
+                _cardBackground.color = on ? new Color(0.78f, 0.05f, 0.08f, 0.96f) : new Color(0.30f, 0.03f, 0.05f, 0.94f);
+            }
+            if (_floorRingObj != null)
+            {
+                if (!_floorRingObj.activeSelf) _floorRingObj.SetActive(true);
+                // On the floor below the panel (a bed-docked panel hangs at the headboard)
+                float floorY = (WardSpatialManager.Instance != null && WardSpatialManager.Instance.wardOrigin != null)
+                    ? WardSpatialManager.Instance.wardOrigin.position.y : 0f;
+                _floorRingObj.transform.position = new Vector3(transform.position.x, floorY + 0.005f, transform.position.z);
+                float s = 0.9f + 0.35f * Mathf.Abs(Mathf.Sin(_alarmTimer * 3.5f));
+                _floorRingObj.transform.localScale = new Vector3(s, 0.005f, s);
+                if (_floorRingRenderer != null) _floorRingRenderer.material.color = new Color(0.95f, 0.08f, 0.10f, on ? 0.85f : 0.45f);
+            }
+            if (_statusBannerText != null)
+            {
+                _statusBannerText.text = $"🚨 {_alarmLabel} • WAITING FOR RESPONSE";
+                _statusBannerText.color = on ? new Color(1f, 0.85f, 0.85f) : new Color(1f, 0.35f, 0.35f);
+            }
         }
 
         private void LateUpdate()
