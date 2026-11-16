@@ -127,13 +127,16 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
   * 2-point door frame calibration with floor height from the Meta XR environment raycast.
   * 2-point bed calibration (`AlignWardByBedTwoPoints`) and 2-point wall anchor calibration (`AlignWardByWallAnchors`).
   * Persistent spatial anchor, saved on the headset and its ID sent to the server (`/api/ward/save-anchor`).
+  * After the headset wakes from sleep, the saved anchor is loaded again by its ID and found in the room again; Re-Sync does the same. Saving checks that the new anchor is localized and tries a second, fresh anchor when the first fails.
+* **Emergency Alerts on the Headset (`ShiroAlertManager.cs`):** a fall, critical-vitals or geofence incident makes the patient's panel and floor ring flash red, plays a two-tone alarm and opens the alert on the hand slate. **✓ Acknowledge & Respond** records the headset (`QUEST3-… (paired by …)`) on the server; an alert acknowledged elsewhere turns green with who responded and when, until closed with **OK**. Pending alerts are fetched again after every reconnection.
 * **Own Identity per Headset:** Each headset reports its own ID (`QUEST3-` plus 6 characters, derived from the device) and must be enrolled on the dashboard; the ward is chosen on the hand slate, never assumed.
 * **Hand Slate HUD (`ShiroHandSlate.cs`, `ShiroHandVisualizer.cs`):**
   * Follows the left palm; hand contour outline and fingertip touch.
   * **Ward Setup:** door frame calibration, save or purge the spatial anchor, re-sync alignment, digital twin overlay on/off.
-  * **IPS Location:** find the current ward/room and continuous refresh, with the ward's real beds and anchors only.
-  * **Patient Vitals:** re-attach the hologram and switch between headboard and bedside mount.
-  * **System:** reconnect, server address presets (Wi-Fi, Hotspot, Localhost for Quest Link), headset ID and connection state.
+  * **Location:** find the current ward/room and continuous refresh, with the ward's real beds and anchors only.
+  * **Patient:** re-attach the hologram and switch between headboard and bedside mount; the alert status line.
+  * **System:** reconnect, server address presets (Wi-Fi, Hotspot, Localhost for Quest Link), headset ID and connection state, pairing.
+  * **Live Map (`ShiroWardMiniMap.cs`):** top view of the loaded ward (walls, door, beds, anchors) with each wristband's BLE position, this headset's position and heading, and patients with a pending alert blinking red. Wristbands not heard for 10 s turn grey with "last seen".
 
 ---
 
@@ -278,13 +281,13 @@ Code/
 
 * [x] **Clinician sign-in (minimal):** accounts with two roles, protected HTTP and WebSocket endpoints, audit log, headset pairing, the real clinician recorded on bindings and acknowledgements. Not included: sign-in of a named clinician on the headset, password expiry, two-factor sign-in.
 * [ ] **Remaining clinical features:**
-  * Headset emergency overlay with alarm tone and acknowledge.
+  * ✅ Headset emergency overlay with alarm tone and acknowledge; live 2D ward map on the hand slate.
   * Geofence detection on the server.
   * Headset-triggered live mode and an explicit return to passive mode.
   * Patient profile and 24-hour history in the headset.
   * Binding history instead of deleting binding rows.
   * ✅ Each patient's incident history on the dashboard's Patients page (🚨 Incidents on a patient row, 🚨 Incident log for every patient), with who responded and how fast.
-  * Headset: restore the ward alignment after the headset wakes from sleep.
+  * ✅ Headset: restore the ward alignment after the headset wakes from sleep (to be confirmed on the headset, F-5).
   * Standalone Android APK build for the Quest 3.
 * [ ] **Evaluation:**
   * Position accuracy measured at fixed points in the ward, and improved (the regression run of 16 Nov 2026 found it low in a small room).

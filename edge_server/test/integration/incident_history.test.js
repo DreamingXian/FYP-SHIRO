@@ -121,10 +121,25 @@ describe('incident history and acknowledgement', () => {
     assert.equal(data.summary.total, 5);
   });
 
+  let headsetToken;
+
   test('a paired headset may read the history; nobody else without signing in', async () => {
-    const token = await pairHeadset(BASE, admin, 'QUEST3-HIST01', '02:AA:BB:CC:DD:01');
-    assert.equal((await call('/api/alerts/history?patient_id=P-901', { bearer: token })).status, 200);
+    headsetToken = await pairHeadset(BASE, admin, 'QUEST3-HIST01', '02:AA:BB:CC:DD:01');
+    assert.equal((await call('/api/alerts/history?patient_id=P-901', { bearer: headsetToken })).status, 200);
     assert.equal((await call('/api/alerts/history?patient_id=P-901')).status, 401);
+  });
+
+  test('the headset sees pending alerts and acknowledges as "headset (paired by admin)"', async () => {
+    const active = await (await call('/api/alerts/active', { bearer: headsetToken })).json();
+    assert.ok(active.alerts.some(a => a.incident_id === 'IT-INC-1'));
+
+    const res = await call('/api/alerts/acknowledge', { method: 'POST', bearer: headsetToken, body: { incident_id: 'IT-INC-1', notes: 'Acknowledged on the Meta Quest 3 headset.' } });
+    assert.equal(res.status, 200);
+    assert.match((await res.json()).attending_clinician, /^QUEST3-HIST01 \(paired by CLN-001\)$/);
+
+    const [[audit]] = await pool.query("SELECT actor_type, actor_id, target_id FROM audit_log WHERE action = 'ALERT_ACKNOWLEDGE' AND target_id = 'IT-INC-1'");
+    assert.equal(audit.actor_type, 'HEADSET');
+    assert.equal(audit.actor_id, 'QUEST3-HIST01');
   });
 
   test('the first acknowledgement is kept: a second one is a 409, an unknown incident a 404', async () => {
