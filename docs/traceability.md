@@ -66,7 +66,7 @@ State on 16 November 2026, branch `fix/phase-7-release` (Stage A of the remediat
 | ID | Use case | Status | What works | What is missing |
 | :--- | :--- | :--- | :--- | :--- |
 | UC-01 | Inspect live biometrics and trends | **Partial** | Selecting a patient on the live map starts 1 Hz streaming through the strongest anchor; live vitals on the dashboard and on the headset's vitals panel; "NO SIGNAL" after 5 s without packets on the dashboard (alternative flow A2) | Trigger from the headset, trend charts in the headset, explicit return to passive mode (the 1 Hz mode ends after 60 s) — Stage C |
-| UC-02 | Receive fall and geofence alerts | **Partial** | Fall on the wristband → anchor → server → dashboard alarm with tone; acknowledge recorded in the MySQL incident log with its ID | Alert in the headset; geofence (alternative flow A1); a dashboard view of the incident history (F-1) — Stage C |
+| UC-02 | Receive fall and geofence alerts | **Partial** | Fall on the wristband → anchor → server → dashboard alarm with tone; acknowledge recorded in the MySQL incident log with its ID, once: the first clinician to acknowledge is kept. Incident history per patient and for every patient on the Patients page, with time range, type filter, response time and responder (F-1, fixed in Phase 8B) | Alert in the headset; geofence (alternative flow A1) — Stage C |
 | UC-03 | Navigate the 3D ward mini-map | **Not implemented** | The dashboard's live ward map gives the ward-wide view | Mini-map with gestures in the headset — not planned before the final submission; to be stated as a limitation |
 | UC-04 | Calibrate the spatial ward geometry | **Met** | Door-frame calibration by two laser points, saved spatial anchor, restore by re-sync (alternative flow A1) | The calibration uses two points on the door frame instead of a marker above the door |
 | UC-05 | Query patient profiles and history | **Partial** | Patient profile, medical history and 24-hour vitals history from InfluxDB on the dashboard | Profile and history in the headset — Stage C |
@@ -98,6 +98,7 @@ Not in Chapter 3; added because a clinical prototype needs them. Each is tested.
 | No value from the server can run as code in the dashboard | `public/js/html_safety.js` | Unit `dashboard_html_safety.test.js` (static audit of every page) |
 | Only the project's anchors can use the MQTT broker | `services/mqtt_access.js` | Unit and integration `mqtt_access.test.js` |
 | One incident per fall, with a unique ID, recorded even when the database is slow | `services/alerts/` | Unit `fall_tracker.test.js`, `incident_id.test.js`, `vitals_evaluator.test.js`; integration `alarm_path.test.js`, `incident_ids.test.js` |
+| The first acknowledgement of an incident is kept; the history per patient filters by time, type and Live Lab tests | `services/alert_service.js`, `services/alerts/incident_history.js` | Unit `incident_history.test.js`, `http_guard.test.js`; integration `incident_history.test.js` |
 | Stable under continuous telemetry; recovers from a database outage; clean shutdown | `services/device_service.js`, `server.js`, `services/binding_cache.js`, `utils/logger.js` | Integration `device_presence.test.js`, `db_unreachable.test.js`, `db_init.test.js`; unit `binding_cache.test.js`, `logger.test.js`; `docs/test_records/load-test.md` (load, 30-minute soak, fault tests) |
 
 ## 5. Summary

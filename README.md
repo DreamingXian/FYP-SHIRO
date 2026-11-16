@@ -283,7 +283,7 @@ Code/
   * Headset-triggered live mode and an explicit return to passive mode.
   * Patient profile and 24-hour history in the headset.
   * Binding history instead of deleting binding rows.
-  * Each patient's incident history on the dashboard's Patients page.
+  * ✅ Each patient's incident history on the dashboard's Patients page (🚨 Incidents on a patient row, 🚨 Incident log for every patient), with who responded and how fast.
   * Headset: restore the ward alignment after the headset wakes from sleep.
   * Standalone Android APK build for the Quest 3.
 * [ ] **Evaluation:**

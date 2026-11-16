@@ -85,7 +85,7 @@ Observations made during the run, in the tester's words, with the stage where ea
 
 | ID | Check | Observation | Planned |
 | :--- | :--- | :--- | :--- |
-| F-1 | 3.2 | The incident history cannot be viewed on the dashboard. The server has it (`GET /api/alerts/history`), but no page shows it. Enhancement: show each patient's incident history on the Patients page. | Stage C |
+| F-1 | 3.2 | The incident history cannot be viewed on the dashboard. The server has it (`GET /api/alerts/history`), but no page shows it. Enhancement: show each patient's incident history on the Patients page. | Stage C. **Fixed in Phase 8B:** 🚨 Incidents on each patient row and in the patient profile, 🚨 Incident log for every patient |
 | F-2 | 4.1 | Positioning accuracy is low: in WARD-004 (about 4 m × 3 m) the marker is not at the real position most of the time, even after the current landmark calibration, and it cannot really follow the person wearing the wristband. | Stage D: measure the error at fixed points (NFR-ACC-01) and improve (calibration method, anchor placement, filter and path-loss parameters) |
 | F-3 | 4.1 | The motion state shows hand movement while walking; the walking state is hard to trigger. | Stage D, with F-2 |
 | F-4 | 4.2 | The Kalman-filtered RSSI is almost the same as the raw RSSI most of the time; only spikes are smoothed, so the curve is only a little smoother. | Stage D, with F-2 (filter parameters) |
