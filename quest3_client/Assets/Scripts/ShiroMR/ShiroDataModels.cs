@@ -260,6 +260,56 @@ namespace ShiroMR
         public string error;
     }
 
+    /// <summary>A clinician as the server names one: { id, name }. Empty id = nobody.</summary>
+    [Serializable]
+    public class ClinicianRef
+    {
+        public string id;
+        public string name;
+        public bool IsSet => !string.IsNullOrEmpty(id);
+    }
+
+    [Serializable]
+    public class HeadsetAssignmentMessage : WsMessageBase
+    {
+        public string device_id;
+        public ClinicianRef assigned_clinician;
+    }
+
+    [Serializable]
+    public class AuthMeUser
+    {
+        public string type;
+        public string device_id;
+        public string paired_by;
+        public ClinicianRef assigned_clinician;
+    }
+
+    [Serializable]
+    public class AuthMeResponse
+    {
+        public bool success;
+        public AuthMeUser user;
+    }
+
+    /// <summary>The edge server sent the 1 Hz command for a wristband (ACTIVE_MODE_ENGAGED).</summary>
+    [Serializable]
+    public class ActiveModeEngagedMessage : WsMessageBase
+    {
+        public string tag_id;
+        public string via_anchor;
+        public string anchor_mac;
+        public int duration;
+    }
+
+    /// <summary>A refused command (type ERROR): which action and why.</summary>
+    [Serializable]
+    public class CommandErrorMessage : WsMessageBase
+    {
+        public string action;
+        public string error;
+    }
+
     [Serializable]
     public class AcknowledgeResponse
     {

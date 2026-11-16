@@ -63,6 +63,17 @@ namespace ShiroMR
         public event Action<IncidentAlert> OnEmergencyAlert;
         /// <summary>An incident was acknowledged (incident ID, by whom, ISO time).</summary>
         public event Action<string, string, string> OnEmergencyAcknowledged;
+        /// <summary>Every wristband position, of every ward (the Live Map can show another ward).</summary>
+        public event Action<IpsPositionUpdate> OnAnyPositionUpdated;
+        /// <summary>Answer to a 1 Hz request: (tag ID, started, text for the clinician, seconds).</summary>
+        public event Action<string, bool, string, int> OnActiveModeResult;
+        /// <summary>The clinician this headset is assigned to changed (null = nobody).</summary>
+        public event Action<ClinicianRef> OnAssignmentChanged;
+
+        /// <summary>The clinician an admin assigned this headset to; null = nobody (or not known yet).</summary>
+        public ClinicianRef AssignedClinician { get; private set; }
+        /// <summary>False until the server has said who this headset is assigned to.</summary>
+        public bool AssignmentKnown { get; private set; }
 
         // Hospital Ward Directory
         private readonly List<WardSummary> _availableWards = new List<WardSummary>();
@@ -480,6 +491,80 @@ namespace ShiroMR
             }
         }
 
+        // ----- Assignment: the clinician using this headset -----
+
+        private void SetAssignment(ClinicianRef who)
+        {
+            AssignedClinician = who != null && who.IsSet ? who : null;
+            AssignmentKnown = true;
+            OnAssignmentChanged?.Invoke(AssignedClinician);
+        }
+
+        private IEnumerator FetchAssignmentRoutine()
+        {
+            if (!IsPaired) yield break;
+            using (UnityWebRequest req = UnityWebRequest.Get($"http://{serverIp}:{serverPort}/api/auth/me"))
+            {
+                Authorize(req);
+                req.timeout = 5;
+                yield return req.SendWebRequest();
+                if (req.result != UnityWebRequest.Result.Success) yield break; // stays "not known"
+                try
+                {
+                    var me = JsonUtility.FromJson<AuthMeResponse>(req.downloadHandler.text);
+                    if (me != null && me.success && me.user != null) SetAssignment(me.user.assigned_clinician);
+                }
+                catch (Exception ex) { Debug.LogWarning($"[SHIRO NET] Could not read the headset assignment: {ex.Message}"); }
+            }
+        }
+
+        // ----- 1 Hz vitals on demand (FR: tap a patient on the Live Map) -----
+
+        private volatile string _lastActiveModeTag;
+
+        /// <summary>
+        /// Asks the edge server to put a wristband into 1 Hz mode through its strongest
+        /// anchor (SET_ACTIVE_MODE, 60 s). The answer arrives as OnActiveModeResult.
+        /// </summary>
+        public bool RequestActiveMode(string tagId, string macAddress)
+        {
+            if (string.IsNullOrEmpty(tagId) || !isWsConnected) return false;
+            string safeTag = System.Text.RegularExpressions.Regex.Replace(tagId, "[^A-Za-z0-9_:-]", "");
+            string safeMac = System.Text.RegularExpressions.Regex.Replace(macAddress ?? "", "[^A-Fa-f0-9:]", "");
+            _lastActiveModeTag = safeTag;
+            string json = "{\"action\":\"SET_ACTIVE_MODE\",\"tag_id\":\"" + safeTag + "\"" +
+                          (safeMac.Length == 17 ? ",\"target_mac\":\"" + safeMac + "\"" : "") +
+                          ",\"duration\":60}";
+            _ = SendSafeAsync(json, CancellationToken.None);
+            return true;
+        }
+
+        // ----- Another ward, only for viewing on the Live Map -----
+
+        /// <summary>
+        /// Loads a ward's layout and patients for the Live Map without making it the
+        /// active ward (no holograms, no alignment change). onDone(response, error).
+        /// </summary>
+        public IEnumerator FetchWardForViewRoutine(string wardId, Action<WardInitResponse, string> onDone)
+        {
+            if (string.IsNullOrEmpty(wardId) || !IsPaired) { onDone?.Invoke(null, "no ward or not paired"); yield break; }
+            using (UnityWebRequest req = UnityWebRequest.Get($"http://{serverIp}:{serverPort}/api/ward/ips-init?ward_id={UnityWebRequest.EscapeURL(wardId)}"))
+            {
+                Authorize(req);
+                req.timeout = 5;
+                yield return req.SendWebRequest();
+                if (req.result != UnityWebRequest.Result.Success) { onDone?.Invoke(null, req.error); yield break; }
+                WardInitResponse resp = null;
+                try { resp = JsonUtility.FromJson<WardInitResponse>(req.downloadHandler.text); }
+                catch (Exception ex) { onDone?.Invoke(null, ex.Message); yield break; }
+                if (resp == null || !resp.success || resp.ward == null) onDone?.Invoke(null, resp?.error ?? "unreadable answer");
+                else onDone?.Invoke(resp, null);
+            }
+        }
+
+        /// <summary>The patients of the active ward, from the last ward load.</summary>
+        public List<TrackedSubject> LastLoadedSubjects { get; private set; } = new List<TrackedSubject>();
+
         /// <summary>True when the chosen ward's layout (and its spatial anchor ID) has been loaded.</summary>
         public bool IsWardLoaded =>
             HasWard && LastLoadedWardConfig != null &&
@@ -557,6 +642,7 @@ namespace ShiroMR
                         {
                             Debug.Log($"[SHIRO NET] Ward {response.ward.ward_id} loaded successfully. Found {response.ward.beds?.Count ?? 0} beds, {response.tracked_subjects?.Count ?? 0} tracked subjects.");
                             LastLoadedWardConfig = response.ward;
+                            LastLoadedSubjects = response.tracked_subjects ?? new List<TrackedSubject>();
                             OnWardInitialized?.Invoke(response.ward, response.tracked_subjects ?? new List<TrackedSubject>());
                             onComplete?.Invoke();
                         }
@@ -638,6 +724,8 @@ namespace ShiroMR
                         OnConnectionStatusChanged?.Invoke(true);
                         // Started before the server? Load the ward list and ward now.
                         ReloadMissingWardData();
+                        // Who wears this headset (assigned on the dashboard)
+                        StartCoroutine(FetchAssignmentRoutine());
                     });
 
                     // Send Headset Identification Handshake to Edge Server
@@ -743,6 +831,7 @@ namespace ShiroMR
                         var posMsg = JsonUtility.FromJson<IpsPositionUpdate>(json);
                         if (posMsg != null)
                         {
+                            _mainThreadQueue.Enqueue(() => OnAnyPositionUpdated?.Invoke(posMsg));
                             // Route if for current active ward, or if ward unassigned
                             if (string.IsNullOrEmpty(posMsg.ward_id) || posMsg.ward_id.Equals(targetWardId, StringComparison.OrdinalIgnoreCase))
                             {
@@ -781,6 +870,33 @@ namespace ShiroMR
                         if (ackMsg != null && !string.IsNullOrEmpty(ackMsg.incident_id))
                         {
                             _mainThreadQueue.Enqueue(() => OnEmergencyAcknowledged?.Invoke(ackMsg.incident_id, ackMsg.attending_clinician, ackMsg.timestamp));
+                        }
+                        break;
+
+                    case "ACTIVE_MODE_ENGAGED":
+                        var engaged = JsonUtility.FromJson<ActiveModeEngagedMessage>(json);
+                        if (engaged != null && !string.IsNullOrEmpty(engaged.tag_id))
+                        {
+                            string via = !string.IsNullOrEmpty(engaged.via_anchor) ? engaged.via_anchor : engaged.anchor_mac;
+                            _mainThreadQueue.Enqueue(() => OnActiveModeResult?.Invoke(engaged.tag_id, true,
+                                $"1 Hz vitals requested through anchor {via} for {engaged.duration} s.", engaged.duration));
+                        }
+                        break;
+
+                    case "ERROR":
+                        var cmdErr = JsonUtility.FromJson<CommandErrorMessage>(json);
+                        if (cmdErr != null && cmdErr.action == "SET_ACTIVE_MODE")
+                        {
+                            string tag = _lastActiveModeTag;
+                            _mainThreadQueue.Enqueue(() => OnActiveModeResult?.Invoke(tag, false, cmdErr.error ?? "refused by the edge server", 0));
+                        }
+                        break;
+
+                    case "HEADSET_ASSIGNMENT":
+                        var assign = JsonUtility.FromJson<HeadsetAssignmentMessage>(json);
+                        if (assign != null)
+                        {
+                            _mainThreadQueue.Enqueue(() => SetAssignment(assign.assigned_clinician));
                         }
                         break;
 

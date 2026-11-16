@@ -155,6 +155,7 @@ namespace ShiroMR
                 ShiroNetworkManager.Instance.OnConnectionStatusChanged += OnConnectionStatusChanged;
                 ShiroNetworkManager.Instance.OnWardListLoaded += OnWardListLoaded;
                 ShiroNetworkManager.Instance.OnActiveWardChanged += OnActiveWardChanged;
+                ShiroNetworkManager.Instance.OnAssignmentChanged += OnAssignmentChanged;
             }
 
             // Default to IPS Location tab
@@ -171,6 +172,7 @@ namespace ShiroMR
                 ShiroNetworkManager.Instance.OnConnectionStatusChanged -= OnConnectionStatusChanged;
                 ShiroNetworkManager.Instance.OnWardListLoaded -= OnWardListLoaded;
                 ShiroNetworkManager.Instance.OnActiveWardChanged -= OnActiveWardChanged;
+                ShiroNetworkManager.Instance.OnAssignmentChanged -= OnAssignmentChanged;
                 ShiroNetworkManager.Instance.OnPairingStatusChanged -= OnPairingStatusChanged;
             }
             if (_alignSubscribed && WardAlignmentTool.Instance != null) WardAlignmentTool.Instance.OnAlignmentMessage -= ShowWardStatus;
@@ -1294,8 +1296,13 @@ namespace ShiroMR
             header.transform.localPosition = new Vector3(0, 340f, 0);
 
             Text title = CreateText(header.transform, "Title", "🏥 SHIRO MR CLINICAL HUB", 34, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.1f, 0.85f, 0.95f));
-            title.rectTransform.anchoredPosition = new Vector2(-220f, 0);
-            title.rectTransform.sizeDelta = new Vector2(600f, 70f);
+            title.rectTransform.anchoredPosition = new Vector2(-220f, 12f);
+            title.rectTransform.sizeDelta = new Vector2(600f, 44f);
+
+            // Who uses this headset (assigned on the dashboard): actions are recorded in this name
+            _headerUserText = CreateText(header.transform, "UsedBy", "👤 Used by: not known yet", 20, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.75f, 0.85f, 0.95f));
+            _headerUserText.rectTransform.anchoredPosition = new Vector2(-220f, -22f);
+            _headerUserText.rectTransform.sizeDelta = new Vector2(600f, 28f);
 
             // Pin / Dock Button
             Button pinBtn = CreateButton(header.transform, "PinBtn", "📌 Pin to Room", new Vector2(180f, 55f), new Color(0.12f, 0.35f, 0.50f), TogglePinToWorld);
@@ -1725,7 +1732,11 @@ namespace ShiroMR
             GameObject p = CreatePanel(parent, "Tab4_LiveMap", new Vector2(1080f, 480f), Color.clear);
             p.transform.localPosition = new Vector3(0, -30f, 0);
             _tabPanels[4] = p;
-            p.AddComponent<ShiroWardMiniMap>().Build(p.transform);
+            // The map's buttons (wards, patient dots, card) are made here, so fingertip touch reaches them
+            p.AddComponent<ShiroWardMiniMap>().Build(
+                p.transform,
+                (parentT, name, label, size, color, onClick) => CreateButton(parentT, name, label, size, color, onClick),
+                (btn) => _registeredButtons.Remove(btn));
         }
 
         // ----- Emergency alert overlay (ShiroAlertManager) -----
@@ -1828,6 +1839,22 @@ namespace ShiroMR
         }
 
         private bool _alignSubscribed;
+        private Text _headerUserText;
+
+        private void OnAssignmentChanged(ClinicianRef who)
+        {
+            if (_headerUserText == null) return;
+            if (who != null)
+            {
+                _headerUserText.text = $"👤 Used by: {who.name} ({who.id})";
+                _headerUserText.color = new Color(0.75f, 0.95f, 0.85f);
+            }
+            else
+            {
+                _headerUserText.text = "👤 No clinician assigned: ask an admin (dashboard → ADMIN → Headsets)";
+                _headerUserText.color = new Color(1f, 0.75f, 0.3f);
+            }
+        }
 
         /// <summary>Alignment messages (save, re-sync, re-localization after sleep) on the Ward tab.</summary>
         private void TrySubscribeAlignment()
