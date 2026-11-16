@@ -1103,7 +1103,7 @@ namespace ShiroMR
         {
             if (_vitalsPatientName != null && _activePatient != null)
             {
-                string bedStr = !string.IsNullOrEmpty(_activePatient.assigned_bed_id) ? _activePatient.assigned_bed_id : "Bed 1";
+                string bedStr = !string.IsNullOrEmpty(_activePatient.assigned_bed_id) ? _activePatient.assigned_bed_id : "no bed assigned";
                 _vitalsPatientName.text = $"👤 Patient: {_activePatient.full_name} | ID: {_activePatient.patient_id} | Wristband: {_activePatient.device_id} ({bedStr})";
             }
         }
@@ -1130,9 +1130,11 @@ namespace ShiroMR
             if (update == null) return;
             TryBindPatientByTag(update.EffectiveTagId);
 
-            if (_vitalsBpmText != null) _vitalsBpmText.text = $"{update.EffectiveBpm} BPM";
-            if (_vitalsSpo2Text != null) _vitalsSpo2Text.text = $"{update.EffectiveSpo2} %";
-            if (_vitalsBatteryText != null) _vitalsBatteryText.text = $"{update.EffectiveBattery} %";
+            // 0 or below means "no valid reading now" (battery: -1 = not reported)
+            int bpm = update.EffectiveBpm, spo2 = update.EffectiveSpo2, bat = update.EffectiveBattery;
+            if (_vitalsBpmText != null) _vitalsBpmText.text = bpm > 0 ? $"{bpm} BPM" : "-- BPM";
+            if (_vitalsSpo2Text != null) _vitalsSpo2Text.text = spo2 > 0 ? $"~{spo2} %" : "-- %";
+            if (_vitalsBatteryText != null) _vitalsBatteryText.text = bat >= 0 ? $"{bat} %" : "-- %";
 
             if (!string.IsNullOrEmpty(update.EffectiveMotion))
             {
@@ -1423,7 +1425,7 @@ namespace ShiroMR
             coordHeader.rectTransform.anchoredPosition = new Vector2(0, 95f);
             coordHeader.rectTransform.sizeDelta = new Vector2(500f, 35f);
 
-            _ipsCoordinatesText = CreateText(leftCard.transform, "CoordsText", "X: 0.00m  |  Y: 0.00m  |  Z: 0.00m", 24, FontStyle.Bold, TextAnchor.UpperLeft, Color.white);
+            _ipsCoordinatesText = CreateText(leftCard.transform, "CoordsText", "Position: not available yet", 24, FontStyle.Bold, TextAnchor.UpperLeft, Color.white);
             _ipsCoordinatesText.rectTransform.anchoredPosition = new Vector2(0, 55f);
             _ipsCoordinatesText.rectTransform.sizeDelta = new Vector2(500f, 35f);
 
@@ -1431,14 +1433,14 @@ namespace ShiroMR
             distHeader.rectTransform.anchoredPosition = new Vector2(0, 5f);
             distHeader.rectTransform.sizeDelta = new Vector2(500f, 35f);
 
-            _ipsDistancesText = CreateText(leftCard.transform, "DistancesText", "North: -- m  |  South: -- m\nEast: -- m  |  West: -- m", 22, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.85f, 0.90f, 0.95f));
+            _ipsDistancesText = CreateText(leftCard.transform, "DistancesText", "", 22, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.85f, 0.90f, 0.95f));
             _ipsDistancesText.rectTransform.anchoredPosition = new Vector2(0, -50f);
             _ipsDistancesText.rectTransform.sizeDelta = new Vector2(500f, 60f);
 
             GameObject rightCard = CreatePanel(p.transform, "RightCard", new Vector2(490f, 430f), new Color(0.06f, 0.11f, 0.18f, 0.95f));
             rightCard.transform.localPosition = new Vector3(275f, 0, 0);
 
-            _ipsStatusBadge = CreateText(rightCard.transform, "StatusBadge", "📍 EVALUATING LOCATION...", 26, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.95f, 0.80f, 0.1f));
+            _ipsStatusBadge = CreateText(rightCard.transform, "StatusBadge", "📍 LOCATION NOT CHECKED YET", 26, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.95f, 0.80f, 0.1f));
             _ipsStatusBadge.rectTransform.anchoredPosition = new Vector2(0, 175f);
             _ipsStatusBadge.rectTransform.sizeDelta = new Vector2(460f, 45f);
 
@@ -1450,7 +1452,7 @@ namespace ShiroMR
             anchorTitle.rectTransform.anchoredPosition = new Vector2(0, 20f);
             anchorTitle.rectTransform.sizeDelta = new Vector2(450f, 30f);
 
-            _ipsNearestAnchorText = CreateText(rightCard.transform, "NearestAnchor", "Anchor B [East Wall] (1.12m)", 22, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.85f, 0.92f, 0.98f));
+            _ipsNearestAnchorText = CreateText(rightCard.transform, "NearestAnchor", "--", 22, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.85f, 0.92f, 0.98f));
             _ipsNearestAnchorText.rectTransform.anchoredPosition = new Vector2(0, -15f);
             _ipsNearestAnchorText.rectTransform.sizeDelta = new Vector2(450f, 35f);
 
@@ -1458,11 +1460,11 @@ namespace ShiroMR
             bedTitle.rectTransform.anchoredPosition = new Vector2(0, -65f);
             bedTitle.rectTransform.sizeDelta = new Vector2(450f, 30f);
 
-            _ipsNearestBedText = CreateText(rightCard.transform, "NearestBed", "Bed 1 (0.85m away)", 22, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.85f, 0.92f, 0.98f));
+            _ipsNearestBedText = CreateText(rightCard.transform, "NearestBed", "--", 22, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.85f, 0.92f, 0.98f));
             _ipsNearestBedText.rectTransform.anchoredPosition = new Vector2(0, -100f);
             _ipsNearestBedText.rectTransform.sizeDelta = new Vector2(450f, 35f);
 
-            _ipsConfidenceText = CreateText(rightCard.transform, "Confidence", "Confidence: 99.4% (Direct MR SLAM + BLE Mesh)", 20, FontStyle.Italic, TextAnchor.MiddleCenter, new Color(0.2f, 0.90f, 0.70f));
+            _ipsConfidenceText = CreateText(rightCard.transform, "Confidence", "", 20, FontStyle.Italic, TextAnchor.MiddleCenter, new Color(0.2f, 0.90f, 0.70f));
             _ipsConfidenceText.rectTransform.anchoredPosition = new Vector2(0, -170f);
             _ipsConfidenceText.rectTransform.sizeDelta = new Vector2(450f, 35f);
         }
@@ -1473,12 +1475,12 @@ namespace ShiroMR
             p.transform.localPosition = new Vector3(0, -30f, 0);
             _tabPanels[2] = p;
 
-            _vitalsPatientName = CreateText(p.transform, "PatientName", "👤 Patient: Tan Testing | ID: P-006 | Wristband: TAG-002 (Bed 1)", 26, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            _vitalsPatientName = CreateText(p.transform, "PatientName", "👤 No patient yet: waiting for the ward and its patients from the edge server", 26, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
             _vitalsPatientName.rectTransform.anchoredPosition = new Vector2(0, 195f);
             _vitalsPatientName.rectTransform.sizeDelta = new Vector2(1040f, 40f);
 
             // Real-Time Docking & Tracking Status Line
-            _vitalsTrackingModeText = CreateText(p.transform, "TrackingMode", "🛏️ DOCKED: Headwall of Bed 1 | Jitter Filter: ACTIVE (Zero Drift)", 22, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.2f, 0.85f, 1.0f));
+            _vitalsTrackingModeText = CreateText(p.transform, "TrackingMode", "Panel position: no patient panel yet", 22, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.2f, 0.85f, 1.0f));
             _vitalsTrackingModeText.rectTransform.anchoredPosition = new Vector2(0, 155f);
             _vitalsTrackingModeText.rectTransform.sizeDelta = new Vector2(1040f, 35f);
 
@@ -1486,25 +1488,25 @@ namespace ShiroMR
             GameObject tileHr = CreatePanel(p.transform, "TileHr", new Vector2(245f, 150f), new Color(0.12f, 0.16f, 0.24f, 0.90f));
             tileHr.transform.localPosition = new Vector3(-390f, 45f, 0);
             CreateText(tileHr.transform, "Lbl", "❤️ HEART RATE", 20, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.95f, 0.35f, 0.40f)).rectTransform.anchoredPosition = new Vector2(0, 42f);
-            _vitalsBpmText = CreateText(tileHr.transform, "Val", "76 BPM", 36, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _vitalsBpmText = CreateText(tileHr.transform, "Val", "-- BPM", 36, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
             _vitalsBpmText.rectTransform.anchoredPosition = new Vector2(0, -12f);
 
             GameObject tileSpo2 = CreatePanel(p.transform, "TileSpo2", new Vector2(245f, 150f), new Color(0.12f, 0.16f, 0.24f, 0.90f));
             tileSpo2.transform.localPosition = new Vector3(-130f, 45f, 0);
             CreateText(tileSpo2.transform, "Lbl", "🫁 OXYGEN (SpO2)", 20, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.2f, 0.85f, 0.95f)).rectTransform.anchoredPosition = new Vector2(0, 42f);
-            _vitalsSpo2Text = CreateText(tileSpo2.transform, "Val", "98 %", 36, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _vitalsSpo2Text = CreateText(tileSpo2.transform, "Val", "-- %", 36, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
             _vitalsSpo2Text.rectTransform.anchoredPosition = new Vector2(0, -12f);
 
             GameObject tileMotion = CreatePanel(p.transform, "TileMotion", new Vector2(245f, 150f), new Color(0.12f, 0.16f, 0.24f, 0.90f));
             tileMotion.transform.localPosition = new Vector3(130f, 45f, 0);
             CreateText(tileMotion.transform, "Lbl", "🏃 MOTION STATE", 20, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.95f, 0.75f, 0.20f)).rectTransform.anchoredPosition = new Vector2(0, 42f);
-            _vitalsMotionText = CreateText(tileMotion.transform, "Val", "STATIONARY", 30, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _vitalsMotionText = CreateText(tileMotion.transform, "Val", "--", 30, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
             _vitalsMotionText.rectTransform.anchoredPosition = new Vector2(0, -12f);
 
             GameObject tileBat = CreatePanel(p.transform, "TileBat", new Vector2(245f, 150f), new Color(0.12f, 0.16f, 0.24f, 0.90f));
             tileBat.transform.localPosition = new Vector3(390f, 45f, 0);
             CreateText(tileBat.transform, "Lbl", "🔋 WRISTBAND", 20, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.3f, 0.95f, 0.45f)).rectTransform.anchoredPosition = new Vector2(0, 42f);
-            _vitalsBatteryText = CreateText(tileBat.transform, "Val", "94 %", 36, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _vitalsBatteryText = CreateText(tileBat.transform, "Val", "-- %", 36, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
             _vitalsBatteryText.rectTransform.anchoredPosition = new Vector2(0, -12f);
 
             // Phase A Action Buttons: [🎯 Re-Attach Hologram] and [📍 Toggle Headboard / Bedside]
@@ -1517,9 +1519,10 @@ namespace ShiroMR
             toggleDockBtn.transform.localPosition = new Vector3(265f, -65f, 0);
 
             // Emergency Banner
-            GameObject banner = CreatePanel(p.transform, "EmergencyBanner", new Vector2(1040f, 65f), new Color(0.08f, 0.25f, 0.18f, 0.95f));
+            // Neutral until the headset shows real fall alerts (Phase 8C); green would claim "stable"
+            GameObject banner = CreatePanel(p.transform, "EmergencyBanner", new Vector2(1040f, 65f), new Color(0.12f, 0.15f, 0.20f, 0.95f));
             banner.transform.localPosition = new Vector3(0, -145f, 0);
-            _vitalsEmergencyStatus = CreateText(banner.transform, "AlertText", "🟢 PATIENT STATUS: STABLE (No Fall Detected | No Panic Alarm)", 22, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.2f, 0.95f, 0.5f));
+            _vitalsEmergencyStatus = CreateText(banner.transform, "AlertText", "⚪ FALL ALERTS: waiting for the edge server", 22, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.85f, 0.88f, 0.92f));
             _vitalsEmergencyStatus.rectTransform.anchoredPosition = Vector2.zero;
             _vitalsEmergencyStatus.rectTransform.sizeDelta = new Vector2(1000f, 55f);
         }

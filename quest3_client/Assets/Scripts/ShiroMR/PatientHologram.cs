@@ -313,21 +313,10 @@ namespace ShiroMR
                 }
             }
 
-            // 3. Substring match (e.g. "1" in "BED-001" or "Bed 1")
-            foreach (var b in _cachedWardConfig.beds)
-            {
-                if (b != null)
-                {
-                    if (cleanAssigned.Contains("1") && (b.bed_code.Contains("1") || b.bed_id.Contains("1")))
-                    {
-                        _assignedWardBed = b;
-                        return;
-                    }
-                }
-            }
-
-            // 4. Default to first bed in ward if available
-            _assignedWardBed = _cachedWardConfig.beds[0];
+            // No bed of this ward matches: the patient has no bed here. Guessing one
+            // (first bed, or any bed with a "1" in it) would dock the panel at
+            // another patient's bed.
+            _assignedWardBed = null;
         }
 
         /// <summary>
