@@ -410,6 +410,7 @@ function renderPatientsTable(patients) {
         <td>${statusBadge}</td>
         <td style="text-align: right; white-space: nowrap;">
           <button class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="View InfluxDB Historical Vitals" style="margin-right: 4px;">📈 Vitals</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Falls and other incidents of this patient" style="margin-right: 4px;">🚨 Incidents</button>
           <button class="btn btn-outline btn-sm"${actionAttrs('editPatientInfo', [p.patient_id], { stop: true })} style="margin-right: 4px;">Edit Infos</button>
           ${secondaryActionBtn}
           <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeletePatient', [p.patient_id, p.full_name], { stop: true })} title="Delete record" style="margin-left: 4px;">🗑️</button>
@@ -948,6 +949,9 @@ async function viewPatientProfileReadOnly(patientId) {
 
       <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; color:var(--primary); border-color:var(--primary);">
         📈 <span>View InfluxDB Historical Vitals Trends (Table 4.10: 30-Day Retention)</span>
+      </button>
+      <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; margin-top:8px; color:var(--danger); border-color:var(--danger);">
+        🚨 <span>Incident History (falls, critical vitals, ward exits)</span>
       </button>
     `;
 

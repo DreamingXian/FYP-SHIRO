@@ -170,6 +170,9 @@
         <button type="button" class="filter-pill" onclick="setPatientFilter('DISCHARGED', this)">Discharged</button>
       </div>
 
+      <!-- Every patient's incidents (falls, critical vitals, ward exits) -->
+      <button type="button" class="btn btn-outline btn-sm" onclick="openIncidentHistoryModal(null, null)" title="Falls and other incidents of every patient" style="color: var(--danger); border-color: var(--danger);">🚨 Incident log</button>
+
       <!-- Wide Search Input -->
       <div class="search-input-wrap search-wide">
         <span class="search-icon">🔍</span>

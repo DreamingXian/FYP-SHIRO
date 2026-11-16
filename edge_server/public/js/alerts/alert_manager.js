@@ -389,17 +389,23 @@ class EmergencyAlertManager {
         })
       });
       const data = await res.json();
-      if (data.success) {
+      // 409: someone else (another screen or a headset) acknowledged it first.
+      // Their acknowledgement is the record; this alert is handled.
+      if (data.success || res.status === 409) {
         this.acknowledgedIncidentIds.add(incidentId);
         if (typeof showToast === 'function') {
-          showToast('Emergency alert acknowledged successfully', 'success');
+          if (data.success) showToast('Emergency alert acknowledged successfully', 'success');
+          else showToast(data.error || 'This alert was already acknowledged.', 'info');
         }
         this.activeAlerts = this.activeAlerts.filter(a => a.incident_id !== incidentId);
         this.updateBannerState();
         this.hideEmergencyModal();
+      } else if (typeof showToast === 'function') {
+        showToast(`Not acknowledged: ${data.error || `server answered ${res.status}`}`, 'danger');
       }
     } catch (e) {
       console.error('[ACKNOWLEDGE ERROR]', e);
+      if (typeof showToast === 'function') showToast('Not acknowledged: the edge server cannot be reached.', 'danger');
     }
   }
 
