@@ -10,6 +10,7 @@ const EXPECTED_TABLES = [
   'devices',
   'emergency_incident_logs',
   'headset_pairings',
+  'headset_ward_anchors',
   'patient_bindings',
   'patients',
   'ward_anchors',
@@ -29,7 +30,7 @@ describe('fresh install', () => {
   before(async () => { pool = await freshDatabase(); });
   after(async () => { await db.closePool(); });
 
-  test('creates all thirteen tables, including patient_bindings and the account tables', async () => {
+  test('creates all fourteen tables, including patient_bindings and the account tables', async () => {
     const [rows] = await pool.query('SHOW TABLES');
     const names = rows.map(r => Object.values(r)[0]).sort();
     assert.deepEqual(names, EXPECTED_TABLES);
