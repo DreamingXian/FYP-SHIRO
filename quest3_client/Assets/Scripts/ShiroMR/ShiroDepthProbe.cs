@@ -61,6 +61,7 @@ namespace ShiroMR
         private readonly List<DepthPoint> _points = new List<DepthPoint>(Cols * Rows);
         private readonly List<DepthPoint> _previous = new List<DepthPoint>(Cols * Rows);
         private readonly List<DepthPoint> _combined = new List<DepthPoint>(Cols * Rows * 2);
+        private readonly List<DepthPoint> _rowPoints = new List<DepthPoint>(Cols * RowsPerFrame);
         private readonly FloorEstimator _floor = new FloorEstimator();
         private readonly System.Random _rnd = new System.Random();
         private int _outsideWard;
@@ -106,6 +107,8 @@ namespace ShiroMR
             Instance = this;
             DontDestroyOnLoad(gameObject);
             _detector.Settings.MovementRequired = PlayerPrefs.GetInt(PrefMovement, 1) == 1;
+            // The memory of empty space is fed row by row while sweeping (spreads the work over frames)
+            _detector.EmptySpaceFedByCaller = true;
         }
 
         public void SetMovementRequired(bool on)
@@ -196,9 +199,12 @@ namespace ShiroMR
                 _sweepJy = (float)_rnd.NextDouble() - 0.5f;
                 for (int i = 0; i < _hasHit.Length; i++) _hasHit[i] = false;
                 for (int c = 0; c < Cols; c++) _topRow[c] = -1;
+                Vector3 eye = cam.transform.position;
+                _detector.EmptySpace.BeginUpdate(eye.x, eye.z);
             }
 
             var watch = Stopwatch.StartNew();
+            int firstRow = _sweepRow;
             int lastRow = Mathf.Min(Rows, _sweepRow + RowsPerFrame);
             for (int r = _sweepRow; r < lastRow; r++)
             {
@@ -221,6 +227,7 @@ namespace ShiroMR
                 }
             }
             _sweepRow = lastRow;
+            AddRowsToEmptySpace(cam, firstRow, lastRow);
             float frameMs = (float)watch.Elapsed.TotalMilliseconds;
             if (_sweepRow < Rows)
             {
@@ -228,6 +235,7 @@ namespace ShiroMR
                 return;
             }
             _sweepRow = -1; // sweep complete: detect in this frame
+            _detector.EmptySpace.EndUpdate(Time.realtimeSinceStartup);
 
             if (_sweepHits == 0)
             {
@@ -306,6 +314,28 @@ namespace ShiroMR
             AddArm(neck - right * 0.18f, _rig.leftHandAnchor);
             AddArm(neck + right * 0.18f, _rig.rightHandAnchor);
             return _exclude;
+        }
+
+        /// <summary>
+        /// Adds the rays of the rows just swept to the detector's memory of empty space, with the
+        /// eye where it was when they were cast (spreads the work over the frames of a sweep).
+        /// </summary>
+        private void AddRowsToEmptySpace(Camera cam, int firstRow, int lastRow)
+        {
+            if (!_detector.Settings.RequireSpaceEvidence) return;
+            _rowPoints.Clear();
+            for (int r = firstRow; r < lastRow; r++)
+                for (int c = 0; c < Cols; c++)
+                {
+                    int i = r * Cols + c;
+                    if (!_hasHit[i]) continue;
+                    Vector3 p = _hitPoints[i];
+                    _rowPoints.Add(new DepthPoint(p.x, p.y, p.z));
+                }
+            if (_rowPoints.Count == 0) return;
+            Vector3 eye = cam.transform.position;
+            float floorY = _floor.Floor ?? ShiroVRPointer.GetPhysicalFloorHeight();
+            _detector.EmptySpace.AddRays(_rowPoints, 0, _rowPoints.Count, floorY, eye.x, eye.y, eye.z, OwnArms(cam));
         }
 
         private void AddArm(Vector3 shoulder, Transform hand)
@@ -465,7 +495,9 @@ namespace ShiroMR
         /// <summary>Why the object counts as moved, or how far it is from where it started.</summary>
         private static string MovedText(Track t)
         {
-            if (t.MovedBy == MovedEvidence.Walked) return $"walked {t.MovedDistance:0.0} m ({t.Steps} step{(t.Steps == 1 ? "" : "s")})";
+            if (t.MovedBy == MovedEvidence.Walked)
+                return $"walked {t.MovedDistance:0.0} m ({t.Steps} step{(t.Steps == 1 ? "" : "s")})" +
+                       (t.LastStepProof != null ? $"\n{t.LastStepProof}" : "");
             if (t.MovedBy == MovedEvidence.SeenMovingHere) return "seen moving here before";
             if (t.Waiting != null) return t.Waiting;
             return t.Steps > 0 ? $"path {t.PathLength:0.0} m" : "not moved";

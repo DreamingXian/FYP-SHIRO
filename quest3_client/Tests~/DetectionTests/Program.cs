@@ -12,8 +12,11 @@ internal static class Program
     private const float HeadY = 1.6f;           // eye height
     private static int _passed, _failed;
 
-    private static int Main()
+    private static int Main(string[] args)
     {
+        // dotnet run -- --seeds 30: every ray-cast scene with 30 random seeds, pass rate per scene
+        if (args.Length == 2 && args[0] == "--seeds") return SceneTests.Stress(int.Parse(args[1])) == 0 ? 0 : 1;
+
         Run("a standing person's height is measured from the visible side (±5 cm)", PersonHeight);
         Run("floor points alone are no object", FloorOnly);
         Run("the wearer's own hands and body are left out", SelfIgnored);
@@ -469,7 +472,7 @@ internal static class Program
 
     /// <summary>For point-based movement tests: their points have no floor, so the "old spot
     /// seen empty" check is off there (the ray-cast scenes test it).</summary>
-    private static DetectorSettings PointsOnly() => new DetectorSettings { RequireVacatedSpot = false };
+    private static DetectorSettings PointsOnly() => new DetectorSettings { RequireSpaceEvidence = false };
 
     // ----- Made-up depth points -----
 

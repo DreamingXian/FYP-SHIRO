@@ -11,8 +11,44 @@ using ShiroMR.Detection;
 
 internal static class SceneTests
 {
+    /// <summary>Changes the random ray shifts and noise of every scene (0 = the fixed test runs).</summary>
+    public static int SeedOffset;
+    private static bool _rowByRow; // new simulators feed the memory of empty space row by row
+
     public static void RunAll(Action<string, Action> run)
     {
+        foreach (var (name, test) in Scenes()) run(name, test);
+    }
+
+    /// <summary>
+    /// Runs every scene with n different random seeds and prints how often each one passed
+    /// (dotnet run -- --seeds 30). The fixed runs above only show that one seed passes.
+    /// </summary>
+    public static int Stress(int n)
+    {
+        int failedScenes = 0;
+        foreach (var (name, test) in Scenes())
+        {
+            int ok = 0;
+            string firstFailure = null;
+            for (int k = 1; k <= n; k++)
+            {
+                SeedOffset = k;
+                try { test(); ok++; }
+                catch (Exception ex) { if (firstFailure == null) firstFailure = $"seed {k}: {ex.Message}"; }
+            }
+            SeedOffset = 0;
+            if (ok < n) failedScenes++;
+            Console.WriteLine($"  {ok,3}/{n}  {name}");
+            if (firstFailure != null) Console.WriteLine($"          first failure, {firstFailure}");
+        }
+        return failedScenes;
+    }
+
+    private static List<(string, Action)> Scenes()
+    {
+        var list = new List<(string, Action)>();
+        void run(string name, Action test) => list.Add((name, test));
         run("scene: walking around a room for 2 minutes (rack, cabinet, monitor, chair): nobody is a person", WalkAroundRoom);
         run("scene: walking a full circle around a still rack at 1.2 m: it is not a person", CircleAroundRack);
         run("scene: an object seen for the first time is never green at once", FirstLookNotGreen);
@@ -20,13 +56,27 @@ internal static class SceneTests
         run("scene: a rack pushed 0.5 m away with a foot while looking down, then stepped back: moved", RackPushedAwayLookingDown);
         run("scene: a person walking across the room becomes a person candidate", PersonWalksAcross);
         run("scene: a person pacing 0.35 m back and forth becomes a person candidate", PersonPacing);
+        run("scene: a rack (clothes up to the bar) pulled 0.5 m straight toward the wearer becomes a person candidate", RackPulledToward);
+        run("scene: a rack (clothes up to the bar) pulled 0.45 m toward the wearer, then pushed back: two steps", RackTowardAndBack);
+        run("scene: a person walking straight toward the wearer becomes a person candidate", PersonWalksToward);
+        run("scene: a person walking straight away from the wearer becomes a person candidate", PersonWalksAway);
+        run("scene: a person pacing 0.4 m toward and away from the wearer becomes a person candidate", PersonPacingTowardAway);
+        run("scene: walking up to a still rack and back, three times: it is not a person", WalkUpToRack);
+        run("scene: walking around the room with noisy depth (±3 cm at 2 m): nobody is a person", WalkAroundRoomNoisy);
+        run("scene: a rack pushed sideways with noisy depth becomes a person candidate", RackPushedSidewaysNoisy);
+        run("scene, fed row by row as on the headset: walking around the room, nobody is a person", () => { _rowByRow = true; try { WalkAroundRoom(); } finally { _rowByRow = false; } });
+        run("scene, fed row by row as on the headset: a rack pulled toward the wearer becomes a person candidate", () => { _rowByRow = true; try { RackPulledToward(); } finally { _rowByRow = false; } });
+        return list;
     }
 
     // ----- Scenarios -----
 
-    private static void WalkAroundRoom()
+    private static void WalkAroundRoom() => WalkAroundRoomWith(1, 0f);
+    private static void WalkAroundRoomNoisy() => WalkAroundRoomWith(11, 0.015f);
+
+    private static void WalkAroundRoomWith(int seed, float noise)
     {
-        var sim = new Sim(1);
+        var sim = new Sim(seed) { Noise = noise };
         Room(sim);
         sim.Static.AddRange(Rack(0.6f, 3.3f));
         sim.Static.Add(new Box(-1.8f, -0.8f, 0f, 1.8f, 4.3f, 4.8f));       // cabinet against the back wall
@@ -83,9 +133,12 @@ internal static class SceneTests
         for (int i = 0; i < 30; i++, t += 0.2f) { sim.Step(d, t); NobodyGreen(d, $"looking, {t:0.0} s"); }
     }
 
-    private static void RackPushedSideways()
+    private static void RackPushedSideways() => RackPushedSidewaysWith(4, 0f);
+    private static void RackPushedSidewaysNoisy() => RackPushedSidewaysWith(14, 0.015f);
+
+    private static void RackPushedSidewaysWith(int seed, float noise)
     {
-        var sim = new Sim(4);
+        var sim = new Sim(seed) { Noise = noise };
         Room(sim);
         var d = new PersonDetector();
         sim.CamX = 0f; sim.CamZ = 1.0f; sim.Yaw = 0f; sim.Pitch = -0.25f;
@@ -162,6 +215,129 @@ internal static class SceneTests
         True(green, "pacing became a person candidate " + Dump(d));
     }
 
+    private static void RackPulledToward()
+    {
+        var sim = new Sim(8);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 0.8f; sim.Yaw = 0f; sim.Pitch = -0.25f;
+        float t = 0f, rz = 2.8f;
+        for (int i = 0; i < 15; i++, t += 0.2f) { sim.Moving = FullRack(0f, rz); sim.Step(d, t); }
+        NobodyGreen(d, "before the pull");
+        for (int i = 0; i < 12; i++, t += 0.2f) { rz -= 0.5f / 12; sim.Moving = FullRack(0f, rz); sim.Step(d, t); }
+        bool green = false;
+        for (int i = 0; i < 20; i++, t += 0.2f)
+        {
+            sim.Moving = FullRack(0f, rz);
+            sim.Step(d, t);
+            if (Near(d, 0f, rz)?.Kind == TrackKind.PersonCandidate) green = true;
+        }
+        True(green, "the rack pulled toward the wearer became a person candidate within 4 s " + Dump(d));
+    }
+
+    private static void RackTowardAndBack()
+    {
+        var sim = new Sim(9);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 0.8f; sim.Yaw = 0f; sim.Pitch = -0.25f;
+        float t = 0f, rz = 2.8f;
+        void Hold(int n) { for (int i = 0; i < n; i++, t += 0.2f) { sim.Moving = FullRack(0f, rz); sim.Step(d, t); } }
+        void Move(float to) { float from = rz; for (int i = 1; i <= 8; i++, t += 0.2f) { rz = from + (to - from) * i / 8f; sim.Moving = FullRack(0f, rz); sim.Step(d, t); } }
+        Hold(15);
+        Move(2.35f);
+        Hold(10);
+        Move(2.8f);
+        Hold(12);
+        var r = Near(d, 0f, rz);
+        True(r != null && r.Steps >= 2 && r.Kind == TrackKind.PersonCandidate,
+             "toward and back counted as two steps " + Dump(d));
+    }
+
+    private static void PersonWalksToward()
+    {
+        var sim = new Sim(10);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 0.5f; sim.Yaw = 0f; sim.Pitch = -0.15f;
+        float t = 0f, pz = 4.4f;
+        bool green = false;
+        for (int i = 0; i < 8; i++, t += 0.2f) { sim.Moving = Person(0.1f, pz, 1.70f); sim.Step(d, t); }
+        for (int i = 0; i < 22; i++, t += 0.2f)
+        {
+            pz -= 0.1f; // 0.5 m/s, from 4.4 m to 2.2 m
+            sim.Moving = Person(0.1f, pz, 1.70f);
+            sim.Step(d, t);
+            if (Near(d, 0.1f, pz)?.Kind == TrackKind.PersonCandidate) green = true;
+        }
+        True(green, "the person walking toward the wearer became a person candidate " + Dump(d));
+    }
+
+    private static void PersonWalksAway()
+    {
+        var sim = new Sim(12);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 0.5f; sim.Yaw = 0f; sim.Pitch = -0.15f;
+        float t = 0f, pz = 1.9f;
+        bool green = false;
+        for (int i = 0; i < 8; i++, t += 0.2f) { sim.Moving = Person(0.1f, pz, 1.70f); sim.Step(d, t); }
+        for (int i = 0; i < 22; i++, t += 0.2f)
+        {
+            pz += 0.1f; // 0.5 m/s, from 1.9 m to 4.1 m
+            sim.Moving = Person(0.1f, pz, 1.70f);
+            sim.Step(d, t);
+            if (Near(d, 0.1f, pz)?.Kind == TrackKind.PersonCandidate) green = true;
+        }
+        True(green, "the person walking away from the wearer became a person candidate " + Dump(d));
+    }
+
+    private static void PersonPacingTowardAway()
+    {
+        var sim = new Sim(13);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 0.5f; sim.Yaw = 0f; sim.Pitch = -0.15f;
+        float t = 0f, pz = 2.8f;
+        bool green = false;
+        void Hold(int n) { for (int i = 0; i < n; i++, t += 0.2f) { sim.Moving = Person(0f, pz, 1.65f); sim.Step(d, t); if (Near(d, 0f, pz)?.Kind == TrackKind.PersonCandidate) green = true; } }
+        void Walk(float to) { float from = pz; for (int i = 1; i <= 3; i++, t += 0.2f) { pz = from + (to - from) * i / 3f; sim.Moving = Person(0f, pz, 1.65f); sim.Step(d, t); } }
+        Hold(8);
+        for (int c = 0; c < 4; c++) { Walk(3.2f); Hold(6); Walk(2.8f); Hold(6); }
+        True(green, "pacing toward and away became a person candidate " + Dump(d));
+    }
+
+    private static void WalkUpToRack()
+    {
+        var sim = new Sim(15);
+        Room(sim);
+        sim.Static.AddRange(Rack(0f, 3.0f));
+        sim.Static.Add(new Box(1.4f, 2.0f, 0.95f, 1.35f, 4.6f, 4.65f));    // monitor
+        sim.Static.Add(new Box(1.2f, 2.2f, 0f, 0.75f, 4.2f, 4.9f));        // desk
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 0.8f; sim.Yaw = 0f;
+        float t = 0f;
+        for (int round = 0; round < 3; round++)
+        {
+            for (int i = 0; i < 15; i++, t += 0.2f)   // walks up to 0.8 m from the rack, looking down more
+            {
+                sim.CamZ = 0.8f + 1.4f * i / 14f;
+                sim.Pitch = -0.2f - 0.3f * i / 14f;
+                sim.Yaw = 0.15f * (float)Math.Sin(t);
+                sim.Step(d, t);
+                NobodyGreen(d, $"walking up, {t:0.0} s");
+            }
+            for (int i = 0; i < 15; i++, t += 0.2f)   // and back
+            {
+                sim.CamZ = 2.2f - 1.4f * i / 14f;
+                sim.Pitch = -0.5f + 0.3f * i / 14f;
+                sim.Yaw = 0.15f * (float)Math.Sin(t);
+                sim.Step(d, t);
+                NobodyGreen(d, $"walking back, {t:0.0} s");
+            }
+        }
+    }
+
     // ----- Room and objects -----
 
     private static void Room(Sim sim)
@@ -172,12 +348,18 @@ internal static class SceneTests
         sim.Static.Add(new Box(2.5f, 2.6f, 0f, 2.6f, -0.5f, 5.1f));   // right wall
     }
 
-    /// <summary>A clothes rack with a jacket: a thin pole, a hook bar on top, the jacket hanging below it.</summary>
-    private static List<Shape> Rack(float x, float z) => new List<Shape>
+    /// <summary>A clothes rack with a jacket: a thin pole, a hook bar on top, the jacket hanging below it
+    /// with a 10 cm gap under the bar.</summary>
+    private static List<Shape> Rack(float x, float z) => Rack(x, z, 1.50f);
+
+    /// <summary>A clothes rack whose clothes hang right from the hook bar (no gap to see through).</summary>
+    private static List<Shape> FullRack(float x, float z) => Rack(x, z, 1.60f);
+
+    private static List<Shape> Rack(float x, float z, float clothesTop) => new List<Shape>
     {
         new Cyl(x, z, 0.015f, 0f, 1.65f),                              // pole
         new Box(x - 0.22f, x + 0.22f, 1.60f, 1.65f, z - 0.015f, z + 0.015f), // hook bar
-        new Box(x - 0.25f, x + 0.25f, 0.85f, 1.50f, z - 0.06f, z + 0.06f),   // jacket
+        new Box(x - 0.25f, x + 0.25f, 0.85f, clothesTop, z - 0.06f, z + 0.06f), // clothes
         new Box(x - 0.30f, x + 0.30f, 0f, 0.05f, z - 0.03f, z + 0.03f),      // feet
         new Box(x - 0.03f, x + 0.03f, 0f, 0.05f, z - 0.30f, z + 0.30f),
     };
@@ -206,14 +388,14 @@ internal static class SceneTests
     {
         foreach (var t in d.Tracks)
             if (t.Kind == TrackKind.PersonCandidate)
-                throw new Exception($"{when}: #{t.Id} at ({t.X:0.00}, {t.Z:0.00}) h {t.Height:0.00} is green ({t.MovedBy}, steps {t.Steps}, path {t.PathLength:0.00})");
+                throw new Exception($"{when}: #{t.Id} at ({t.X:0.00}, {t.Z:0.00}) h {t.Height:0.00} is green ({t.MovedBy}, steps {t.Steps}, path {t.PathLength:0.00}, {t.LastStepProof})");
     }
 
     private static string Dump(PersonDetector d)
     {
         var parts = new List<string>();
         foreach (var t in d.Tracks)
-            parts.Add($"#{t.Id} ({t.X:0.00},{t.Z:0.00}) h {t.Height:0.00} {t.Kind} steps {t.Steps} path {t.PathLength:0.00} {t.Waiting} {t.NotPersonReason}");
+            parts.Add($"#{t.Id} ({t.X:0.00},{t.Z:0.00}) h {t.Height:0.00} {t.Kind} steps {t.Steps} path {t.PathLength:0.00} {t.LastStepProof} {t.Waiting} {t.NotPersonReason}");
         return "[" + string.Join("; ", parts) + "]";
     }
 
@@ -294,21 +476,35 @@ internal static class SceneTests
         private const int Cols = 40, Rows = 30;
         private const float HFov = 1.57f, VFov = 1.22f, MaxRange = 6f; // 90° x 70°
         public float CamX, CamY = 1.6f, CamZ, Yaw, Pitch;
+        /// <summary>Depth noise: standard deviation as a share of the distance (0.015 = 3 cm at 2 m).</summary>
+        public float Noise;
         public readonly List<Shape> Static = new List<Shape>();
         public List<Shape> Moving = new List<Shape>();
         private readonly Random _rnd;
         private List<DepthPoint> _previous = new List<DepthPoint>();
 
-        public Sim(int seed) { _rnd = new Random(seed); }
+        public Sim(int seed) { _rnd = new Random(seed + 1000 * SeedOffset); RowByRow = _rowByRow; }
 
         /// <summary>One detection update, as on the headset: this sweep plus the previous one.</summary>
+        /// <summary>As on the headset: the memory of empty space is fed 6 rows (240 rays) at a time
+        /// while the sweep goes on, and the detector only reads it.</summary>
+        public bool RowByRow;
+
         public void Step(PersonDetector d, float now)
         {
             var points = Cast();
             var combined = new List<DepthPoint>(points);
             combined.AddRange(_previous);
             _previous = points;
-            d.Process(combined, 0f, CamX, CamY, CamZ, now);
+            if (RowByRow)
+            {
+                d.EmptySpaceFedByCaller = true;
+                d.EmptySpace.BeginUpdate(CamX, CamZ);
+                for (int start = 0; start < points.Count; start += Cols * 6)
+                    d.EmptySpace.AddRays(points, start, Cols * 6, 0f, CamX, CamY, CamZ, null);
+                d.EmptySpace.EndUpdate(now);
+            }
+            d.Process(combined, 0f, CamX, CamY, CamZ, now, null, points.Count);
         }
 
         public List<DepthPoint> Cast()
@@ -335,9 +531,16 @@ internal static class SceneTests
                     foreach (var s in Static) if (s.Hit(CamX, CamY, CamZ, dx, dy, dz, out float ts) && ts < best) { best = ts; hit = true; }
                     foreach (var s in Moving) if (s.Hit(CamX, CamY, CamZ, dx, dy, dz, out float ts) && ts < best) { best = ts; hit = true; }
                     if (!hit) continue;
+                    if (Noise > 0f) best *= 1f + Noise * Gauss();
                     pts.Add(new DepthPoint(CamX + dx * best, CamY + dy * best, CamZ + dz * best, r >= Rows - 2));
                 }
             return pts;
+        }
+
+        private float Gauss()
+        {
+            double u1 = 1.0 - _rnd.NextDouble(), u2 = _rnd.NextDouble();
+            return (float)(Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2 * Math.PI * u2));
         }
     }
 }
