@@ -121,6 +121,11 @@ namespace ShiroMR
         public string medical_history;
         public string photo_url;
         public string patient_status;
+        // Optional body measurements. The server sends null when not recorded,
+        // which JsonUtility reads as 0: 0 means "not recorded", never a real value.
+        public int height_cm;
+        public float weight_kg;
+        public bool HasHeight => height_cm > 0;
         public string device_id; // Tag ID (e.g. TAG-001)
         public string mac_address;
         public string device_status;

@@ -606,6 +606,8 @@ namespace ShiroMR
             if (s != null)
             {
                 lines.Add($"Patient {s.patient_id} · {(string.IsNullOrEmpty(s.assigned_bed_id) ? "no bed assigned" : s.assigned_bed_id)}");
+                if (s.HasHeight || s.weight_kg > 0f)
+                    lines.Add($"{(s.HasHeight ? $"{s.height_cm} cm" : "height not recorded")} · {(s.weight_kg > 0f ? $"{s.weight_kg:0.#} kg" : "weight not recorded")}");
                 lines.Add($"Wristband {s.device_id}{(string.IsNullOrEmpty(s.mac_address) ? "" : $" ({s.mac_address})")}");
             }
             else

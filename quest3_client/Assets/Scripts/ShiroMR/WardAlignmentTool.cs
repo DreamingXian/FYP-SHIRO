@@ -98,6 +98,7 @@ namespace ShiroMR
                 {
                     _cachedWardConfig = ward;
                 };
+                ShiroNetworkManager.Instance.OnActiveWardChanged += HandleActiveWardChanged;
                 if (_cachedWardConfig == null && ShiroNetworkManager.Instance.LastLoadedWardConfig != null)
                 {
                     _cachedWardConfig = ShiroNetworkManager.Instance.LastLoadedWardConfig;
@@ -809,6 +810,7 @@ namespace ShiroMR
             string wardId = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
             if (!string.IsNullOrEmpty(wardId))
             {
+                ShiroNetworkManager.Instance?.RememberOwnAnchor(wardId, "");
                 StartCoroutine(SendAnchorToServerRoutine(wardId, ""));
             }
             else
@@ -827,6 +829,24 @@ namespace ShiroMR
                 _metricsText.text = "Origin reset to (0,0,0). Digital twin disabled until re-calibrated.";
             }
             Debug.Log("[SHIRO ALIGN] Native anchor purged and room alignment reset.");
+        }
+
+        /// <summary>
+        /// Another ward became active: the previous ward's anchor must not keep moving the
+        /// ward origin, so it is let go and the ward counts as not aligned until the new
+        /// ward's saved anchor is found (or it is calibrated).
+        /// </summary>
+        private void HandleActiveWardChanged(string newWardId)
+        {
+            if (currentStep != AlignmentStep.Idle && currentStep != AlignmentStep.Completed) currentStep = AlignmentStep.Idle;
+            if (spatialManager != null) spatialManager.DetachCurrentAnchor();
+            isAligned = false;
+            if (wardVisualizer != null)
+            {
+                wardVisualizer.ToggleOverlay(false);
+                wardVisualizer.SetCollidersEnabled(false);
+            }
+            UpdateStatusUi($"NOT ALIGNED ({newWardId} loading)", MsgBusy);
         }
 
         /// <summary>Raised with every message of this tool (text, colour), for the hand slate's Ward tab.</summary>
@@ -934,6 +954,7 @@ namespace ShiroMR
                 return;
             }
 
+            ShiroNetworkManager.Instance?.RememberOwnAnchor(wardId, realUuid);
             StartCoroutine(SendAnchorToServerRoutine(wardId, realUuid));
         }
 
@@ -1070,9 +1091,14 @@ namespace ShiroMR
             }
 
             // 4. Auto-restore Native Spatial Anchor if UUID is present in ward
-            if (!string.IsNullOrEmpty(ward.spatial_anchor_uuid) && spatialManager != null)
+            string savedUuid = !string.IsNullOrEmpty(ward.spatial_anchor_uuid)
+                ? ward.spatial_anchor_uuid
+                : PlayerPrefs.GetString($"WARD_ANCHOR_UUID_{ward.ward_id}", "");
+            bool alreadyOnIt = spatialManager != null && spatialManager.currentNativeAnchor != null &&
+                               string.Equals(spatialManager.activeAnchorUuid, savedUuid, StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(savedUuid) && spatialManager != null && !alreadyOnIt)
             {
-                TryAutoRestoreNativeAnchor(ward.spatial_anchor_uuid);
+                TryAutoRestoreNativeAnchor(savedUuid);
             }
         }
 

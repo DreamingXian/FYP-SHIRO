@@ -266,6 +266,20 @@ namespace ShiroMR
             Connect();
         }
 
+        /// <summary>
+        /// Records this headset's saved anchor of a ward ("" when removed) in the ward data
+        /// already loaded, so ward detection and Re-Sync use it without reloading the list.
+        /// </summary>
+        public void RememberOwnAnchor(string wardId, string anchorUuid)
+        {
+            if (string.IsNullOrEmpty(wardId)) return;
+            foreach (var w in _availableWards)
+                if (string.Equals(w.ward_id, wardId, StringComparison.OrdinalIgnoreCase)) w.spatial_anchor_uuid = anchorUuid ?? "";
+            if (LastLoadedWardConfig != null && string.Equals(LastLoadedWardConfig.ward_id, wardId, StringComparison.OrdinalIgnoreCase))
+                LastLoadedWardConfig.spatial_anchor_uuid = anchorUuid ?? "";
+            OnWardListLoaded?.Invoke(_availableWards);
+        }
+
         public void SwitchWard(string newWardId)
         {
             if (string.IsNullOrEmpty(newWardId)) return;
