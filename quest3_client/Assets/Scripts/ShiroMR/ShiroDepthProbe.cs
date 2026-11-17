@@ -4,8 +4,12 @@
 //
 // Switched on from the System tab ("Depth test"). While on, it casts a grid of
 // 40 × 30 rays into the depth sensor's view five times per second
-// (EnvironmentRaycastManager, Meta MR Utility Kit), gives the 3D points to the
-// person detector (ShiroPersonDetection.cs) and shows:
+// (EnvironmentRaycastManager, Meta MR Utility Kit). The grid shifts by a random
+// fraction of a ray each time and the last two updates are combined, so thin or
+// hollow objects get twice as many points. The floor height is measured from the
+// points (the headset's floor level is only a guess); when the ward is aligned,
+// points outside its walls are left out. The points go to the person detector
+// (ShiroPersonDetection.cs), and the view shows:
 //   - the depth points, coloured by height above the floor (blue = floor);
 //   - every object found: a vertical line from the floor to its measured height
 //     and a label "#id height · still / PERSON? / not person";
@@ -45,6 +49,11 @@ namespace ShiroMR
 
         private readonly PersonDetector _detector = new PersonDetector();
         private readonly List<DepthPoint> _points = new List<DepthPoint>(Cols * Rows);
+        private readonly List<DepthPoint> _previous = new List<DepthPoint>(Cols * Rows);
+        private readonly List<DepthPoint> _combined = new List<DepthPoint>(Cols * Rows * 2);
+        private readonly FloorEstimator _floor = new FloorEstimator();
+        private readonly System.Random _rnd = new System.Random();
+        private int _outsideWard;
         private readonly Vector3[] _hitPoints = new Vector3[Cols * Rows];
         private readonly bool[] _hasHit = new bool[Cols * Rows];
         private EnvironmentRaycastManager _raycaster;
@@ -95,6 +104,8 @@ namespace ShiroMR
             if (on == IsRunning) return;
             IsRunning = on;
             _detector.Reset();
+            _floor.Reset();
+            _previous.Clear();
             if (on)
             {
                 EnsureVisuals();
@@ -147,11 +158,12 @@ namespace ShiroMR
             for (int i = 0; i < _hasHit.Length; i++) _hasHit[i] = false;
             var topRow = new int[Cols];
             for (int c = 0; c < Cols; c++) topRow[c] = -1;
+            float jx = (float)_rnd.NextDouble() - 0.5f, jy = (float)_rnd.NextDouble() - 0.5f; // shift within one ray spacing
             for (int r = 0; r < Rows; r++)
             {
                 for (int c = 0; c < Cols; c++)
                 {
-                    Ray ray = cam.ViewportPointToRay(new Vector3((c + 0.5f) / Cols, (r + 0.5f) / Rows, 0f));
+                    Ray ray = cam.ViewportPointToRay(new Vector3(Mathf.Clamp01((c + 0.5f + jx) / Cols), Mathf.Clamp01((r + 0.5f + jy) / Rows), 0f));
                     _raycaster.Raycast(ray, out EnvironmentRaycastHit hit, MaxRange);
                     switch (hit.status)
                     {
@@ -183,9 +195,18 @@ namespace ShiroMR
                     _points.Add(new DepthPoint(p.x, p.y, p.z, r >= topRow[c] - 1));
                 }
 
-            _floorY = ShiroVRPointer.GetPhysicalFloorHeight();
+            _floorY = _floor.Update(_points, ShiroVRPointer.GetPhysicalFloorHeight());
+
+            // This update and the previous one together; inside the ward's walls when aligned
+            _combined.Clear();
+            _outsideWard = 0;
+            AddInsideWard(_points);
+            AddInsideWard(_previous);
+            _previous.Clear();
+            _previous.AddRange(_points);
+
             Vector3 head = cam.transform.position;
-            _detector.Process(_points, _floorY, head.x, head.z, Time.realtimeSinceStartup);
+            _detector.Process(_combined, _floorY, head.x, head.z, Time.realtimeSinceStartup);
             watch.Stop();
 
             DrawPoints(cam);
@@ -195,7 +216,35 @@ namespace ShiroMR
             foreach (var t in _detector.Tracks) if (t.Kind == TrackKind.PersonCandidate) persons++;
             SetStatus($"Depth OK · {hits}/{Cols * Rows} hits{(outside > 0 ? $" ({outside} outside sensor)" : "")} · " +
                       $"{_detector.Tracks.Count} objects, {persons} PERSON? · {_fps:0} fps · {watch.Elapsed.TotalMilliseconds:0.0} ms\n" +
-                      $"Movement required: {(MovementRequired ? "ON" : "OFF (TEST: height only)")} · floor y {_floorY:0.00} m");
+                      $"Movement required: {(MovementRequired ? "ON" : "OFF (TEST: height only)")} · " +
+                      $"floor {(_floor.Floor.HasValue ? $"measured y {_floorY:0.00} m" : $"NOT SEEN, guess y {_floorY:0.00} m (look at the floor)")}" +
+                      $"{(_wardWalls ? $" · {_outsideWard} points outside the ward left out" : "")}");
+        }
+
+        private bool _wardWalls;
+
+        /// <summary>Adds the points that are inside the aligned ward (0.15 m inside its walls), or all of them.</summary>
+        private void AddInsideWard(List<DepthPoint> points)
+        {
+            var spatial = WardSpatialManager.Instance;
+            var tool = WardAlignmentTool.Instance;
+            WardConfig ward = spatial != null ? spatial.GetCachedWardConfig() : null;
+            _wardWalls = ward != null && ward.length_x > 0f && ward.width_y > 0f &&
+                         spatial.wardOrigin != null && tool != null && tool.isAligned;
+            if (!_wardWalls) { _combined.AddRange(points); return; }
+
+            const float margin = 0.15f;
+            Transform origin = spatial.wardOrigin;
+            foreach (var p in points)
+            {
+                Vector3 local = origin.InverseTransformPoint(new Vector3(p.x, p.y, p.z));
+                if (local.x < margin || local.z < margin || local.x > ward.length_x - margin || local.z > ward.width_y - margin)
+                {
+                    _outsideWard++;
+                    continue;
+                }
+                _combined.Add(p);
+            }
         }
 
         private void SetStatus(string text)
@@ -297,11 +346,15 @@ namespace ShiroMR
                 m.line.SetPosition(0, bottom);
                 m.line.SetPosition(1, top);
                 m.line.startColor = m.line.endColor = col;
+                m.line.startWidth = m.line.endWidth = t.Kind == TrackKind.NotPerson ? 0.008f : 0.025f;
 
                 string kind = t.Kind == TrackKind.PersonCandidate ? "PERSON?"
                             : t.Kind == TrackKind.StillObject ? "still"
                             : "not person";
-                m.label.text = $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · moved {t.MaxDisplacement:0.0} m";
+                m.label.text = t.Kind == TrackKind.NotPerson
+                    ? $"{t.Height:0.00} m"
+                    : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · moved {t.Displacement:0.0} m";
+                m.label.characterSize = t.Kind == TrackKind.NotPerson ? 0.0025f : 0.004f;
                 m.label.color = col;
                 m.label.transform.position = top + Vector3.up * 0.12f;
                 Vector3 look = m.label.transform.position - cam.transform.position;

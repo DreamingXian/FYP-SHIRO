@@ -3,22 +3,29 @@
 // Person-like object detection from depth points (feature 8D).
 //
 // Plain C# with no Unity dependency, so it can be tested automatically outside
-// Unity (tools/detection_tests). The headset feeds it the 3D points the depth
-// sensor sees (world metres, y up) a few times per second.
+// Unity (quest3_client/Tests~/DetectionTests). The headset feeds it the 3D
+// points the depth sensor sees (world metres, y up) a few times per second.
 //
 // 1. Points are put into a floor grid of 10 cm cells; each cell keeps the
 //    highest point above the floor. Points near the floor, very high points and
-//    points close to the wearer (own hands and body) are left out.
-// 2. Touching cells form objects ("blobs"): position, height, footprint.
-// 3. A tracker follows each object over time (id, position, height, how far it
-//    has moved since it was first seen, speed).
-// 4. An object is a person candidate when its height is in the person range
-//    and, unless switched off for testing, it has moved at least 0.4 m since it
-//    was first seen. "Has moved" stays for that object while it is tracked, and
-//    is remembered for a short time at that spot if it is lost (looked away),
-//    so a person who stands still does not become furniture.
-// An object that never moved stays "not a person" however tall it is: a
-// cabinet missing from the ward plan is ignored without being configured.
+//    points close to the wearer (own hands and body) are left out, and so are
+//    cells with a single point (sensor noise at edges).
+// 2. Cells taller than any person (walls, door frames, wardrobes: top above
+//    2.25 m) are structure and are removed before grouping, so a bed against a
+//    wall is not merged with the wall and keeps its own height.
+// 3. Touching cells form objects: height, footprint, and a position taken from
+//    the object's upper part (its top 30 cm), which looks the same from every
+//    side; the lower part a hollow object shows changes with the view.
+// 4. A tracker follows each object. "Moved" needs sustained movement: the
+//    median of the last five positions must stay at least 0.4 m from the median
+//    of the first five, for five updates in a row (1 s at 5 Hz). Single jumps
+//    from noise or a momentary merge never count. A sudden height jump
+//    (merging with something next to it) does not move the object.
+// 5. A person candidate is person-sized and, unless switched off for testing,
+//    has moved. "Moved" stays while tracked and is remembered for a short time
+//    at the spot where it was lost (looked away), so a person who stands still
+//    does not become furniture. An object that never moved stays "not a
+//    person": a cabinet missing from the ward plan is ignored.
 // =============================================================================
 using System;
 using System.Collections.Generic;
@@ -41,26 +48,32 @@ namespace ShiroMR.Detection
     public sealed class DetectorSettings
     {
         public float CellSize = 0.10f;          // m
+        public int MinCellPoints = 2;           // a cell with fewer points is noise
         public float MinPointHeight = 0.15f;    // m above the floor: lower points are floor
         public float MaxPointHeight = 2.40f;    // m above the floor: higher points are ceiling/lamps
+        public float StructureHeight = 2.25f;   // m: a cell this tall is wall/door frame/wardrobe
         public float SelfRadius = 0.55f;        // m around the wearer's head (own hands, body)
         public int MinBlobCells = 3;            // smaller objects are noise
         public float MaxFootprint = 1.2f;       // m², larger objects are furniture or walls
         public float MaxSpan = 1.4f;            // m, longest side of the footprint
+        public float TopBand = 0.30f;           // m: the upper part that gives the position
         public float PersonMinHeight = 0.90f;   // m, standing or walking
         public float PersonMaxHeight = 2.10f;   // m
         public bool MovementRequired = true;    // false only for testing (height only)
-        public float MoveDistance = 0.40f;      // m since first seen
+        public float MoveDistance = 0.40f;      // m between the start and the current position
+        public int MedianOf = 5;                // updates in the start and current medians
+        public int MoveConfirmUpdates = 5;      // updates in a row beyond MoveDistance
+        public float MaxHeightJump = 0.35f;     // m: a bigger change in one update is a merge
+        public int MaxJumpSkips = 3;            // after that many, the new height is accepted
         public float MatchDistance = 0.60f;     // m between updates to stay the same object
         public float LostAfter = 2.0f;          // s unseen before an object is dropped
         public float RememberMovedFor = 30f;    // s a lost moved object is remembered at its spot
-        public float PositionSmoothing = 0.5f;  // 0..1, weight of the new measurement
         public float HeightSmoothing = 0.3f;
     }
 
     public sealed class Blob
     {
-        public float X, Z;          // centre on the floor, world metres
+        public float X, Z;          // position of the upper part, world metres
         public float Top;           // m above the floor
         public bool TopMaybeCut;    // its highest points were at the top edge of the view
         public int Cells;
@@ -81,18 +94,100 @@ namespace ShiroMR.Detection
     public sealed class Track
     {
         public int Id;
-        public float X, Z;              // smoothed position
+        public float X, Z;              // median of the recent positions
         public float Height;            // smoothed height above the floor
         public bool HeightMaybeCut;
         public float Footprint;
         public float Span;              // m, longest side of the footprint
-        public float FirstX, FirstZ;
+        public float StartX, StartZ;    // median of the first positions (once known)
+        public bool StartKnown;
         public float FirstSeen, LastSeen;
-        public float MaxDisplacement;   // m from where it was first seen
+        public float Displacement;      // m, current position from the start
+        public float MaxDisplacement;   // m, largest Displacement so far
         public bool HasMoved;
         public float Speed;             // m/s, smoothed
         public TrackKind Kind;
         public bool SeenThisUpdate;
+
+        internal readonly List<float> FirstXs = new List<float>(), FirstZs = new List<float>();
+        internal readonly List<float> RecentXs = new List<float>(), RecentZs = new List<float>();
+        internal int MoveStreak;
+        internal int JumpSkips;
+    }
+
+    /// <summary>
+    /// Measures the floor height from the depth points: the lowest height at which
+    /// many points lie (the floor is the largest surface at the bottom of the view).
+    /// The headset's own floor level is only a guess and can be off by 10-30 cm;
+    /// then the floor itself would count as an object. The estimate is kept between
+    /// updates and only changes when the floor is seen.
+    /// </summary>
+    public sealed class FloorEstimator
+    {
+        public float SearchRange = 0.6f;     // m above and below the guess
+        public float BinSize = 0.02f;        // m
+        public int MinPoints = 20;           // floor points needed for a measurement
+        public float MinShare = 0.15f;       // share of the points in the search range
+        public int MedianOf = 9;             // measurements combined
+        public float Tolerance = 0.08f;      // m: measurements this close to the floor are combined
+
+        private readonly List<float> _recent = new List<float>();
+
+        /// <summary>The measured floor (world y), or null while the floor has not been seen.</summary>
+        public float? Floor { get; private set; }
+
+        public void Reset() { _recent.Clear(); Floor = null; }
+
+        /// <summary>Measures the floor in this update's points; returns the floor to use.</summary>
+        public float Update(IReadOnlyList<DepthPoint> points, float guessY)
+        {
+            float? m = Measure(points, guessY);
+            // The floor does not rise: a higher layer is a bed or table top seen without the
+            // floor. A clearly lower layer means the earlier one was not the floor.
+            if (m.HasValue && Floor.HasValue && m.Value > Floor.Value + Tolerance) m = null;
+            if (m.HasValue && Floor.HasValue && m.Value < Floor.Value - Tolerance) _recent.Clear();
+            if (m.HasValue)
+            {
+                _recent.Add(m.Value);
+                if (_recent.Count > MedianOf) _recent.RemoveAt(0);
+                var sorted = new List<float>(_recent);
+                sorted.Sort();
+                Floor = sorted[sorted.Count / 2];
+            }
+            return Floor ?? guessY;
+        }
+
+        public float? Measure(IReadOnlyList<DepthPoint> points, float guessY)
+        {
+            float lo = guessY - SearchRange;
+            int bins = (int)Math.Ceiling(2 * SearchRange / BinSize);
+            var count = new int[bins];
+            int total = 0;
+            foreach (var p in points)
+            {
+                int b = (int)Math.Floor((p.y - lo) / BinSize);
+                if (b < 0 || b >= bins) continue;
+                count[b]++;
+                total++;
+            }
+            if (total < MinPoints) return null;
+            // Lowest layer (3 bins = 6 cm thick) holding enough of the points
+            for (int b = 1; b < bins - 1; b++)
+            {
+                int layer = count[b - 1] + count[b] + count[b + 1];
+                if (layer >= MinPoints && layer >= MinShare * total && count[b] >= count[b - 1] && count[b] >= count[b + 1])
+                {
+                    float sum = 0f;
+                    int n = 0;
+                    foreach (var p in points)
+                    {
+                        if (p.y >= lo + (b - 1) * BinSize && p.y < lo + (b + 2) * BinSize) { sum += p.y; n++; }
+                    }
+                    return sum / n;
+                }
+            }
+            return null;
+        }
     }
 
     public sealed class PersonDetector
@@ -105,6 +200,7 @@ namespace ShiroMR.Detection
         public IReadOnlyList<Track> Tracks => _tracks;
         public int LastPointCount { get; private set; }
         public int LastUsedPointCount { get; private set; }
+        public int LastStructureCells { get; private set; }
         public IReadOnlyList<Blob> LastBlobs => _lastBlobs;
         private List<Blob> _lastBlobs = new List<Blob>();
 
@@ -130,7 +226,7 @@ namespace ShiroMR.Detection
             UpdateTracks(_lastBlobs, now);
         }
 
-        // ----- 1 + 2: floor grid and objects -----
+        // ----- 1-3: floor grid, structure, objects -----
 
         private struct Cell
         {
@@ -167,19 +263,31 @@ namespace ShiroMR.Detection
             }
             LastUsedPointCount = used;
 
+            // Noise (single points) and structure (taller than any person) are removed
+            int structure = 0;
+            var keys = new List<long>();
+            foreach (var kv in grid)
+            {
+                if (kv.Value.count < s.MinCellPoints) continue;
+                if (kv.Value.top > s.StructureHeight) { structure++; continue; }
+                keys.Add(kv.Key);
+            }
+            LastStructureCells = structure;
+            var kept = new Dictionary<long, Cell>(keys.Count);
+            foreach (long k in keys) kept[k] = grid[k];
+
             // Connected cells (8 neighbours) form one object
             var blobs = new List<Blob>();
-            var keys = new List<long>(grid.Keys);
             int label = 0;
             var stack = new Stack<long>();
             var members = new List<long>();
             foreach (long start in keys)
             {
-                if (grid[start].label != 0) continue;
+                if (kept[start].label != 0) continue;
                 label++;
                 members.Clear();
                 stack.Push(start);
-                SetLabel(grid, start, label);
+                SetLabel(kept, start, label);
                 while (stack.Count > 0)
                 {
                     long k = stack.Pop();
@@ -190,44 +298,60 @@ namespace ShiroMR.Detection
                         {
                             if (ox == 0 && oz == 0) continue;
                             long n = Key(cx + ox, cz + oz);
-                            if (grid.TryGetValue(n, out Cell nc) && nc.label == 0)
+                            if (kept.TryGetValue(n, out Cell nc) && nc.label == 0)
                             {
-                                SetLabel(grid, n, label);
+                                SetLabel(kept, n, label);
                                 stack.Push(n);
                             }
                         }
                 }
 
                 if (members.Count < s.MinBlobCells) continue;
-
-                float sumX = 0, sumZ = 0, sumW = 0, top = 0;
-                bool topCut = false;
-                int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
-                foreach (long k in members)
-                {
-                    Unkey(k, out int cx, out int cz);
-                    Cell c = grid[k];
-                    float w = c.count;
-                    sumX += (cx + 0.5f) * s.CellSize * w;
-                    sumZ += (cz + 0.5f) * s.CellSize * w;
-                    sumW += w;
-                    if (c.top > top) { top = c.top; topCut = c.topAtEdge; }
-                    if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
-                    if (cz < minZ) minZ = cz; if (cz > maxZ) maxZ = cz;
-                }
-                blobs.Add(new Blob
-                {
-                    X = sumX / sumW,
-                    Z = sumZ / sumW,
-                    Top = top,
-                    TopMaybeCut = topCut,
-                    Cells = members.Count,
-                    Footprint = members.Count * s.CellSize * s.CellSize,
-                    SpanX = (maxX - minX + 1) * s.CellSize,
-                    SpanZ = (maxZ - minZ + 1) * s.CellSize,
-                });
+                blobs.Add(MakeBlob(kept, members));
             }
             return blobs;
+        }
+
+        private Blob MakeBlob(Dictionary<long, Cell> cells, List<long> members)
+        {
+            var s = Settings;
+            float top = 0f;
+            bool topCut = false;
+            int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
+            foreach (long k in members)
+            {
+                Unkey(k, out int cx, out int cz);
+                Cell c = cells[k];
+                if (c.top > top) { top = c.top; topCut = c.topAtEdge; }
+                if (cx < minX) minX = cx;
+                if (cx > maxX) maxX = cx;
+                if (cz < minZ) minZ = cz;
+                if (cz > maxZ) maxZ = cz;
+            }
+
+            // Position: centre of the cells in the upper part (each cell counts once)
+            float sumX = 0f, sumZ = 0f;
+            int n = 0;
+            foreach (long k in members)
+            {
+                if (cells[k].top < top - s.TopBand) continue;
+                Unkey(k, out int cx, out int cz);
+                sumX += (cx + 0.5f) * s.CellSize;
+                sumZ += (cz + 0.5f) * s.CellSize;
+                n++;
+            }
+
+            return new Blob
+            {
+                X = sumX / n,
+                Z = sumZ / n,
+                Top = top,
+                TopMaybeCut = topCut,
+                Cells = members.Count,
+                Footprint = members.Count * s.CellSize * s.CellSize,
+                SpanX = (maxX - minX + 1) * s.CellSize,
+                SpanZ = (maxZ - minZ + 1) * s.CellSize,
+            };
         }
 
         private static void SetLabel(Dictionary<long, Cell> grid, long key, int label)
@@ -244,7 +368,7 @@ namespace ShiroMR.Detection
             iz = (int)(uint)(key & 0xFFFFFFFF);
         }
 
-        // ----- 3 + 4: tracking and classification -----
+        // ----- 4 + 5: tracking and classification -----
 
         private void UpdateTracks(List<Blob> blobs, float now)
         {
@@ -275,10 +399,12 @@ namespace ShiroMR.Detection
                 var t = new Track
                 {
                     Id = _nextId++,
-                    X = blob.X, Z = blob.Z, FirstX = blob.X, FirstZ = blob.Z,
-                    Height = blob.Top, HeightMaybeCut = blob.TopMaybeCut, Footprint = blob.Footprint, Span = Math.Max(blob.SpanX, blob.SpanZ),
+                    X = blob.X, Z = blob.Z,
+                    Height = blob.Top, HeightMaybeCut = blob.TopMaybeCut,
+                    Footprint = blob.Footprint, Span = Math.Max(blob.SpanX, blob.SpanZ),
                     FirstSeen = now, LastSeen = now, SeenThisUpdate = true,
                 };
+                AddPosition(t, blob.X, blob.Z);
                 // A moved object that was lost here a moment ago (looked away): still moved
                 for (int m = _movedMemory.Count - 1; m >= 0; m--)
                 {
@@ -310,21 +436,55 @@ namespace ShiroMR.Detection
         {
             var s = Settings;
             float dt = Math.Max(1e-3f, now - t.LastSeen);
-            float nx = t.X + (blob.X - t.X) * s.PositionSmoothing;
-            float nz = t.Z + (blob.Z - t.Z) * s.PositionSmoothing;
-            float speed = Dist(nx, nz, t.X, t.Z) / dt;
-            t.Speed = t.Speed + (speed - t.Speed) * 0.5f;
-            t.X = nx;
-            t.Z = nz;
-            t.Height = t.Height + (blob.Top - t.Height) * s.HeightSmoothing;
+            t.LastSeen = now;
+            t.SeenThisUpdate = true;
+
+            // A sudden height jump is a merge with something next to it (or a split):
+            // keep the object where it was, unless the new height persists
+            if (Math.Abs(blob.Top - t.Height) > s.MaxHeightJump && t.JumpSkips < s.MaxJumpSkips)
+            {
+                t.JumpSkips++;
+                return;
+            }
+            t.JumpSkips = 0;
+
+            float oldX = t.X, oldZ = t.Z;
+            AddPosition(t, blob.X, blob.Z);
+            float speed = Dist(t.X, t.Z, oldX, oldZ) / dt;
+            t.Speed += (speed - t.Speed) * 0.5f;
+            t.Height += (blob.Top - t.Height) * s.HeightSmoothing;
             t.HeightMaybeCut = blob.TopMaybeCut;
             t.Footprint = blob.Footprint;
             t.Span = Math.Max(blob.SpanX, blob.SpanZ);
-            t.LastSeen = now;
-            t.SeenThisUpdate = true;
-            float disp = Dist(t.X, t.Z, t.FirstX, t.FirstZ);
-            if (disp > t.MaxDisplacement) t.MaxDisplacement = disp;
-            if (t.MaxDisplacement >= s.MoveDistance) t.HasMoved = true;
+
+            if (!t.StartKnown) return;
+            t.Displacement = Dist(t.X, t.Z, t.StartX, t.StartZ);
+            if (t.Displacement > t.MaxDisplacement) t.MaxDisplacement = t.Displacement;
+            t.MoveStreak = t.Displacement >= s.MoveDistance ? t.MoveStreak + 1 : 0;
+            if (t.MoveStreak >= s.MoveConfirmUpdates) t.HasMoved = true;
+        }
+
+        /// <summary>Adds a measured position; the track's position is the median of the recent ones.</summary>
+        private void AddPosition(Track t, float x, float z)
+        {
+            int n = Settings.MedianOf;
+            t.RecentXs.Add(x);
+            t.RecentZs.Add(z);
+            if (t.RecentXs.Count > n) { t.RecentXs.RemoveAt(0); t.RecentZs.RemoveAt(0); }
+            t.X = Median(t.RecentXs);
+            t.Z = Median(t.RecentZs);
+
+            if (!t.StartKnown)
+            {
+                t.FirstXs.Add(x);
+                t.FirstZs.Add(z);
+                if (t.FirstXs.Count >= n)
+                {
+                    t.StartX = Median(t.FirstXs);
+                    t.StartZ = Median(t.FirstZs);
+                    t.StartKnown = true;
+                }
+            }
         }
 
         public TrackKind Classify(Track t)
@@ -336,6 +496,14 @@ namespace ShiroMR.Detection
             if (!sizeOk || !heightOk) return TrackKind.NotPerson;
             if (s.MovementRequired && !t.HasMoved) return TrackKind.StillObject;
             return TrackKind.PersonCandidate;
+        }
+
+        private static float Median(List<float> values)
+        {
+            var sorted = new List<float>(values);
+            sorted.Sort();
+            int m = sorted.Count / 2;
+            return sorted.Count % 2 == 1 ? sorted[m] : (sorted[m - 1] + sorted[m]) * 0.5f;
         }
 
         private static float Dist(float ax, float az, float bx, float bz)
