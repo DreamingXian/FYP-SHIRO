@@ -93,3 +93,7 @@ quest3_client/Assets/_Recovery.meta
 # Meta XR Immersive Debugger dev-agent settings (contains a generated access token)
 quest3_client/Assets/Resources/DevAgentSettings.asset
 quest3_client/Assets/Resources/DevAgentSettings.asset.meta
+
+# Build output of the headset logic tests (plain .NET, outside Unity)
+quest3_client/Tests~/**/bin/
+quest3_client/Tests~/**/obj/

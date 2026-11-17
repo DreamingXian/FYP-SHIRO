@@ -101,3 +101,18 @@ jobs:
         run: |
           cp firmware/shiro_anchor_node/secrets.example.h firmware/shiro_anchor_node/secrets.h
           arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app firmware/shiro_anchor_node
+
+  headset-logic:
+    name: Headset logic tests (.NET, outside Unity)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Person detection (8D)
+        run: dotnet run --project "quest3_client/Tests~/DetectionTests"

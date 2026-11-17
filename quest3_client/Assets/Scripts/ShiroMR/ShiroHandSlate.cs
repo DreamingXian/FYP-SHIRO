@@ -71,6 +71,10 @@ namespace ShiroMR
         private Text _wardStatusText;
         private Text _perspectiveBtnText;
         private Text _overlayBtnText;
+        private Text _autoWardBtnText;
+        private Text _depthBtnText;
+        private Text _moveReqBtnText;
+        private float _autoWardLabelTimer;
 
         // Tab 1 (IPS Location) UI References
         private Text _ipsStatusBadge;
@@ -192,6 +196,9 @@ namespace ShiroMR
             UpdateRightFingertipPosition();
             UpdateDirectTouchInteraction();
             UpdateAlertBlink();
+
+            _autoWardLabelTimer += Time.deltaTime;
+            if (_autoWardLabelTimer >= 0.5f) { _autoWardLabelTimer = 0f; RefreshAutoWardLabel(); }
 
             // Auto-refresh IPS location if active
             if (_isAutoRefreshIps && _currentTabIndex == 1 && isSlateVisible)
@@ -1405,6 +1412,17 @@ namespace ShiroMR
             overlayBtn.transform.localPosition = new Vector3(-240f, -156f, 0);
             _overlayBtnText = overlayBtn.GetComponentInChildren<Text>();
 
+            // Automatic ward detection from this headset's saved anchors (on/off)
+            Button autoWardBtn = CreateButton(p.transform, "AutoWardBtn", "🧭 Auto ward: …", new Vector2(540f, 45f), new Color(0.10f, 0.30f, 0.40f), () =>
+            {
+                var det = ShiroWardAutoDetect.Instance;
+                if (det != null) det.SetEnabled(!det.IsEnabled);
+                RefreshAutoWardLabel();
+            });
+            autoWardBtn.transform.localPosition = new Vector3(-240f, -210f, 0);
+            _autoWardBtnText = autoWardBtn.GetComponentInChildren<Text>();
+            RefreshAutoWardLabel();
+
             // Right Status Card
             GameObject rightCard = CreatePanel(p.transform, "StatusCard", new Vector2(480f, 430f), new Color(0.06f, 0.10f, 0.16f, 0.90f));
             rightCard.transform.localPosition = new Vector3(270f, 0, 0);
@@ -1616,6 +1634,25 @@ namespace ShiroMR
 
             Button pairBtn = CreateButton(p.transform, "PairBtn", "🔑 Pair headset (code)", new Vector2(420f, 45f), new Color(0.55f, 0.40f, 0.08f), OpenPairingPad);
             pairBtn.transform.localPosition = new Vector3(250f, -150f, 0);
+
+            // Row 3: depth test view (8D) and its movement rule
+            Button depthBtn = CreateButton(p.transform, "DepthBtn", "🔬 Depth test: OFF", new Vector2(480f, 45f), new Color(0.22f, 0.18f, 0.40f), () =>
+            {
+                var probe = ShiroDepthProbe.Instance;
+                if (probe != null) probe.SetRunning(!probe.IsRunning);
+                RefreshAutoWardLabel();
+            });
+            depthBtn.transform.localPosition = new Vector3(-250f, -205f, 0);
+            _depthBtnText = depthBtn.GetComponentInChildren<Text>();
+
+            Button moveBtn = CreateButton(p.transform, "MoveReqBtn", "🚶 Movement required: ON", new Vector2(420f, 45f), new Color(0.22f, 0.30f, 0.22f), () =>
+            {
+                var probe = ShiroDepthProbe.Instance;
+                if (probe != null) probe.SetMovementRequired(!probe.MovementRequired);
+                RefreshAutoWardLabel();
+            });
+            moveBtn.transform.localPosition = new Vector3(250f, -205f, 0);
+            _moveReqBtnText = moveBtn.GetComponentInChildren<Text>();
 
             BuildPairingPad(p.transform);
             RefreshPairingStatus();
@@ -2016,6 +2053,17 @@ namespace ShiroMR
         }
 
         /// <summary>Called every frame: the pending overlay blinks; a short notice after acknowledging here.</summary>
+        private void RefreshAutoWardLabel()
+        {
+            var det = ShiroWardAutoDetect.Instance;
+            string text = det == null ? "🧭 Auto ward: not available"
+                : det.IsEnabled ? $"🧭 Auto ward ON · {det.StatusText}" : "🧭 Auto ward OFF";
+            if (_autoWardBtnText != null && _autoWardBtnText.text != text) _autoWardBtnText.text = text;
+            var probe = ShiroDepthProbe.Instance;
+            if (_depthBtnText != null) _depthBtnText.text = probe != null && probe.IsRunning ? "🔬 Depth test: ON" : "🔬 Depth test: OFF";
+            if (_moveReqBtnText != null) _moveReqBtnText.text = probe == null || probe.MovementRequired ? "🚶 Movement required: ON" : "🚶 Movement required: OFF (test)";
+        }
+
         private void UpdateAlertBlink()
         {
             if (!_alignSubscribed) TrySubscribeAlignment();

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Automated tests of the headset's person detection (feature 8D), outside Unity.
+    The folder name ends with "~", so Unity does not import it.
+    Run (from the repository root): dotnet run with the project quest3_client/Tests~/DetectionTests
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Assets/Scripts/ShiroMR/ShiroPersonDetection.cs" Link="ShiroPersonDetection.cs" />
+  </ItemGroup>
+</Project>
