@@ -18,11 +18,15 @@
 //    side; the lower part a hollow object shows changes with the view.
 // 4. A tracker follows each object. An object only continues as the same one
 //    when the new one is close AND of similar height (a hidden rack cannot be
-//    taken over by the chair next to it). "Moved" needs sustained movement: the
-//    median of the last five positions must stay at least 0.4 m from the median
-//    of the first five, for five updates in a row (1 s at 5 Hz), seen without a
-//    gap and at a steady height. Single jumps from noise or a momentary merge
-//    never count. A sudden height jump does not move the object. Why an object
+//    taken over by the chair next to it). Movement is counted in steps: the
+//    median of the last five positions must stay at least 0.3 m from a
+//    reference spot (first: the median of the first five positions) for five
+//    updates in a row (1 s at 5 Hz), seen without a gap and at a steady height.
+//    That step is added to the object's path and its new spot becomes the
+//    reference. "Moved" = path of at least 0.4 m, so pacing back and forth in a
+//    small area counts too. Jitter and the shift of a hollow object seen from
+//    another side stay below one step, and single jumps from noise or a
+//    momentary merge never count. A sudden height jump does not move the object. Why an object
 //    counts as moved is kept (walked how far, or seen moving here before).
 // 5. A person candidate is person-sized and, unless switched off for testing,
 //    has moved. "Moved" stays while tracked and is remembered for a short time
@@ -63,9 +67,10 @@ namespace ShiroMR.Detection
         public float PersonMinHeight = 0.90f;   // m, standing or walking
         public float PersonMaxHeight = 2.10f;   // m
         public bool MovementRequired = true;    // false only for testing (height only)
-        public float MoveDistance = 0.40f;      // m between the start and the current position
+        public float MoveDistance = 0.40f;      // m of path (sum of steps) that counts as moved
+        public float StepDistance = 0.30f;      // m from the reference spot that counts as a step
         public int MedianOf = 5;                // updates in the start and current medians
-        public int MoveConfirmUpdates = 5;      // updates in a row beyond MoveDistance
+        public int MoveConfirmUpdates = 5;      // updates in a row beyond StepDistance
         public float MaxHeightJump = 0.35f;     // m: a bigger change in one update is a merge
         public int MaxJumpSkips = 3;            // after that many, the new height is accepted
         public float MatchDistance = 0.60f;     // m between updates to stay the same object
@@ -113,8 +118,12 @@ namespace ShiroMR.Detection
         public float FirstSeen, LastSeen;
         public float Displacement;      // m, current position from the start
         public float MaxDisplacement;   // m, largest Displacement so far
+        public float PathLength;        // m, sum of the confirmed steps
+        public int Steps;               // confirmed steps
+        public float RefX, RefZ;        // spot the next step is measured from
+        public bool RefKnown;
         public bool HasMoved;
-        /// <summary>Why it counts as moved: Walked (MovedDistance m) or SeenMovingHere (remembered).</summary>
+        /// <summary>Why it counts as moved: Walked (MovedDistance m of path) or SeenMovingHere (remembered).</summary>
         public MovedEvidence MovedBy;
         public float MovedDistance;
         public float Speed;             // m/s, smoothed
@@ -476,9 +485,19 @@ namespace ShiroMR.Detection
             t.Span = Math.Max(blob.SpanX, blob.SpanZ);
 
             if (!t.StartKnown) return;
+            if (!t.RefKnown)
+            {
+                t.RefX = t.StartX;
+                t.RefZ = t.StartZ;
+                t.RefKnown = true;
+            }
             t.Displacement = Dist(t.X, t.Z, t.StartX, t.StartZ);
             if (t.Displacement > t.MaxDisplacement) t.MaxDisplacement = t.Displacement;
-            if (t.Displacement >= s.MoveDistance)
+
+            // A step: the position stays at least StepDistance from the reference spot for
+            // MoveConfirmUpdates updates in a row, seen without a gap and at a steady height
+            float fromRef = Dist(t.X, t.Z, t.RefX, t.RefZ);
+            if (fromRef >= s.StepDistance)
             {
                 if (t.MoveStreak == 0) t.StreakHeight = t.Height;
                 // the same object all along: its height stays steady while it moves
@@ -488,12 +507,21 @@ namespace ShiroMR.Detection
             {
                 t.MoveStreak = 0;
             }
-            if (t.MoveStreak >= s.MoveConfirmUpdates && !t.HasMoved)
+            if (t.MoveStreak >= s.MoveConfirmUpdates)
+            {
+                // The step is added to the path; the object's new spot is the next reference
+                t.PathLength += fromRef;
+                t.Steps++;
+                t.RefX = t.X;
+                t.RefZ = t.Z;
+                t.MoveStreak = 0;
+            }
+            if (t.PathLength >= s.MoveDistance && t.MovedBy != MovedEvidence.Walked)
             {
                 t.HasMoved = true;
                 t.MovedBy = MovedEvidence.Walked;
-                t.MovedDistance = t.Displacement;
             }
+            if (t.MovedBy == MovedEvidence.Walked) t.MovedDistance = t.PathLength;
         }
 
         /// <summary>Adds a measured position; the track's position is the median of the recent ones.</summary>

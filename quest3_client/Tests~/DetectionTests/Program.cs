@@ -39,6 +39,9 @@ internal static class Program
         Run("a rack hidden for 1.6 s is not taken over by the chair next to it", HiddenRackNextToChair);
         Run("'moved' is not inherited by an object of another height at the same spot", MemoryNeedsSimilarHeight);
         Run("why an object counts as moved is recorded", MovedReasonRecorded);
+        Run("pacing 0.35 m away and back, with pauses, counts as moved (two steps)", PacingWithPauses);
+        Run("pacing back and forth without stopping counts as moved", PacingContinuously);
+        Run("a still rack seen from one side, then the other, for 2 minutes: no step", StillRackSeenFromEachSide);
 
         Console.WriteLine();
         Console.WriteLine($"{_passed} passed, {_failed} failed");
@@ -293,6 +296,59 @@ internal static class Program
         for (int i = 0; i < 15; i++, t += 0.2f) d.Process(new List<DepthPoint>(), Floor, HeadX, HeadZ, t);
         d.Process(Cylinder(1.2f, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t);
         Equal(MovedEvidence.SeenMovingHere, d.Tracks[0].MovedBy, "remembered");
+    }
+
+    private static void PacingWithPauses()
+    {
+        // 0.35 m right, pause, back to the start, pause: never 0.4 m from where it was first seen
+        var d = new PersonDetector();
+        float t = 0f;
+        float x = 0f;
+        void Hold(int updates) { for (int i = 0; i < updates; i++, t += 0.2f) d.Process(Cylinder(x, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t); }
+        void Walk(float to) { float from = x; for (int i = 1; i <= 4; i++, t += 0.2f) { x = from + (to - from) * i / 4f; d.Process(Cylinder(x, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t); } }
+        Hold(6);
+        Walk(0.35f); Hold(8);
+        True(d.Tracks[0].MaxDisplacement < 0.4f, "never 0.4 m from the start");
+        Walk(0f); Hold(8);
+        Equal(TrackKind.PersonCandidate, d.Tracks[0].Kind, "two 0.35 m steps count as moved");
+        Equal(2, d.Tracks[0].Steps, "steps");
+    }
+
+    private static void PacingContinuously()
+    {
+        // walks back and forth over 0.6 m (0.3 m either side of the start) without stopping
+        var d = new PersonDetector();
+        float t = 0f;
+        for (int i = 0; i < 60; i++, t += 0.2f)
+        {
+            float x = 0.3f * (float)Math.Sin(i * 2 * Math.PI / 25); // one cycle in 5 s
+            d.Process(Cylinder(x, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t);
+        }
+        Equal(TrackKind.PersonCandidate, d.Tracks[0].Kind, "pacing counts as moved");
+    }
+
+    private static void StillRackSeenFromEachSide()
+    {
+        // the wearer walks around a still rack: for 2 s at a time only one side is visible
+        var d = new PersonDetector();
+        var rnd = new Random(5);
+        float t = 0f;
+        for (int i = 0; i < 600; i++, t += 0.2f) // 2 minutes
+        {
+            bool left = (i / 10) % 2 == 0;
+            var view = new List<DepthPoint>();
+            foreach (var p in Rack(0f, 3f))
+            {
+                if (left && p.x > 0.05f) continue;
+                if (!left && p.x < -0.05f) continue;
+                if (rnd.NextDouble() < 0.3) continue;
+                view.Add(new DepthPoint(p.x + Noise(rnd, 0.03f), p.y + Noise(rnd, 0.03f), p.z + Noise(rnd, 0.03f)));
+            }
+            d.Process(view, Floor, HeadX, HeadZ, t);
+        }
+        Equal(1, d.Tracks.Count, "objects");
+        Equal(0, d.Tracks[0].Steps, "no step");
+        Equal(TrackKind.StillObject, d.Tracks[0].Kind, "kind");
     }
 
     private static void FloorMeasured()

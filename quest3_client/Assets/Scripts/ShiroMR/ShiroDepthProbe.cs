@@ -388,9 +388,9 @@ namespace ShiroMR
         /// <summary>Why the object counts as moved, or how far it is from where it started.</summary>
         private static string MovedText(Track t)
         {
-            if (t.MovedBy == MovedEvidence.Walked) return $"walked {t.MovedDistance:0.0} m (now {t.Displacement:0.0} m from start)";
+            if (t.MovedBy == MovedEvidence.Walked) return $"walked {t.MovedDistance:0.0} m ({t.Steps} step{(t.Steps == 1 ? "" : "s")})";
             if (t.MovedBy == MovedEvidence.SeenMovingHere) return "seen moving here before";
-            return $"{t.Displacement:0.0} m from start";
+            return t.Steps > 0 ? $"path {t.PathLength:0.0} m" : "not moved";
         }
 
         private Marker NewMarker()
