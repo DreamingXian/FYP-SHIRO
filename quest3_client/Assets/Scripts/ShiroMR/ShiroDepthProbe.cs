@@ -70,7 +70,6 @@ namespace ShiroMR
         private float _sweepJx, _sweepJy, _sweepMaxFrameMs;
         private readonly Vector3[] _hitPoints = new Vector3[Cols * Rows];
         private readonly bool[] _hasHit = new bool[Cols * Rows];
-        private readonly bool[] _seen = new bool[Cols * Rows];   // inside the sensor's view (hit or nothing in range)
         private readonly List<ExcludeSegment> _exclude = new List<ExcludeSegment>(4);
         private OVRCameraRig _rig;
         private EnvironmentRaycastManager _raycaster;
@@ -195,7 +194,7 @@ namespace ShiroMR
                 _sweepMaxFrameMs = 0f;
                 _sweepJx = (float)_rnd.NextDouble() - 0.5f; // shift within one ray spacing
                 _sweepJy = (float)_rnd.NextDouble() - 0.5f;
-                for (int i = 0; i < _hasHit.Length; i++) { _hasHit[i] = false; _seen[i] = false; }
+                for (int i = 0; i < _hasHit.Length; i++) _hasHit[i] = false;
                 for (int c = 0; c < Cols; c++) _topRow[c] = -1;
             }
 
@@ -212,13 +211,12 @@ namespace ShiroMR
                         case EnvironmentRaycastHitStatus.Hit:
                             _hitPoints[r * Cols + c] = hit.point;
                             _hasHit[r * Cols + c] = true;
-                            _seen[r * Cols + c] = true;
                             _sweepHits++;
                             _topRow[c] = r; // remember for each column the highest row the sensor still sees
                             break;
                         case EnvironmentRaycastHitStatus.NotReady: _sweepNotReady++; break;
                         case EnvironmentRaycastHitStatus.HitPointOutsideOfCameraFrustum: _sweepOutside++; break;
-                        default: _topRow[c] = r; _seen[r * Cols + c] = true; break; // seen, nothing hit (far away)
+                        default: _topRow[c] = r; break; // seen, nothing hit (far away)
                     }
                 }
             }
@@ -239,24 +237,13 @@ namespace ShiroMR
 
             _points.Clear();
             for (int r = 0; r < Rows; r++)
-            {
-                // The left and right edge of what the sensor sees in this row
-                int first = -1, last = -1;
-                for (int c = 0; c < Cols; c++)
-                {
-                    if (!_seen[r * Cols + c]) continue;
-                    if (first < 0) first = c;
-                    last = c;
-                }
                 for (int c = 0; c < Cols; c++)
                 {
                     int i = r * Cols + c;
                     if (!_hasHit[i]) continue;
                     Vector3 p = _hitPoints[i];
-                    bool sideEdge = c <= first + 1 || c >= last - 1;
-                    _points.Add(new DepthPoint(p.x, p.y, p.z, r >= _topRow[c] - 1, sideEdge));
+                    _points.Add(new DepthPoint(p.x, p.y, p.z, r >= _topRow[c] - 1));
                 }
-            }
 
             _floorY = _floor.Update(_points, ShiroVRPointer.GetPhysicalFloorHeight());
 
@@ -269,7 +256,7 @@ namespace ShiroMR
             _previous.AddRange(_points);
 
             Vector3 head = cam.transform.position;
-            _detector.Process(_combined, _floorY, head.x, head.z, Time.realtimeSinceStartup, OwnArms(cam));
+            _detector.Process(_combined, _floorY, head.x, head.y, head.z, Time.realtimeSinceStartup, OwnArms(cam));
             if (IsRunning)
             {
                 DrawPoints(cam);
@@ -458,7 +445,7 @@ namespace ShiroMR
                             : t.Kind == TrackKind.StillObject ? "still"
                             : "not person";
                 m.label.text = t.Kind == TrackKind.NotPerson
-                    ? $"{t.Height:0.00} m"
+                    ? $"{t.Height:0.00} m · {t.NotPersonReason}"
                     : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · {MovedText(t)}{LinkedText(t.Id)}";
                 m.label.characterSize = t.Kind == TrackKind.NotPerson ? 0.0025f : 0.004f;
                 m.label.color = col;
@@ -480,6 +467,7 @@ namespace ShiroMR
         {
             if (t.MovedBy == MovedEvidence.Walked) return $"walked {t.MovedDistance:0.0} m ({t.Steps} step{(t.Steps == 1 ? "" : "s")})";
             if (t.MovedBy == MovedEvidence.SeenMovingHere) return "seen moving here before";
+            if (t.Waiting != null) return t.Waiting;
             return t.Steps > 0 ? $"path {t.PathLength:0.0} m" : "not moved";
         }
 

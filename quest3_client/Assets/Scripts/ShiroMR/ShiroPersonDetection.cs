@@ -8,11 +8,9 @@
 //
 // 1. Points are put into a floor grid of 10 cm cells; each cell keeps the
 //    highest point above the floor. Points near the floor, very high points,
-//    the wearer's own body (0.35 m around the head), own legs (below 1 m,
-//    within 0.6 m: a foot pushing something forward) and own hands and arms
-//    (from their tracked positions) are left out, and so are cells with a
-//    single point (sensor noise at edges). An object being pushed by the
-//    wearer therefore stays whole.
+//    points close to the wearer's head (own body) and on the wearer's arms
+//    (from the tracked hands) are left out, and so are cells with a single
+//    point (sensor noise at edges).
 // 2. Cells taller than any person (walls, door frames, wardrobes: top above
 //    2.25 m) are structure and are removed before grouping, so a bed against a
 //    wall is not merged with the wall and keeps its own height.
@@ -27,31 +25,25 @@
 //    updates in a row (1 s at 5 Hz), seen without a gap and at a steady height.
 //    That step is added to the object's path and its new spot becomes the
 //    reference. "Moved" = path of at least 0.4 m, so pacing back and forth in a
-//    small area counts too. Jitter and the shift of a hollow object seen from
-//    another side stay below one step, and single jumps from noise or a
-//    momentary merge never count. A sudden height jump does not move the object.
-//    No step is counted while the object touches the side edge of the view, or
-//    when its size changed: when the wearer walks, a large object coming into
-//    view bit by bit "grows", which shifts its centre without any movement.
-//    After a partial view, its reference spot is taken again once it is whole.
-//    An object lost for up to 3 s keeps its identity when it reappears nearby
-//    at a similar height (without counting that as a step).
-//    A height measured with the top cut off by the view (looking down at a
-//    close object) is a lower bound: it never lowers the object's height and
-//    never makes it "another object". Size for the step rule is taken from the
-//    upper part only (a leg touching the object's base does not change it).
-//    A change between "not a person" and the other kinds needs 3 updates in a
-//    row (no flicker from a single odd update).
-// 6. When the tracking space jumps (headset taken off and put on, tracking
-//    lost, recentring), every object would seem to move at once: the detector
-//    then starts again (the headset reports these events; a head jump faster
-//    than a person can move is detected here too). Why an object
-//    counts as moved is kept (walked how far, or seen moving here before).
+//    small area counts too. Single jumps from noise or a momentary merge never
+//    count. A sudden height jump does not move the object.
+//    A step also needs evidence that the object really left: the spot where it
+//    stood must be SEEN EMPTY: the view passes through it, at the height where
+//    the object's upper part was, to something farther away; and it is not
+//    covered by the object itself. When the wearer
+//    walks around a still object, its measured centre can shift with the view,
+//    but its spot is never seen empty, because it is still standing there.
+//    Why an object counts as moved, or what a step is waiting for, is kept.
 // 5. A person candidate is person-sized and, unless switched off for testing,
 //    has moved. "Moved" stays while tracked and is remembered for a short time
 //    at the spot where it was lost (looked away), so a person who stands still
 //    does not become furniture. An object that never moved stays "not a
-//    person": a cabinet missing from the ward plan is ignored.
+//    person": a cabinet missing from the ward plan is ignored. A change to or
+//    from "not a person" needs 3 updates in a row; the reason is kept.
+// 6. When the tracking space jumps (headset taken off and put on, tracking
+//    lost, recentring), every object would seem to move at once: detection
+//    then starts again (the headset reports these events; a head jump faster
+//    than a person can move is detected here too).
 // =============================================================================
 using System;
 using System.Collections.Generic;
@@ -65,16 +57,13 @@ namespace ShiroMR.Detection
         /// <summary>True when the point came from the top edge of the sensor view: an object's
         /// top may be cut off there, so its height is then only a lower bound.</summary>
         public bool atTopEdge;
-        /// <summary>True when the point came from the left or right edge of the sensor view:
-        /// an object there may be only partly visible.</summary>
-        public bool atSideEdge;
-        public DepthPoint(float x, float y, float z, bool atTopEdge = false, bool atSideEdge = false)
+        public DepthPoint(float x, float y, float z, bool atTopEdge = false)
         {
-            this.x = x; this.y = y; this.z = z; this.atTopEdge = atTopEdge; this.atSideEdge = atSideEdge;
+            this.x = x; this.y = y; this.z = z; this.atTopEdge = atTopEdge;
         }
     }
 
-    /// <summary>A part of the wearer to leave out: a capsule from A to B (e.g. hand to shoulder).</summary>
+    /// <summary>A part of the wearer to leave out: a capsule from A to B (e.g. shoulder to hand).</summary>
     public struct ExcludeSegment
     {
         public float ax, ay, az, bx, by, bz, radius;
@@ -101,9 +90,7 @@ namespace ShiroMR.Detection
         public float MinPointHeight = 0.15f;    // m above the floor: lower points are floor
         public float MaxPointHeight = 2.40f;    // m above the floor: higher points are ceiling/lamps
         public float StructureHeight = 2.25f;   // m: a cell this tall is wall/door frame/wardrobe
-        public float SelfRadius = 0.35f;        // m around the wearer's head: own body (hands/arms: ExcludeSegment)
-        public float LegRadius = 0.60f;         // m around the wearer's head ...
-        public float LegZoneHeight = 1.0f;      // ... below this height: own legs and feet
+        public float SelfRadius = 0.55f;        // m around the wearer's head (own hands, body)
         public int MinBlobCells = 3;            // smaller objects are noise
         public float MaxFootprint = 1.2f;       // m², larger objects are furniture or walls
         public float MaxSpan = 1.4f;            // m, longest side of the footprint
@@ -125,11 +112,13 @@ namespace ShiroMR.Detection
         public float LostAfter = 2.0f;          // s unseen before an object is dropped
         public float RememberMovedFor = 30f;    // s a lost moved object is remembered at its spot
         public float HeightSmoothing = 0.3f;
-        public float SpanChangeLimit = 0.30f;   // m: a bigger size change is a view change, not a move
-        public float PartialViewHold = 1.2f;    // s after touching the view edge before steps count again
-        public float ReattachDistance = 1.0f;   // m: a lost object reappearing this close ...
-        public float ReattachHeightDiff = 0.25f; // ... with a height this close keeps its identity
-        public float ReattachWithin = 3.0f;     // s after it was lost
+        public bool RequireVacatedSpot = true;  // a step needs the old spot seen empty
+        public float VacatedRadius = 0.12f;     // m around the old spot
+        public int MinVacatedObservations = 3;  // times the view passed through the old spot
+        public float MaxOccupiedShare = 0.25f;  // share of observations that may still hit something there
+        public float PassBandLow = 0.30f;       // m: the view passing through the old spot ...
+        public float PassBandHigh = 1.80f;      // ...
+        public float PassBandDepth = 0.50f;     // ... at the height of the object's upper part (its top 0.5 m) shows it is empty
         public int KindConfirmUpdates = 3;      // updates in a row to change to or from "not a person"
         public float HeadJumpDistance = 0.4f;   // m: a head jump this far (walking: at most 0.3 m per update) ...
         public float HeadJumpSpeed = 2.5f;      // m/s ... and this fast is a tracking jump
@@ -143,8 +132,7 @@ namespace ShiroMR.Detection
         public int Cells;
         public float Footprint;     // m²
         public float SpanX, SpanZ;  // m
-        public bool TouchesSideEdge; // partly outside the view: its size and centre are uncertain
-        public float TopSpan;        // m, longest side of the upper part (TopBand)
+        internal HashSet<long> CellKeys;
     }
 
     public enum TrackKind
@@ -176,8 +164,6 @@ namespace ShiroMR.Detection
         public int Steps;               // confirmed steps
         public float RefX, RefZ;        // spot the next step is measured from
         public bool RefKnown;
-        /// <summary>Touched the side edge of the view in this update (only partly visible).</summary>
-        public bool PartialView;
         public bool HasMoved;
         /// <summary>Why it counts as moved: Walked (MovedDistance m of path) or SeenMovingHere (remembered).</summary>
         public MovedEvidence MovedBy;
@@ -185,20 +171,20 @@ namespace ShiroMR.Detection
         public float Speed;             // m/s, smoothed
         public TrackKind Kind;
         public bool SeenThisUpdate;
+        /// <summary>Why it is not a person (too short, too wide ...), or null.</summary>
+        public string NotPersonReason;
+        /// <summary>What a possible step is waiting for, or null.</summary>
+        public string Waiting;
 
         internal readonly List<float> FirstXs = new List<float>(), FirstZs = new List<float>();
         internal readonly List<float> RecentXs = new List<float>(), RecentZs = new List<float>();
         internal int MoveStreak;
         internal float StreakHeight;
         internal int JumpSkips;
-        internal bool HeightSeenWhole;     // its top was in view at least once
+        internal int StreakFree, StreakOccupied;
         internal TrackKind PendingKind;
         internal int PendingCount;
         internal bool Classified;
-        internal float LastPartialAt = -100f;
-        internal bool RefPartial;          // the reference was taken while partly visible
-        internal float RefSpan;
-        internal readonly List<float> RecentSpans = new List<float>();
     }
 
     /// <summary>
@@ -235,6 +221,7 @@ namespace ShiroMR.Detection
             // floor. Except when that layer agrees with the headset's own floor level several
             // times in a row: then the earlier, lower floor was wrong (for example measured
             // while the tracking space was shifting after the headset was put on).
+            // A clearly lower layer means the earlier one was not the floor.
             if (m.HasValue && Floor.HasValue && m.Value > Floor.Value + Tolerance)
             {
                 if (Math.Abs(m.Value - guessY) <= GuessAgreement && ++_rise >= RiseVotes)
@@ -302,10 +289,13 @@ namespace ShiroMR.Detection
         private readonly List<Track> _tracks = new List<Track>();
         private readonly List<(float x, float z, float height, float until)> _movedMemory = new List<(float, float, float, float)>();
         private int _nextId = 1;
-        private readonly List<(Track track, float until)> _recentlyLost = new List<(Track, float)>();
         private bool _hasHead;
         private float _lastHeadX, _lastHeadZ, _lastHeadTime;
-        /// <summary>Why the detector last started again (tracking jump), or null.</summary>
+        // This update's input, for the "old spot seen empty" check
+        private IReadOnlyList<DepthPoint> _points;
+        private IReadOnlyList<ExcludeSegment> _exclude;
+        private float _floorY, _headX, _headY, _headZ;
+        /// <summary>Why detection last started again (tracking jump), or null.</summary>
         public string LastRestartReason { get; private set; }
         public int Restarts { get; private set; }
 
@@ -321,6 +311,14 @@ namespace ShiroMR.Detection
             Settings = settings ?? new DetectorSettings();
         }
 
+        public void Reset()
+        {
+            _tracks.Clear();
+            _movedMemory.Clear();
+            _lastBlobs.Clear();
+            _hasHead = false;
+        }
+
         /// <summary>Starts again after a tracking jump (everything seen before is forgotten).</summary>
         public void Restart(string reason)
         {
@@ -329,20 +327,12 @@ namespace ShiroMR.Detection
             Restarts++;
         }
 
-        public void Reset()
-        {
-            _tracks.Clear();
-            _movedMemory.Clear();
-            _recentlyLost.Clear();
-            _lastBlobs.Clear();
-            _hasHead = false;
-        }
-
         /// <summary>
-        /// One update. floorY: floor height (world y). head: the wearer's head position.
-        /// now: time in seconds (any clock that only goes forward).
+        /// One update. floorY: floor height (world y). head: the wearer's eye position (the
+        /// rays start there). now: time in seconds (any clock that only goes forward).
+        /// exclude: the wearer's arms (optional).
         /// </summary>
-        public void Process(IReadOnlyList<DepthPoint> points, float floorY, float headX, float headZ, float now,
+        public void Process(IReadOnlyList<DepthPoint> points, float floorY, float headX, float headY, float headZ, float now,
                             IReadOnlyList<ExcludeSegment> exclude = null)
         {
             // The tracking space jumped (faster than any person moves): start again
@@ -356,8 +346,14 @@ namespace ShiroMR.Detection
             _hasHead = true;
             _lastHeadX = headX; _lastHeadZ = headZ; _lastHeadTime = now;
 
+            _points = points;
+            _exclude = exclude;
+            _floorY = floorY;
+            _headX = headX; _headY = headY; _headZ = headZ;
             _lastBlobs = FindBlobs(points, floorY, headX, headZ, exclude);
             UpdateTracks(_lastBlobs, now);
+            _points = null;
+            _exclude = null;
         }
 
         // ----- 1-3: floor grid, structure, objects -----
@@ -366,7 +362,6 @@ namespace ShiroMR.Detection
         {
             public float top;
             public bool topAtEdge;
-            public bool sideEdge;
             public int count;
             public int label;
         }
@@ -378,7 +373,6 @@ namespace ShiroMR.Detection
             var grid = new Dictionary<long, Cell>();
             int used = 0;
             float self2 = s.SelfRadius * s.SelfRadius;
-            float leg2 = s.LegRadius * s.LegRadius;
             LastPointCount = points.Count;
 
             for (int i = 0; i < points.Count; i++)
@@ -388,7 +382,6 @@ namespace ShiroMR.Detection
                 if (h < s.MinPointHeight || h > s.MaxPointHeight) continue;
                 float dx = p.x - headX, dz = p.z - headZ;
                 if (dx * dx + dz * dz < self2) continue;
-                if (h < s.LegZoneHeight && dx * dx + dz * dz < leg2) continue; // own legs and feet
                 if (exclude != null && Excluded(exclude, p)) continue;
 
                 int ix = (int)Math.Floor(p.x / s.CellSize);
@@ -396,7 +389,6 @@ namespace ShiroMR.Detection
                 long key = Key(ix, iz);
                 grid.TryGetValue(key, out Cell c);
                 if (c.count == 0 || h > c.top) { c.top = h; c.topAtEdge = p.atTopEdge; }
-                if (p.atSideEdge) c.sideEdge = true;
                 c.count++;
                 grid[key] = c;
                 used++;
@@ -447,15 +439,11 @@ namespace ShiroMR.Detection
                 }
 
                 if (members.Count < s.MinBlobCells) continue;
-                blobs.Add(MakeBlob(kept, members));
+                var blob = MakeBlob(kept, members);
+                blob.CellKeys = new HashSet<long>(members);
+                blobs.Add(blob);
             }
             return blobs;
-        }
-
-        private static bool Excluded(IReadOnlyList<ExcludeSegment> exclude, DepthPoint p)
-        {
-            for (int i = 0; i < exclude.Count; i++) if (exclude[i].Contains(p.x, p.y, p.z)) return true;
-            return false;
         }
 
         private Blob MakeBlob(Dictionary<long, Cell> cells, List<long> members)
@@ -463,14 +451,12 @@ namespace ShiroMR.Detection
             var s = Settings;
             float top = 0f;
             bool topCut = false;
-            bool sideEdge = false;
             int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
             foreach (long k in members)
             {
                 Unkey(k, out int cx, out int cz);
                 Cell c = cells[k];
                 if (c.top > top) { top = c.top; topCut = c.topAtEdge; }
-                if (c.sideEdge) sideEdge = true;
                 if (cx < minX) minX = cx;
                 if (cx > maxX) maxX = cx;
                 if (cz < minZ) minZ = cz;
@@ -480,7 +466,6 @@ namespace ShiroMR.Detection
             // Position: centre of the cells in the upper part (each cell counts once)
             float sumX = 0f, sumZ = 0f;
             int n = 0;
-            int tMinX = int.MaxValue, tMaxX = int.MinValue, tMinZ = int.MaxValue, tMaxZ = int.MinValue;
             foreach (long k in members)
             {
                 if (cells[k].top < top - s.TopBand) continue;
@@ -488,10 +473,6 @@ namespace ShiroMR.Detection
                 sumX += (cx + 0.5f) * s.CellSize;
                 sumZ += (cz + 0.5f) * s.CellSize;
                 n++;
-                if (cx < tMinX) tMinX = cx;
-                if (cx > tMaxX) tMaxX = cx;
-                if (cz < tMinZ) tMinZ = cz;
-                if (cz > tMaxZ) tMaxZ = cz;
             }
 
             return new Blob
@@ -504,9 +485,13 @@ namespace ShiroMR.Detection
                 Footprint = members.Count * s.CellSize * s.CellSize,
                 SpanX = (maxX - minX + 1) * s.CellSize,
                 SpanZ = (maxZ - minZ + 1) * s.CellSize,
-                TouchesSideEdge = sideEdge,
-                TopSpan = Math.Max(tMaxX - tMinX + 1, tMaxZ - tMinZ + 1) * s.CellSize,
             };
+        }
+
+        private static bool Excluded(IReadOnlyList<ExcludeSegment> exclude, DepthPoint p)
+        {
+            for (int i = 0; i < exclude.Count; i++) if (exclude[i].Contains(p.x, p.y, p.z)) return true;
+            return false;
         }
 
         private static void SetLabel(Dictionary<long, Cell> grid, long key, int label)
@@ -536,7 +521,7 @@ namespace ShiroMR.Detection
                 foreach (var t in _tracks)
                 {
                     float d = Dist(blobs[b].X, blobs[b].Z, t.X, t.Z);
-                    float dh = HeightDiff(blobs[b], t.Height);
+                    float dh = Math.Abs(blobs[b].Top - t.Height);
                     if (d <= s.MatchDistance && dh <= s.MatchHeightDiff) pairs.Add((d + 0.5f * dh, b, t));
                 }
             pairs.Sort((a, c) => a.d.CompareTo(c.d));
@@ -552,26 +537,12 @@ namespace ShiroMR.Detection
             {
                 if (blobUsed[b]) continue;
                 var blob = blobs[b];
-
-                // A briefly lost object reappearing nearby at a similar height: the same object
-                Track again = FindLostNear(blob, now);
-                if (again != null)
-                {
-                    if (!_tracks.Contains(again)) _tracks.Add(again);
-                    again.RefKnown = false; // no step from the jump while it was not seen
-                    again.MoveStreak = 0;
-                    again.RecentXs.Clear(); again.RecentZs.Clear(); again.RecentSpans.Clear();
-                    Update(again, blob, now);
-                    continue;
-                }
-
                 var t = new Track
                 {
                     Id = _nextId++,
                     X = blob.X, Z = blob.Z,
                     Height = blob.Top, HeightMaybeCut = blob.TopMaybeCut,
                     Footprint = blob.Footprint, Span = Math.Max(blob.SpanX, blob.SpanZ),
-                    HeightSeenWhole = !blob.TopMaybeCut,
                     FirstSeen = now, LastSeen = now, SeenThisUpdate = true,
                 };
                 AddPosition(t, blob.X, blob.Z);
@@ -597,33 +568,11 @@ namespace ShiroMR.Detection
                 if (now - t.LastSeen > s.LostAfter)
                 {
                     if (t.HasMoved) _movedMemory.Add((t.X, t.Z, t.Height, now + s.RememberMovedFor));
-                    _recentlyLost.Add((t, t.LastSeen + s.ReattachWithin));
                     _tracks.RemoveAt(i);
                     continue;
                 }
                 SetKind(t, Classify(t));
             }
-        }
-
-        private Track FindLostNear(Blob blob, float now)
-        {
-            var s = Settings;
-            _recentlyLost.RemoveAll(e => e.until < now);
-            Track best = null;
-            float bestD = s.ReattachDistance;
-            foreach (var t in _tracks)
-            {
-                if (t.SeenThisUpdate) continue;
-                float d = Dist(t.X, t.Z, blob.X, blob.Z);
-                if (d <= bestD && HeightDiff(blob, t.Height) <= s.ReattachHeightDiff) { best = t; bestD = d; }
-            }
-            foreach (var e in _recentlyLost)
-            {
-                float d = Dist(e.track.X, e.track.Z, blob.X, blob.Z);
-                if (d <= bestD && HeightDiff(blob, e.track.Height) <= s.ReattachHeightDiff) { best = e.track; bestD = d; }
-            }
-            if (best != null) _recentlyLost.RemoveAll(e => e.track == best);
-            return best;
         }
 
         private void Update(Track t, Blob blob, float now)
@@ -637,7 +586,7 @@ namespace ShiroMR.Detection
 
             // A sudden height jump is a merge with something next to it (or a split):
             // keep the object where it was, unless the new height persists
-            if (HeightDiff(blob, t.Height) > s.MaxHeightJump && t.JumpSkips < s.MaxJumpSkips)
+            if (Math.Abs(blob.Top - t.Height) > s.MaxHeightJump && t.JumpSkips < s.MaxJumpSkips)
             {
                 t.JumpSkips++;
                 return;
@@ -648,74 +597,61 @@ namespace ShiroMR.Detection
             AddPosition(t, blob.X, blob.Z);
             float speed = Dist(t.X, t.Z, oldX, oldZ) / dt;
             t.Speed += (speed - t.Speed) * 0.5f;
-            // A cut-off top is a lower bound: it can raise the height, never lower it
-            if (!blob.TopMaybeCut || blob.Top > t.Height) t.Height += (blob.Top - t.Height) * s.HeightSmoothing;
-            if (!blob.TopMaybeCut) t.HeightSeenWhole = true;
-            t.HeightMaybeCut = blob.TopMaybeCut && !t.HeightSeenWhole;
+            t.Height += (blob.Top - t.Height) * s.HeightSmoothing;
+            t.HeightMaybeCut = blob.TopMaybeCut;
             t.Footprint = blob.Footprint;
             t.Span = Math.Max(blob.SpanX, blob.SpanZ);
-            t.RecentSpans.Add(blob.TopSpan);
-            if (t.RecentSpans.Count > s.MedianOf) t.RecentSpans.RemoveAt(0);
-            float span = Median(t.RecentSpans);
-            t.PartialView = blob.TouchesSideEdge;
-            if (t.PartialView) t.LastPartialAt = now;
-            bool recentlyPartial = now - t.LastPartialAt < s.PartialViewHold;
 
             if (!t.StartKnown) return;
             if (!t.RefKnown)
             {
-                bool fresh = t.Steps == 0 && t.PathLength == 0f;
-                t.RefX = fresh ? t.StartX : t.X;
-                t.RefZ = fresh ? t.StartZ : t.Z;
-                t.RefSpan = span;
-                t.RefPartial = recentlyPartial;
+                t.RefX = t.StartX;
+                t.RefZ = t.StartZ;
                 t.RefKnown = true;
             }
-
-            // Partly visible: its centre is uncertain, no step. Once whole again, the
-            // reference is taken again if it was taken while partly visible.
-            if (recentlyPartial)
-            {
-                t.MoveStreak = 0;
-                t.RefPartial = true;
-                UpdateDisplacement(t);
-                return;
-            }
-            if (t.RefPartial)
-            {
-                t.RefX = t.X;
-                t.RefZ = t.Z;
-                t.RefSpan = span;
-                t.RefPartial = false;
-                t.MoveStreak = 0;
-                UpdateDisplacement(t);
-                return;
-            }
-            UpdateDisplacement(t);
+            t.Displacement = Dist(t.X, t.Z, t.StartX, t.StartZ);
+            if (t.Displacement > t.MaxDisplacement) t.MaxDisplacement = t.Displacement;
 
             // A step: the position stays at least StepDistance from the reference spot for
-            // MoveConfirmUpdates updates in a row, seen without a gap, at a steady height and
-            // with the same size (a size change is a change of view, not a move)
+            // MoveConfirmUpdates updates in a row, seen without a gap and at a steady height
             float fromRef = Dist(t.X, t.Z, t.RefX, t.RefZ);
-            if (fromRef >= s.StepDistance && Math.Abs(span - t.RefSpan) <= s.SpanChangeLimit)
+            if (fromRef >= s.StepDistance)
             {
-                if (t.MoveStreak == 0) t.StreakHeight = t.Height;
+                if (t.MoveStreak == 0) { t.StreakHeight = t.Height; t.StreakFree = 0; t.StreakOccupied = 0; }
                 // the same object all along: its height stays steady while it moves
                 t.MoveStreak = Math.Abs(t.Height - t.StreakHeight) <= s.StreakHeightDiff ? t.MoveStreak + 1 : 0;
+                if (t.MoveStreak > 0 && s.RequireVacatedSpot)
+                {
+                    LookAtSpot(t.RefX, t.RefZ, t.Height, blob.CellKeys, out int empty, out int occupied);
+                    t.StreakFree += empty;
+                    t.StreakOccupied += occupied;
+                }
             }
             else
             {
                 t.MoveStreak = 0;
+                t.Waiting = null;
             }
-            if (t.MoveStreak >= s.MoveConfirmUpdates)
+
+            // The old spot must have been seen empty (and hardly anything hit there)
+            bool vacated = !s.RequireVacatedSpot ||
+                           (t.StreakFree >= s.MinVacatedObservations &&
+                            t.StreakOccupied <= s.MaxOccupiedShare * (t.StreakFree + t.StreakOccupied));
+            if (t.MoveStreak >= s.MoveConfirmUpdates && !vacated)
             {
+                t.Waiting = $"{fromRef:0.0} m from its spot: waiting to see that spot empty";
+            }
+            if (t.MoveStreak >= s.MoveConfirmUpdates && vacated)
+            {
+                t.Waiting = null;
                 // The step is added to the path; the object's new spot is the next reference
                 t.PathLength += fromRef;
                 t.Steps++;
                 t.RefX = t.X;
                 t.RefZ = t.Z;
-                t.RefSpan = span;
                 t.MoveStreak = 0;
+                t.StreakFree = 0;
+                t.StreakOccupied = 0;
             }
             if (t.PathLength >= s.MoveDistance && t.MovedBy != MovedEvidence.Walked)
             {
@@ -723,12 +659,6 @@ namespace ShiroMR.Detection
                 t.MovedBy = MovedEvidence.Walked;
             }
             if (t.MovedBy == MovedEvidence.Walked) t.MovedDistance = t.PathLength;
-        }
-
-        private static void UpdateDisplacement(Track t)
-        {
-            t.Displacement = Dist(t.X, t.Z, t.StartX, t.StartZ);
-            if (t.Displacement > t.MaxDisplacement) t.MaxDisplacement = t.Displacement;
         }
 
         /// <summary>Adds a measured position; the track's position is the median of the recent ones.</summary>
@@ -754,6 +684,25 @@ namespace ShiroMR.Detection
             }
         }
 
+        public TrackKind Classify(Track t)
+        {
+            var s = Settings;
+            // A height cut off at the top of the view is a lower bound: too short cannot be decided
+            if (t.Height > s.PersonMaxHeight) return NotPerson(t, $"too tall {t.Height:0.00} m");
+            if (t.Height < s.PersonMinHeight && !t.HeightMaybeCut) return NotPerson(t, $"too short {t.Height:0.00} m");
+            if (t.Span > s.MaxSpan) return NotPerson(t, $"too long {t.Span:0.0} m");
+            if (t.Footprint > s.MaxFootprint) return NotPerson(t, $"too big {t.Footprint:0.0} m²");
+            t.NotPersonReason = null;
+            if (s.MovementRequired && !t.HasMoved) return TrackKind.StillObject;
+            return TrackKind.PersonCandidate;
+        }
+
+        private static TrackKind NotPerson(Track t, string reason)
+        {
+            t.NotPersonReason = reason;
+            return TrackKind.NotPerson;
+        }
+
         /// <summary>A change to or from "not a person" needs KindConfirmUpdates updates in a row.</summary>
         private void SetKind(Track t, TrackKind k)
         {
@@ -774,19 +723,59 @@ namespace ShiroMR.Detection
             }
         }
 
-        /// <summary>Height difference; a cut-off top lower than the known height counts as no difference.</summary>
-        private static float HeightDiff(Blob blob, float height) =>
-            blob.TopMaybeCut && blob.Top < height ? 0f : Math.Abs(blob.Top - height);
-
-        public TrackKind Classify(Track t)
+        /// <summary>
+        /// Looks at the spot (x, z) in this update: how often it is seen empty (the floor seen
+        /// there, or a ray passing through it at body height to something farther away) and
+        /// how often something is hit there. Cells of the object itself are left out: an object
+        /// that did not move covers its own spot, which then gives no evidence at all.
+        /// </summary>
+        private void LookAtSpot(float x, float z, float objectHeight, HashSet<long> ownCells, out int empty, out int occupied)
         {
             var s = Settings;
-            bool sizeOk = t.Footprint <= s.MaxFootprint && t.Span <= s.MaxSpan;
-            // A height cut off at the top of the view is a lower bound: too short cannot be decided
-            bool heightOk = t.Height <= s.PersonMaxHeight && (t.Height >= s.PersonMinHeight || t.HeightMaybeCut);
-            if (!sizeOk || !heightOk) return TrackKind.NotPerson;
-            if (s.MovementRequired && !t.HasMoved) return TrackKind.StillObject;
-            return TrackKind.PersonCandidate;
+            empty = 0;
+            occupied = 0;
+            if (_points == null) return;
+            // The object still covers its old spot (a change of view, not a move): no evidence
+            if (ownCells != null && ownCells.Contains(Key((int)Math.Floor(x / s.CellSize), (int)Math.Floor(z / s.CellSize)))) return;
+
+            // Looked at where the object's upper part was: a hollow object (a rack) has gaps
+            // lower down, so the view passing through there would prove nothing
+            float bandHigh = Math.Min(objectHeight - 0.05f, s.PassBandHigh);
+            float bandLow = Math.Max(s.PassBandLow, objectHeight - s.PassBandDepth);
+            if (bandHigh <= bandLow) return;
+
+            float r2 = s.VacatedRadius * s.VacatedRadius;
+            float self2 = s.SelfRadius * s.SelfRadius;
+            for (int i = 0; i < _points.Count; i++)
+            {
+                DepthPoint p = _points[i];
+                float hdx = p.x - _headX, hdz = p.z - _headZ;
+                if (hdx * hdx + hdz * hdz < self2) continue;
+                if (_exclude != null && Excluded(_exclude, p)) continue;
+                float h = p.y - _floorY;
+
+                float dx = p.x - x, dz = p.z - z;
+                if (dx * dx + dz * dz <= r2)
+                {
+                    // Something is still there, at the height of the object's upper part
+                    if (h >= bandLow && h <= bandHigh + 0.1f &&
+                        (ownCells == null || !ownCells.Contains(Key((int)Math.Floor(p.x / s.CellSize), (int)Math.Floor(p.z / s.CellSize)))))
+                        occupied++;
+                    continue;
+                }
+
+                // The ray from the eye to this point passes through the spot at that height:
+                // the spot is empty there (the ray went on to something farther away)
+                float vx = p.x - _headX, vz = p.z - _headZ;
+                float len2 = vx * vx + vz * vz;
+                if (len2 < 1e-4f) continue;
+                float t = ((x - _headX) * vx + (z - _headZ) * vz) / len2;
+                if (t <= 0f || t >= 1f) continue;
+                float cx = _headX + t * vx - x, cz = _headZ + t * vz - z;
+                if (cx * cx + cz * cz > r2) continue;
+                float rayH = _headY + t * (p.y - _headY) - _floorY;
+                if (rayH >= bandLow && rayH <= bandHigh) empty++;
+            }
         }
 
         private static float Median(List<float> values)
