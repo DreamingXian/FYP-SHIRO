@@ -161,7 +161,7 @@ namespace ShiroMR
                 WristMotion motion = fake ? WristMotion.Unknown : ToMotion(holo.motionState);
                 float heightM = fake ? _fakeHeightM : HeightOf(mr.FindSubject(tag));
                 linker.Update(tracks, holo.HasIpsPosition, ble.x, ble.z, motion, heightM, now);
-                holo.SetDepthLink(linker.State, new Vector3(linker.X, 0f, linker.Z), linker.Reason);
+                holo.SetDepthLink(linker.State, new Vector3(linker.X, 0f, linker.Z), linker.Reason, linker.LinkedHeight);
             }
 
             // Linkers of panels that are gone

@@ -105,6 +105,9 @@ namespace ShiroMR
         private bool _linkingActive;
         private bool _depthLinked;
         private Vector3 _depthLinkPos;
+        private float _depthLinkHeight;
+        private bool _sideLayout;           // the card is beside the person (restored when the link ends)
+        private TextMesh _nameTag;          // the patient's name above the linked person's head
         public ShiroMR.Linking.LinkState depthLinkState { get; private set; } = ShiroMR.Linking.LinkState.BleOnly;
         public string depthLinkReason { get; private set; } = "";
         /// <summary>A Bluetooth position has arrived for this panel.</summary>
@@ -318,6 +321,7 @@ namespace ShiroMR
 
         private void LateUpdate()
         {
+            UpdateLinkedLayout();
             if (_hudContainer == null || _isPanelDragging) return;
 
             // =========================================================================
@@ -346,6 +350,63 @@ namespace ShiroMR
                     }
                 }
             }
+        }
+
+        // ----- Layout while linked to a detected person (8D) -----
+        // The name floats above the person's head; the card stands beside the person
+        // (on the right as the clinician sees it), so it never covers the person.
+        private const float SideDistance = 0.65f;   // m from the person's centre
+        private const float CardHeight = 1.15f;     // m above the floor
+
+        private void UpdateLinkedLayout()
+        {
+            bool linkedLayout = _depthLinked && trackingState == PatientTrackingState.InTransit && _cameraTransform != null;
+            if (linkedLayout)
+            {
+                Vector3 toCam = _cameraTransform.position - transform.position;
+                toCam.y = 0f;
+                if (toCam.sqrMagnitude < 0.01f) toCam = Vector3.forward;
+                Vector3 right = Vector3.Cross(toCam.normalized, Vector3.up); // the clinician's right
+
+                if (_hudContainer != null && !_isPanelDragging)
+                {
+                    Vector3 cardPos = transform.position + right * SideDistance + Vector3.up * CardHeight;
+                    _hudContainer.transform.position = _sideLayout
+                        ? Vector3.Lerp(_hudContainer.transform.position, cardPos, 8f * Time.deltaTime)
+                        : cardPos;
+                }
+                _sideLayout = true;
+
+                EnsureNameTag();
+                _nameTag.gameObject.SetActive(true);
+                _nameTag.text = fullName;
+                float top = _depthLinkHeight > 0.3f ? _depthLinkHeight : 1.7f;
+                _nameTag.transform.position = transform.position + Vector3.up * (top + 0.15f);
+                _nameTag.transform.rotation = Quaternion.LookRotation(-toCam.normalized);
+                _nameTag.color = isAlarmActive ? new Color(1f, 0.3f, 0.3f) : Color.white;
+            }
+            else
+            {
+                if (_nameTag != null) _nameTag.gameObject.SetActive(false);
+                if (_sideLayout && _hudContainer != null && !_isPanelDragging && trackingState == PatientTrackingState.InTransit)
+                {
+                    _hudContainer.transform.localPosition = hudOffset;
+                }
+                _sideLayout = false;
+            }
+        }
+
+        private void EnsureNameTag()
+        {
+            if (_nameTag != null) return;
+            var obj = new GameObject("LinkedNameTag");
+            obj.transform.SetParent(transform, false);
+            _nameTag = obj.AddComponent<TextMesh>();
+            _nameTag.fontSize = 60;
+            _nameTag.characterSize = 0.005f;
+            _nameTag.fontStyle = FontStyle.Bold;
+            _nameTag.anchor = TextAnchor.LowerCenter;
+            _nameTag.alignment = TextAlignment.Center;
         }
 
         /// <summary>
@@ -530,7 +591,8 @@ namespace ShiroMR
             else
             {
                 // In-Transit Mode: Attach floating HUD next to the real human
-                if (_hudContainer != null && !_isPanelDragging)
+                // (while linked to a detected person, UpdateLinkedLayout places it beside them)
+                if (_hudContainer != null && !_isPanelDragging && !_sideLayout)
                 {
                     _hudContainer.transform.localPosition = hudOffset;
                 }
@@ -588,8 +650,9 @@ namespace ShiroMR
         /// Person linking result (8D). Linked / LinkedManual: the panel follows that person
         /// (floor position, world). Otherwise it uses the Bluetooth position as before.
         /// </summary>
-        public void SetDepthLink(ShiroMR.Linking.LinkState state, Vector3 personFloorPos, string reason)
+        public void SetDepthLink(ShiroMR.Linking.LinkState state, Vector3 personFloorPos, string reason, float personHeight = 0f)
         {
+            _depthLinkHeight = personHeight;
             _linkingActive = true;
             depthLinkState = state;
             depthLinkReason = reason ?? "";

@@ -72,6 +72,8 @@ namespace ShiroMR.Linking
         public float X { get; private set; }
         public float Z { get; private set; }
         public bool HasPosition { get; private set; }
+        /// <summary>Measured height of the linked person (m), or 0 when not linked.</summary>
+        public float LinkedHeight { get; private set; }
         /// <summary>Short reason for the clinician, e.g. "linked: 1.62 m, 0.8 m from the wristband".</summary>
         public string Reason { get; private set; } = "waiting for the wristband position";
         public IReadOnlyList<LinkCandidate> Candidates => _candidates;
@@ -146,6 +148,7 @@ namespace ShiroMR.Linking
             if (State == LinkState.LinkedManual && linked != null)
             {
                 SetPosition(linked.X, linked.Z);
+                LinkedHeight = linked.Height;
                 Reason = $"chosen by you: {linked.Height:0.00} m";
                 return;
             }
@@ -193,6 +196,7 @@ namespace ShiroMR.Linking
                     _challengerId = -1;
                 }
                 SetPosition(linked.X, linked.Z);
+                LinkedHeight = linked.Height;
                 Reason = LinkedReason(linked, current);
                 return;
             }
@@ -216,6 +220,7 @@ namespace ShiroMR.Linking
                        : _candidates.Count == 0 ? "no person seen near the wristband: Bluetooth position"
                        : "no person fits well enough: Bluetooth position");
             }
+            LinkedHeight = 0f;
             if (hasBle) SetPosition(bleX, bleZ);
             else HasPosition = false;
         }
@@ -230,6 +235,7 @@ namespace ShiroMR.Linking
             {
                 if (t.Id != trackId) continue;
                 SetPosition(t.X, t.Z);
+                LinkedHeight = t.Height;
                 Reason = LinkedReason(t, _candidates.Find(c => c.TrackId == trackId));
             }
         }

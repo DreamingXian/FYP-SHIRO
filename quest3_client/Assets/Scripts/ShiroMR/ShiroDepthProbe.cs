@@ -70,6 +70,9 @@ namespace ShiroMR
         private float _sweepJx, _sweepJy, _sweepMaxFrameMs;
         private readonly Vector3[] _hitPoints = new Vector3[Cols * Rows];
         private readonly bool[] _hasHit = new bool[Cols * Rows];
+        private readonly bool[] _seen = new bool[Cols * Rows];   // inside the sensor's view (hit or nothing in range)
+        private readonly List<ExcludeSegment> _exclude = new List<ExcludeSegment>(4);
+        private OVRCameraRig _rig;
         private EnvironmentRaycastManager _raycaster;
         private float _timer;
         private float _fps = 72f;
@@ -191,7 +194,7 @@ namespace ShiroMR
                 _sweepMaxFrameMs = 0f;
                 _sweepJx = (float)_rnd.NextDouble() - 0.5f; // shift within one ray spacing
                 _sweepJy = (float)_rnd.NextDouble() - 0.5f;
-                for (int i = 0; i < _hasHit.Length; i++) _hasHit[i] = false;
+                for (int i = 0; i < _hasHit.Length; i++) { _hasHit[i] = false; _seen[i] = false; }
                 for (int c = 0; c < Cols; c++) _topRow[c] = -1;
             }
 
@@ -208,12 +211,13 @@ namespace ShiroMR
                         case EnvironmentRaycastHitStatus.Hit:
                             _hitPoints[r * Cols + c] = hit.point;
                             _hasHit[r * Cols + c] = true;
+                            _seen[r * Cols + c] = true;
                             _sweepHits++;
                             _topRow[c] = r; // remember for each column the highest row the sensor still sees
                             break;
                         case EnvironmentRaycastHitStatus.NotReady: _sweepNotReady++; break;
                         case EnvironmentRaycastHitStatus.HitPointOutsideOfCameraFrustum: _sweepOutside++; break;
-                        default: _topRow[c] = r; break; // seen, nothing hit (far away)
+                        default: _topRow[c] = r; _seen[r * Cols + c] = true; break; // seen, nothing hit (far away)
                     }
                 }
             }
@@ -234,13 +238,24 @@ namespace ShiroMR
 
             _points.Clear();
             for (int r = 0; r < Rows; r++)
+            {
+                // The left and right edge of what the sensor sees in this row
+                int first = -1, last = -1;
+                for (int c = 0; c < Cols; c++)
+                {
+                    if (!_seen[r * Cols + c]) continue;
+                    if (first < 0) first = c;
+                    last = c;
+                }
                 for (int c = 0; c < Cols; c++)
                 {
                     int i = r * Cols + c;
                     if (!_hasHit[i]) continue;
                     Vector3 p = _hitPoints[i];
-                    _points.Add(new DepthPoint(p.x, p.y, p.z, r >= _topRow[c] - 1));
+                    bool sideEdge = c <= first + 1 || c >= last - 1;
+                    _points.Add(new DepthPoint(p.x, p.y, p.z, r >= _topRow[c] - 1, sideEdge));
                 }
+            }
 
             _floorY = _floor.Update(_points, ShiroVRPointer.GetPhysicalFloorHeight());
 
@@ -253,7 +268,7 @@ namespace ShiroMR
             _previous.AddRange(_points);
 
             Vector3 head = cam.transform.position;
-            _detector.Process(_combined, _floorY, head.x, head.z, Time.realtimeSinceStartup);
+            _detector.Process(_combined, _floorY, head.x, head.z, Time.realtimeSinceStartup, OwnArms(cam));
             if (IsRunning)
             {
                 DrawPoints(cam);
@@ -273,6 +288,31 @@ namespace ShiroMR
         }
 
         private bool _wardWalls;
+
+        /// <summary>
+        /// The wearer's own arms, left out of detection: a capsule from each shoulder
+        /// (estimated from the head) to the tracked hand or controller, 0.15 m thick.
+        /// </summary>
+        private List<ExcludeSegment> OwnArms(Camera cam)
+        {
+            _exclude.Clear();
+            if (_rig == null) _rig = FindAnyObjectByType<OVRCameraRig>();
+            if (_rig == null) return _exclude;
+            Transform head = cam.transform;
+            Vector3 right = Vector3.ProjectOnPlane(head.right, Vector3.up).normalized;
+            Vector3 neck = head.position + Vector3.down * 0.25f;
+            AddArm(neck - right * 0.18f, _rig.leftHandAnchor);
+            AddArm(neck + right * 0.18f, _rig.rightHandAnchor);
+            return _exclude;
+        }
+
+        private void AddArm(Vector3 shoulder, Transform hand)
+        {
+            if (hand == null) return;
+            Vector3 h = hand.position;
+            if ((h - shoulder).sqrMagnitude > 1.2f * 1.2f) return; // not a real hand position
+            _exclude.Add(new ExcludeSegment(shoulder.x, shoulder.y, shoulder.z, h.x, h.y, h.z, 0.15f));
+        }
 
         /// <summary>Adds the points that are inside the aligned ward (0.15 m inside its walls), or all of them.</summary>
         private void AddInsideWard(List<DepthPoint> points)

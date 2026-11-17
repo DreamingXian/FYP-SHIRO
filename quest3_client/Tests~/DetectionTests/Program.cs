@@ -42,6 +42,10 @@ internal static class Program
         Run("pacing 0.35 m away and back, with pauses, counts as moved (two steps)", PacingWithPauses);
         Run("pacing back and forth without stopping counts as moved", PacingContinuously);
         Run("a still rack seen from one side, then the other, for 2 minutes: no step", StillRackSeenFromEachSide);
+        Run("a cabinet coming into view at the edge while the wearer walks past: no step", CabinetComingIntoView);
+        Run("a cabinet partly hidden, then whole, three times: not a person", CabinetPartlyHidden);
+        Run("a rack pushed by hand: same object, right height, moved; the arms are not people", PushedByHand);
+        Run("an object lost for 2.6 s and seen again keeps its identity (no step)", BrieflyLostKeepsIdentity);
 
         LinkingTests.RunAll(Run);
 
@@ -351,6 +355,105 @@ internal static class Program
         Equal(1, d.Tracks.Count, "objects");
         Equal(0, d.Tracks[0].Steps, "no step");
         Equal(TrackKind.StillObject, d.Tracks[0].Kind, "kind");
+    }
+
+    /// <summary>A cabinet (1.0 m wide, 1.8 m tall) of which only x in [from, to] is visible; the cut side is at the view edge.</summary>
+    private static List<DepthPoint> CabinetPart(float from, float to, bool cutLeft, bool cutRight)
+    {
+        var pts = new List<DepthPoint>();
+        foreach (var p in Box(0f, 3f, 1.0f, 0.5f, 1.8f))
+        {
+            if (p.x < from - 1e-4f || p.x > to + 1e-4f) continue;
+            bool edge = (cutLeft && p.x < from + 0.1f) || (cutRight && p.x > to - 0.1f);
+            pts.Add(new DepthPoint(p.x, p.y, p.z, false, edge));
+        }
+        return pts;
+    }
+
+    private static void CabinetComingIntoView()
+    {
+        // The wearer walks past a cabinet three times: it comes into view from one side, is
+        // whole for 2 s, and leaves on the other side
+        var d = new PersonDetector();
+        float t = 0f;
+        for (int cycle = 0; cycle < 3; cycle++)
+        {
+            for (int i = 0; i <= 9; i++, t += 0.2f) d.Process(CabinetPart(0.4f - i * 0.1f, 0.5f, true, false), Floor, HeadX, HeadZ, t);
+            for (int i = 0; i < 10; i++, t += 0.2f) d.Process(CabinetPart(-0.5f, 0.5f, false, false), Floor, HeadX, HeadZ, t);
+            for (int i = 0; i <= 9; i++, t += 0.2f) d.Process(CabinetPart(-0.5f, 0.5f - i * 0.1f, false, true), Floor, HeadX, HeadZ, t);
+        }
+        foreach (var tr in d.Tracks)
+        {
+            Equal(0, tr.Steps, $"no step for #{tr.Id}");
+            True(tr.Kind != TrackKind.PersonCandidate, $"#{tr.Id} is not a person");
+        }
+    }
+
+    private static void CabinetPartlyHidden()
+    {
+        // Something in front hides the left 60 % of a cabinet for 3 s, then it is whole for 3 s (three times)
+        var d = new PersonDetector();
+        float t = 0f;
+        for (int cycle = 0; cycle < 3; cycle++)
+        {
+            for (int i = 0; i < 15; i++, t += 0.2f) d.Process(CabinetPart(0.1f, 0.5f, false, false), Floor, HeadX, HeadZ, t);
+            for (int i = 0; i < 15; i++, t += 0.2f) d.Process(CabinetPart(-0.5f, 0.5f, false, false), Floor, HeadX, HeadZ, t);
+        }
+        foreach (var tr in d.Tracks) True(tr.Kind != TrackKind.PersonCandidate, $"#{tr.Id} is not a person (steps {tr.Steps})");
+    }
+
+    private static void PushedByHand()
+    {
+        // The wearer walks up to the rack, pushes it 0.7 m with both hands, and steps back
+        var d = new PersonDetector();
+        float t = 0f, zr = 1.5f;
+        List<ExcludeSegment> Arms(float headZ) => new List<ExcludeSegment>
+        {
+            new ExcludeSegment(-0.18f, 1.35f, headZ, -0.2f, 1.0f, zr - 0.12f, 0.15f),
+            new ExcludeSegment(0.18f, 1.35f, headZ, 0.2f, 1.0f, zr - 0.12f, 0.15f),
+        };
+        List<DepthPoint> Scene(float headZ, bool arms)
+        {
+            var pts = Rack(0f, zr);
+            if (!arms) return pts;
+            foreach (float side in new[] { -1f, 1f })
+                for (int k = 0; k <= 10; k++)
+                {
+                    float a = k / 10f; // shoulder -> hand, as the sensor sees the arm
+                    pts.Add(new DepthPoint(side * (0.18f + 0.02f * a), 1.35f - 0.35f * a, headZ + (zr - 0.12f - headZ) * a));
+                    pts.Add(new DepthPoint(side * (0.18f + 0.02f * a) + 0.03f, 1.33f - 0.35f * a, headZ + (zr - 0.12f - headZ) * a));
+                }
+            return pts;
+        }
+        for (int i = 0; i < 10; i++, t += 0.2f) d.Process(Scene(zr - 1.2f, false), Floor, 0f, zr - 1.2f, t);
+        int rackId = IdNear(d, 0f);
+        for (int i = 0; i < 5; i++, t += 0.2f) d.Process(Scene(zr - 0.45f, true), Floor, 0f, zr - 0.45f, t, Arms(zr - 0.45f));
+        for (int i = 0; i < 18; i++, t += 0.2f)
+        {
+            zr += 0.04f;
+            d.Process(Scene(zr - 0.45f, true), Floor, 0f, zr - 0.45f, t, Arms(zr - 0.45f));
+        }
+        for (int i = 0; i < 15; i++, t += 0.2f) d.Process(Scene(zr - 1.2f, false), Floor, 0f, zr - 1.2f, t);
+
+        Track rack = null;
+        foreach (var tr in d.Tracks) if (Math.Abs(tr.X) < 0.4f && Math.Abs(tr.Z - zr) < 0.4f) rack = tr;
+        True(rack != null, "the rack is tracked");
+        Equal(rackId, rack.Id, "the rack kept its identity while pushed");
+        Near(1.65f, rack.Height, 0.1f, "its height while pushed and after");
+        Equal(TrackKind.PersonCandidate, rack.Kind, "the push counts as moved");
+        foreach (var tr in d.Tracks) if (tr != rack) True(tr.Kind != TrackKind.PersonCandidate, $"#{tr.Id} (the arms?) is not a person");
+    }
+
+    private static void BrieflyLostKeepsIdentity()
+    {
+        var d = new PersonDetector();
+        float t = 0f;
+        for (int i = 0; i < 10; i++, t += 0.2f) d.Process(Rack(0f, 3f), Floor, HeadX, HeadZ, t);
+        int id = d.Tracks[0].Id;
+        for (int i = 0; i < 13; i++, t += 0.2f) d.Process(new List<DepthPoint>(), Floor, HeadX, HeadZ, t); // 2.6 s away
+        for (int i = 0; i < 10; i++, t += 0.2f) d.Process(Rack(0.1f, 3f), Floor, HeadX, HeadZ, t);
+        Equal(id, d.Tracks[0].Id, "same object");
+        Equal(0, d.Tracks[0].Steps, "reappearing is not a step");
     }
 
     private static void FloorMeasured()
