@@ -16,11 +16,14 @@
 // 3. Touching cells form objects: height, footprint, and a position taken from
 //    the object's upper part (its top 30 cm), which looks the same from every
 //    side; the lower part a hollow object shows changes with the view.
-// 4. A tracker follows each object. "Moved" needs sustained movement: the
+// 4. A tracker follows each object. An object only continues as the same one
+//    when the new one is close AND of similar height (a hidden rack cannot be
+//    taken over by the chair next to it). "Moved" needs sustained movement: the
 //    median of the last five positions must stay at least 0.4 m from the median
-//    of the first five, for five updates in a row (1 s at 5 Hz). Single jumps
-//    from noise or a momentary merge never count. A sudden height jump
-//    (merging with something next to it) does not move the object.
+//    of the first five, for five updates in a row (1 s at 5 Hz), seen without a
+//    gap and at a steady height. Single jumps from noise or a momentary merge
+//    never count. A sudden height jump does not move the object. Why an object
+//    counts as moved is kept (walked how far, or seen moving here before).
 // 5. A person candidate is person-sized and, unless switched off for testing,
 //    has moved. "Moved" stays while tracked and is remembered for a short time
 //    at the spot where it was lost (looked away), so a person who stands still
@@ -66,6 +69,10 @@ namespace ShiroMR.Detection
         public float MaxHeightJump = 0.35f;     // m: a bigger change in one update is a merge
         public int MaxJumpSkips = 3;            // after that many, the new height is accepted
         public float MatchDistance = 0.60f;     // m between updates to stay the same object
+        public float MatchHeightDiff = 0.50f;   // m: a bigger height difference is another object
+        public float MaxGapInStreak = 0.5f;     // s unseen that restarts the movement count
+        public float StreakHeightDiff = 0.25f;  // m height change that restarts the movement count
+        public float MemoryHeightDiff = 0.25f;  // m: a remembered moved object must have a similar height
         public float LostAfter = 2.0f;          // s unseen before an object is dropped
         public float RememberMovedFor = 30f;    // s a lost moved object is remembered at its spot
         public float HeightSmoothing = 0.3f;
@@ -91,6 +98,8 @@ namespace ShiroMR.Detection
         PersonCandidate,
     }
 
+    public enum MovedEvidence { None, Walked, SeenMovingHere }
+
     public sealed class Track
     {
         public int Id;
@@ -105,6 +114,9 @@ namespace ShiroMR.Detection
         public float Displacement;      // m, current position from the start
         public float MaxDisplacement;   // m, largest Displacement so far
         public bool HasMoved;
+        /// <summary>Why it counts as moved: Walked (MovedDistance m) or SeenMovingHere (remembered).</summary>
+        public MovedEvidence MovedBy;
+        public float MovedDistance;
         public float Speed;             // m/s, smoothed
         public TrackKind Kind;
         public bool SeenThisUpdate;
@@ -112,6 +124,7 @@ namespace ShiroMR.Detection
         internal readonly List<float> FirstXs = new List<float>(), FirstZs = new List<float>();
         internal readonly List<float> RecentXs = new List<float>(), RecentZs = new List<float>();
         internal int MoveStreak;
+        internal float StreakHeight;
         internal int JumpSkips;
     }
 
@@ -194,7 +207,7 @@ namespace ShiroMR.Detection
     {
         public readonly DetectorSettings Settings;
         private readonly List<Track> _tracks = new List<Track>();
-        private readonly List<(float x, float z, float until)> _movedMemory = new List<(float, float, float)>();
+        private readonly List<(float x, float z, float height, float until)> _movedMemory = new List<(float, float, float, float)>();
         private int _nextId = 1;
 
         public IReadOnlyList<Track> Tracks => _tracks;
@@ -381,7 +394,8 @@ namespace ShiroMR.Detection
                 foreach (var t in _tracks)
                 {
                     float d = Dist(blobs[b].X, blobs[b].Z, t.X, t.Z);
-                    if (d <= s.MatchDistance) pairs.Add((d, b, t));
+                    float dh = Math.Abs(blobs[b].Top - t.Height);
+                    if (d <= s.MatchDistance && dh <= s.MatchHeightDiff) pairs.Add((d + 0.5f * dh, b, t));
                 }
             pairs.Sort((a, c) => a.d.CompareTo(c.d));
             var blobUsed = new bool[blobs.Count];
@@ -409,9 +423,11 @@ namespace ShiroMR.Detection
                 for (int m = _movedMemory.Count - 1; m >= 0; m--)
                 {
                     if (_movedMemory[m].until < now) { _movedMemory.RemoveAt(m); continue; }
-                    if (Dist(_movedMemory[m].x, _movedMemory[m].z, blob.X, blob.Z) <= s.MatchDistance)
+                    if (Dist(_movedMemory[m].x, _movedMemory[m].z, blob.X, blob.Z) <= s.MatchDistance &&
+                        Math.Abs(_movedMemory[m].height - blob.Top) <= s.MemoryHeightDiff)
                     {
                         t.HasMoved = true;
+                        t.MovedBy = MovedEvidence.SeenMovingHere;
                         _movedMemory.RemoveAt(m);
                         break;
                     }
@@ -424,7 +440,7 @@ namespace ShiroMR.Detection
                 var t = _tracks[i];
                 if (now - t.LastSeen > s.LostAfter)
                 {
-                    if (t.HasMoved) _movedMemory.Add((t.X, t.Z, now + s.RememberMovedFor));
+                    if (t.HasMoved) _movedMemory.Add((t.X, t.Z, t.Height, now + s.RememberMovedFor));
                     _tracks.RemoveAt(i);
                     continue;
                 }
@@ -435,8 +451,10 @@ namespace ShiroMR.Detection
         private void Update(Track t, Blob blob, float now)
         {
             var s = Settings;
-            float dt = Math.Max(1e-3f, now - t.LastSeen);
+            float gap = now - t.LastSeen;
+            float dt = Math.Max(1e-3f, gap);
             t.LastSeen = now;
+            if (gap > s.MaxGapInStreak) t.MoveStreak = 0; // movement must be seen without a gap
             t.SeenThisUpdate = true;
 
             // A sudden height jump is a merge with something next to it (or a split):
@@ -460,8 +478,22 @@ namespace ShiroMR.Detection
             if (!t.StartKnown) return;
             t.Displacement = Dist(t.X, t.Z, t.StartX, t.StartZ);
             if (t.Displacement > t.MaxDisplacement) t.MaxDisplacement = t.Displacement;
-            t.MoveStreak = t.Displacement >= s.MoveDistance ? t.MoveStreak + 1 : 0;
-            if (t.MoveStreak >= s.MoveConfirmUpdates) t.HasMoved = true;
+            if (t.Displacement >= s.MoveDistance)
+            {
+                if (t.MoveStreak == 0) t.StreakHeight = t.Height;
+                // the same object all along: its height stays steady while it moves
+                t.MoveStreak = Math.Abs(t.Height - t.StreakHeight) <= s.StreakHeightDiff ? t.MoveStreak + 1 : 0;
+            }
+            else
+            {
+                t.MoveStreak = 0;
+            }
+            if (t.MoveStreak >= s.MoveConfirmUpdates && !t.HasMoved)
+            {
+                t.HasMoved = true;
+                t.MovedBy = MovedEvidence.Walked;
+                t.MovedDistance = t.Displacement;
+            }
         }
 
         /// <summary>Adds a measured position; the track's position is the median of the recent ones.</summary>

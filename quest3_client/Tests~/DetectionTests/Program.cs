@@ -36,6 +36,9 @@ internal static class Program
         Run("the floor is measured from the points even when the headset's guess is 25 cm off", FloorMeasured);
         Run("the floor measurement ignores a bed top and keeps its value when no floor is seen", FloorNotFooledByBed);
         Run("a still rack next to a wall, floor guessed 25 cm low, noisy views: still, correct height", RoomScene);
+        Run("a rack hidden for 1.6 s is not taken over by the chair next to it", HiddenRackNextToChair);
+        Run("'moved' is not inherited by an object of another height at the same spot", MemoryNeedsSimilarHeight);
+        Run("why an object counts as moved is recorded", MovedReasonRecorded);
 
         Console.WriteLine();
         Console.WriteLine($"{_passed} passed, {_failed} failed");
@@ -253,6 +256,43 @@ internal static class Program
         for (int i = 1; i <= 6; i++, t += 0.2f) d.Process(Cylinder(i * 0.1f, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t);
         for (int i = 0; i < 8; i++, t += 0.2f) d.Process(Cylinder(0.6f, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t);
         Equal(TrackKind.PersonCandidate, d.Tracks[0].Kind, "kind");
+    }
+
+    private static void HiddenRackNextToChair()
+    {
+        var d = new PersonDetector();
+        var chair = Box(0.55f, 3f, 0.3f, 0.4f, 0.9f);
+        float t = 0f;
+        for (int i = 0; i < 10; i++, t += 0.2f) d.Process(Join(Rack(0f, 3f), chair), Floor, HeadX, HeadZ, t);
+        int rack = IdNear(d, 0f);
+        for (int i = 0; i < 8; i++, t += 0.2f) d.Process(chair, Floor, HeadX, HeadZ, t);          // rack hidden 1.6 s
+        for (int i = 0; i < 20; i++, t += 0.2f) d.Process(Join(Rack(0f, 3f), chair), Floor, HeadX, HeadZ, t);
+        foreach (var tr in d.Tracks)
+            True(tr.Kind != TrackKind.PersonCandidate, $"nothing counts as moved (#{tr.Id} h {tr.Height:0.00} by {tr.MovedBy})");
+        Equal(rack, IdNear(d, 0f), "the rack keeps its id");
+    }
+
+    private static void MemoryNeedsSimilarHeight()
+    {
+        var d = new PersonDetector();
+        float t = 0f;
+        for (int i = 0; i <= 20; i++, t += 0.2f) d.Process(Cylinder(i * 0.06f, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t);
+        for (int i = 0; i < 15; i++, t += 0.2f) d.Process(new List<DepthPoint>(), Floor, HeadX, HeadZ, t); // lost
+        d.Process(Box(1.2f, 3f, 0.5f, 0.4f, 1.95f), Floor, HeadX, HeadZ, t);                              // a cabinet there
+        Equal(TrackKind.StillObject, d.Tracks[0].Kind, "the cabinet does not inherit 'moved'");
+        Equal(MovedEvidence.None, d.Tracks[0].MovedBy, "no evidence");
+    }
+
+    private static void MovedReasonRecorded()
+    {
+        var d = new PersonDetector();
+        float t = 0f;
+        for (int i = 0; i <= 20; i++, t += 0.2f) d.Process(Cylinder(i * 0.06f, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t);
+        Equal(MovedEvidence.Walked, d.Tracks[0].MovedBy, "walked");
+        True(d.Tracks[0].MovedDistance >= 0.4f, "distance recorded");
+        for (int i = 0; i < 15; i++, t += 0.2f) d.Process(new List<DepthPoint>(), Floor, HeadX, HeadZ, t);
+        d.Process(Cylinder(1.2f, 3f, 0.2f, 1.6f), Floor, HeadX, HeadZ, t);
+        Equal(MovedEvidence.SeenMovingHere, d.Tracks[0].MovedBy, "remembered");
     }
 
     private static void FloorMeasured()

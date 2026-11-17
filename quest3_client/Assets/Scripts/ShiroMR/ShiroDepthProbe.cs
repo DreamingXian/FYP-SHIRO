@@ -3,7 +3,8 @@
 // Depth test view (feature 8D, step 8D-0).
 //
 // Switched on from the System tab ("Depth test"). While on, it casts a grid of
-// 40 × 30 rays into the depth sensor's view five times per second
+// 40 × 30 rays into the depth sensor's view five times per second, spread over
+// five frames (240 rays per frame) so no frame carries them all
 // (EnvironmentRaycastManager, Meta MR Utility Kit). The grid shifts by a random
 // fraction of a ray each time and the last two updates are combined, so thin or
 // hollow objects get twice as many points. The floor height is measured from the
@@ -41,6 +42,7 @@ namespace ShiroMR
         private const float Interval = 0.2f;   // s: five updates per second
         private const float MaxRange = 6f;     // m
         private const float PointSize = 0.012f;
+        private const int RowsPerFrame = 6;     // 240 rays per frame: a sweep takes 5 frames
 
         public bool IsRunning { get; private set; }
         public bool MovementRequired => _detector.Settings.MovementRequired;
@@ -54,6 +56,10 @@ namespace ShiroMR
         private readonly FloorEstimator _floor = new FloorEstimator();
         private readonly System.Random _rnd = new System.Random();
         private int _outsideWard;
+        private readonly int[] _topRow = new int[Cols];
+        private int _sweepRow = -1;            // next row of the sweep in progress; -1 = none
+        private int _sweepHits, _sweepNotReady, _sweepOutside;
+        private float _sweepJx, _sweepJy, _sweepMaxFrameMs;
         private readonly Vector3[] _hitPoints = new Vector3[Cols * Rows];
         private readonly bool[] _hasHit = new bool[Cols * Rows];
         private EnvironmentRaycastManager _raycaster;
@@ -105,6 +111,7 @@ namespace ShiroMR
             IsRunning = on;
             _detector.Reset();
             _floor.Reset();
+            _sweepRow = -1;
             _previous.Clear();
             if (on)
             {
@@ -141,8 +148,6 @@ namespace ShiroMR
             PlaceStatus(cam);
 
             _timer += Time.deltaTime;
-            if (_timer < Interval) return;
-            _timer = 0f;
 
             if (!EnvironmentRaycastManager.IsSupported)
             {
@@ -150,49 +155,66 @@ namespace ShiroMR
                 return;
             }
 
-            var watch = Stopwatch.StartNew();
-            int hits = 0, notReady = 0, outside = 0;
-            _points.Clear();
+            // A sweep of the grid is spread over several frames (RowsPerFrame rows each),
+            // so no single frame carries all the rays
+            if (_sweepRow < 0)
+            {
+                if (_timer < Interval) return;
+                _timer = 0f;
+                _sweepRow = 0;
+                _sweepHits = _sweepNotReady = _sweepOutside = 0;
+                _sweepMaxFrameMs = 0f;
+                _sweepJx = (float)_rnd.NextDouble() - 0.5f; // shift within one ray spacing
+                _sweepJy = (float)_rnd.NextDouble() - 0.5f;
+                for (int i = 0; i < _hasHit.Length; i++) _hasHit[i] = false;
+                for (int c = 0; c < Cols; c++) _topRow[c] = -1;
+            }
 
-            // Cast the grid; remember for each column the highest row the sensor still sees
-            for (int i = 0; i < _hasHit.Length; i++) _hasHit[i] = false;
-            var topRow = new int[Cols];
-            for (int c = 0; c < Cols; c++) topRow[c] = -1;
-            float jx = (float)_rnd.NextDouble() - 0.5f, jy = (float)_rnd.NextDouble() - 0.5f; // shift within one ray spacing
-            for (int r = 0; r < Rows; r++)
+            var watch = Stopwatch.StartNew();
+            int lastRow = Mathf.Min(Rows, _sweepRow + RowsPerFrame);
+            for (int r = _sweepRow; r < lastRow; r++)
             {
                 for (int c = 0; c < Cols; c++)
                 {
-                    Ray ray = cam.ViewportPointToRay(new Vector3(Mathf.Clamp01((c + 0.5f + jx) / Cols), Mathf.Clamp01((r + 0.5f + jy) / Rows), 0f));
+                    Ray ray = cam.ViewportPointToRay(new Vector3(Mathf.Clamp01((c + 0.5f + _sweepJx) / Cols), Mathf.Clamp01((r + 0.5f + _sweepJy) / Rows), 0f));
                     _raycaster.Raycast(ray, out EnvironmentRaycastHit hit, MaxRange);
                     switch (hit.status)
                     {
                         case EnvironmentRaycastHitStatus.Hit:
                             _hitPoints[r * Cols + c] = hit.point;
                             _hasHit[r * Cols + c] = true;
-                            hits++;
-                            topRow[c] = r;
+                            _sweepHits++;
+                            _topRow[c] = r; // remember for each column the highest row the sensor still sees
                             break;
-                        case EnvironmentRaycastHitStatus.NotReady: notReady++; break;
-                        case EnvironmentRaycastHitStatus.HitPointOutsideOfCameraFrustum: outside++; break;
-                        default: topRow[c] = r; break; // seen, nothing hit (far away)
+                        case EnvironmentRaycastHitStatus.NotReady: _sweepNotReady++; break;
+                        case EnvironmentRaycastHitStatus.HitPointOutsideOfCameraFrustum: _sweepOutside++; break;
+                        default: _topRow[c] = r; break; // seen, nothing hit (far away)
                     }
                 }
             }
-
-            if (hits == 0)
+            _sweepRow = lastRow;
+            float frameMs = (float)watch.Elapsed.TotalMilliseconds;
+            if (_sweepRow < Rows)
             {
-                SetStatus(notReady > 0 ? "Depth starting… (look around for a few seconds)" : "Depth on, but no surface found in range");
+                if (frameMs > _sweepMaxFrameMs) _sweepMaxFrameMs = frameMs;
+                return;
+            }
+            _sweepRow = -1; // sweep complete: detect in this frame
+
+            if (_sweepHits == 0)
+            {
+                SetStatus(_sweepNotReady > 0 ? "Depth starting… (look around for a few seconds)" : "Depth on, but no surface found in range");
                 return;
             }
 
+            _points.Clear();
             for (int r = 0; r < Rows; r++)
                 for (int c = 0; c < Cols; c++)
                 {
                     int i = r * Cols + c;
                     if (!_hasHit[i]) continue;
                     Vector3 p = _hitPoints[i];
-                    _points.Add(new DepthPoint(p.x, p.y, p.z, r >= topRow[c] - 1));
+                    _points.Add(new DepthPoint(p.x, p.y, p.z, r >= _topRow[c] - 1));
                 }
 
             _floorY = _floor.Update(_points, ShiroVRPointer.GetPhysicalFloorHeight());
@@ -207,15 +229,15 @@ namespace ShiroMR
 
             Vector3 head = cam.transform.position;
             _detector.Process(_combined, _floorY, head.x, head.z, Time.realtimeSinceStartup);
-            watch.Stop();
-
             DrawPoints(cam);
             DrawTracks(cam);
+            frameMs = (float)watch.Elapsed.TotalMilliseconds;
+            if (frameMs > _sweepMaxFrameMs) _sweepMaxFrameMs = frameMs;
 
             int persons = 0;
             foreach (var t in _detector.Tracks) if (t.Kind == TrackKind.PersonCandidate) persons++;
-            SetStatus($"Depth OK · {hits}/{Cols * Rows} hits{(outside > 0 ? $" ({outside} outside sensor)" : "")} · " +
-                      $"{_detector.Tracks.Count} objects, {persons} PERSON? · {_fps:0} fps · {watch.Elapsed.TotalMilliseconds:0.0} ms\n" +
+            SetStatus($"Depth OK · {_sweepHits}/{Cols * Rows} hits{(_sweepOutside > 0 ? $" ({_sweepOutside} outside sensor)" : "")} · " +
+                      $"{_detector.Tracks.Count} objects, {persons} PERSON? · {_fps:0} fps · max {_sweepMaxFrameMs:0.0} ms per frame\n" +
                       $"Movement required: {(MovementRequired ? "ON" : "OFF (TEST: height only)")} · " +
                       $"floor {(_floor.Floor.HasValue ? $"measured y {_floorY:0.00} m" : $"NOT SEEN, guess y {_floorY:0.00} m (look at the floor)")}" +
                       $"{(_wardWalls ? $" · {_outsideWard} points outside the ward left out" : "")}");
@@ -353,7 +375,7 @@ namespace ShiroMR
                             : "not person";
                 m.label.text = t.Kind == TrackKind.NotPerson
                     ? $"{t.Height:0.00} m"
-                    : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · moved {t.Displacement:0.0} m";
+                    : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · {MovedText(t)}";
                 m.label.characterSize = t.Kind == TrackKind.NotPerson ? 0.0025f : 0.004f;
                 m.label.color = col;
                 m.label.transform.position = top + Vector3.up * 0.12f;
@@ -361,6 +383,14 @@ namespace ShiroMR
                 look.y = 0f;
                 if (look.sqrMagnitude > 0.001f) m.label.transform.rotation = Quaternion.LookRotation(look);
             }
+        }
+
+        /// <summary>Why the object counts as moved, or how far it is from where it started.</summary>
+        private static string MovedText(Track t)
+        {
+            if (t.MovedBy == MovedEvidence.Walked) return $"walked {t.MovedDistance:0.0} m (now {t.Displacement:0.0} m from start)";
+            if (t.MovedBy == MovedEvidence.SeenMovingHere) return "seen moving here before";
+            return $"{t.Displacement:0.0} m from start";
         }
 
         private Marker NewMarker()
