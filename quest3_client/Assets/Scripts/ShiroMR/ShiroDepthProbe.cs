@@ -169,6 +169,7 @@ namespace ShiroMR
         {
             float dt = Time.unscaledDeltaTime;
             if (dt > 0f) _fps += (1f / dt - _fps) * 0.05f;
+            HookTrackingEvents();
             if (!IsSensing) return;
 
             Camera cam = Camera.main;
@@ -284,7 +285,21 @@ namespace ShiroMR
                       $"{_detector.Tracks.Count} objects, {persons} PERSON? · {_fps:0} fps · max {_sweepMaxFrameMs:0.0} ms per frame\n" +
                       $"Movement required: {(MovementRequired ? "ON" : "OFF (TEST: height only)")} · " +
                       $"floor {(_floor.Floor.HasValue ? $"measured y {_floorY:0.00} m" : $"NOT SEEN, guess y {_floorY:0.00} m (look at the floor)")}" +
-                      $"{(_wardWalls ? $" · {_outsideWard} points outside the ward left out" : "")}");
+                      $"{(_wardWalls ? $" · {_outsideWard} points outside the ward left out" : "")}" +
+                      RestartText());
+        }
+
+        private string RestartText()
+        {
+            // The detector also restarts by itself on a head jump faster than a person moves
+            if (_detector.LastRestartReason != null && _detector.LastRestartReason != _restartNote)
+            {
+                _restartNote = _detector.LastRestartReason;
+                _restartNoteUntil = Time.realtimeSinceStartup + 5f;
+            }
+            return _restartNote != null && Time.realtimeSinceStartup < _restartNoteUntil
+                ? $"\nRESTARTED: {_restartNote}"
+                : "";
         }
 
         private bool _wardWalls;
@@ -492,6 +507,63 @@ namespace ShiroMR
         {
             if (_pointMesh != null) Destroy(_pointMesh);
             if (_mat != null) Destroy(_mat);
+            if (_trackingEventsHooked)
+            {
+                OVRManager.HMDMounted -= OnHeadsetOn;
+                OVRManager.HMDUnmounted -= OnHeadsetOff;
+                OVRManager.TrackingLost -= OnTrackingLost;
+                OVRManager.TrackingAcquired -= OnTrackingBack;
+                if (_display != null) _display.RecenteredPose -= OnRecentred;
+            }
+        }
+
+        // ----- Tracking-space changes: everything seen before is forgotten -----
+        // Taking the headset off and putting it on, losing tracking or recentring can shift
+        // the whole tracking space; every object would then seem to move at once, and the
+        // floor height would be wrong. Detection (and the floor measurement) starts again.
+
+        private bool _trackingEventsHooked;
+        private OVRDisplay _display;
+        private string _restartNote;
+        private float _restartNoteUntil;
+
+        private void HookTrackingEvents()
+        {
+            if (!_trackingEventsHooked)
+            {
+                OVRManager.HMDMounted += OnHeadsetOn;
+                OVRManager.HMDUnmounted += OnHeadsetOff;
+                OVRManager.TrackingLost += OnTrackingLost;
+                OVRManager.TrackingAcquired += OnTrackingBack;
+                _trackingEventsHooked = true;
+            }
+            if (_display == null && OVRManager.display != null)
+            {
+                _display = OVRManager.display;
+                _display.RecenteredPose += OnRecentred;
+            }
+        }
+
+        private void OnHeadsetOn() => RestartDetection("headset put on");
+        private void OnHeadsetOff() => RestartDetection("headset taken off");
+        private void OnTrackingLost() => RestartDetection("tracking lost");
+        private void OnTrackingBack() => RestartDetection("tracking back");
+        private void OnRecentred() => RestartDetection("view recentred");
+
+        private void OnApplicationPause(bool paused)
+        {
+            if (!paused) RestartDetection("app resumed");
+        }
+
+        public void RestartDetection(string reason)
+        {
+            _detector.Restart(reason);
+            _floor.Reset();
+            _previous.Clear();
+            _sweepRow = -1;
+            _restartNote = reason;
+            _restartNoteUntil = Time.realtimeSinceStartup + 5f;
+            Debug.Log($"[SHIRO DEPTH] Detection restarted: {reason}.");
         }
     }
 }

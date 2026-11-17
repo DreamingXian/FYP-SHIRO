@@ -46,6 +46,10 @@ internal static class Program
         Run("a cabinet partly hidden, then whole, three times: not a person", CabinetPartlyHidden);
         Run("a rack pushed by hand: same object, right height, moved; the arms are not people", PushedByHand);
         Run("an object lost for 2.6 s and seen again keeps its identity (no step)", BrieflyLostKeepsIdentity);
+        Run("a rack pushed with a foot while looking down: same object, height kept, moved, never grey", PushedWithLegLookingDown);
+        Run("the tracking space jumps (headset off and on): detection restarts, nothing 'moved'", TrackingJumpRestarts);
+        Run("a wrong low floor goes back up to the floor that agrees with the headset", FloorRisesBackToHeadsetFloor);
+        Run("a single odd update does not turn an object grey", NoGreyFlicker);
 
         LinkingTests.RunAll(Run);
 
@@ -427,12 +431,14 @@ internal static class Program
         }
         for (int i = 0; i < 10; i++, t += 0.2f) d.Process(Scene(zr - 1.2f, false), Floor, 0f, zr - 1.2f, t);
         int rackId = IdNear(d, 0f);
+        for (int i = 1; i <= 5; i++, t += 0.2f) d.Process(Scene(zr - 1.2f + i * 0.15f, false), Floor, 0f, zr - 1.2f + i * 0.15f, t); // walks up
         for (int i = 0; i < 5; i++, t += 0.2f) d.Process(Scene(zr - 0.45f, true), Floor, 0f, zr - 0.45f, t, Arms(zr - 0.45f));
         for (int i = 0; i < 18; i++, t += 0.2f)
         {
             zr += 0.04f;
             d.Process(Scene(zr - 0.45f, true), Floor, 0f, zr - 0.45f, t, Arms(zr - 0.45f));
         }
+        for (int i = 1; i <= 5; i++, t += 0.2f) d.Process(Scene(zr - 0.45f - i * 0.15f, false), Floor, 0f, zr - 0.45f - i * 0.15f, t); // steps back
         for (int i = 0; i < 15; i++, t += 0.2f) d.Process(Scene(zr - 1.2f, false), Floor, 0f, zr - 1.2f, t);
 
         Track rack = null;
@@ -454,6 +460,102 @@ internal static class Program
         for (int i = 0; i < 10; i++, t += 0.2f) d.Process(Rack(0.1f, 3f), Floor, HeadX, HeadZ, t);
         Equal(id, d.Tracks[0].Id, "same object");
         Equal(0, d.Tracks[0].Steps, "reappearing is not a step");
+    }
+
+    private static void PushedWithLegLookingDown()
+    {
+        // The wearer walks up to 0.7 m, looks down (the rack's top is out of view above 1.2 m),
+        // pushes it 0.6 m with a foot, then steps back and sees it whole
+        var d = new PersonDetector();
+        float t = 0f, zr = 2.0f, head = zr - 1.5f;
+        var kinds = new List<TrackKind>();
+        var heights = new List<float>();
+        List<DepthPoint> Scene(bool lookingDown, bool leg)
+        {
+            var pts = new List<DepthPoint>();
+            foreach (var p in Rack(0f, zr))
+            {
+                if (lookingDown && p.y > 1.2f) continue;
+                pts.Add(new DepthPoint(p.x, p.y, p.z, lookingDown && p.y >= 1.1f));
+            }
+            if (leg)
+                for (int k = 0; k <= 12; k++)
+                {
+                    float a = k / 12f; // hip -> foot at the rack's base
+                    pts.Add(new DepthPoint(0.1f, 0.9f - 0.7f * a, head + 0.1f + (zr - 0.15f - head - 0.1f) * a));
+                    pts.Add(new DepthPoint(0.15f, 0.9f - 0.7f * a, head + 0.1f + (zr - 0.15f - head - 0.1f) * a));
+                }
+            return pts;
+        }
+        void Step(bool down, bool leg)
+        {
+            d.Process(Scene(down, leg), Floor, 0f, head, t);
+            t += 0.2f;
+            Track r = null;
+            foreach (var tr in d.Tracks) if (Math.Abs(tr.X) < 0.4f && Math.Abs(tr.Z - zr) < 0.4f) r = tr;
+            if (r != null) { kinds.Add(r.Kind); heights.Add(r.Height); }
+        }
+        for (int i = 0; i < 10; i++) Step(false, false);
+        int id = IdNear(d, 0f);
+        for (int i = 0; i < 8; i++) { head += 0.1f; Step(false, false); }   // walks up to 0.7 m
+        for (int i = 0; i < 5; i++) Step(true, true);                        // looks down, foot on the rack
+        for (int i = 0; i < 15; i++) { zr += 0.04f; head += 0.04f; Step(true, true); } // pushes 0.6 m
+        for (int i = 0; i < 8; i++) Step(true, false);                       // still looking down
+        for (int i = 0; i < 8; i++) { head -= 0.1f; Step(false, false); }   // steps back
+        for (int i = 0; i < 10; i++) Step(false, false);
+
+        Track rack = null;
+        foreach (var tr in d.Tracks) if (Math.Abs(tr.X) < 0.4f && Math.Abs(tr.Z - zr) < 0.4f) rack = tr;
+        True(rack != null, "the rack is tracked");
+        Equal(id, rack.Id, "same object all along");
+        Equal(TrackKind.PersonCandidate, rack.Kind, "the push counts as moved");
+        True(!kinds.Contains(TrackKind.NotPerson), "never grey while pushed");
+        foreach (float h in heights) True(h > 1.5f, $"height kept while the top was out of view (was {h:0.00} m)");
+        foreach (var tr in d.Tracks) if (tr != rack) True(tr.Kind != TrackKind.PersonCandidate, $"#{tr.Id} (the leg?) is not a person");
+    }
+
+    private static void TrackingJumpRestarts()
+    {
+        // The headset is taken off and put on: the whole tracking space shifts by 0.5 m at once
+        var d = new PersonDetector();
+        float t = 0f, sx = 0f, sz = 0f;
+        List<DepthPoint> Scene()
+        {
+            var pts = Join(Rack(0f, 3f), Box(1.2f, 3.2f, 0.4f, 0.3f, 1.3f)); // rack and a monitor
+            var moved = new List<DepthPoint>();
+            foreach (var p in pts) moved.Add(new DepthPoint(p.x + sx, p.y, p.z + sz));
+            return moved;
+        }
+        for (int i = 0; i < 15; i++, t += 0.2f) d.Process(Scene(), Floor, sx, sz, t);
+        sx = 0.4f; sz = 0.35f;
+        for (int i = 0; i < 25; i++, t += 0.2f) d.Process(Scene(), Floor, sx, sz, t);
+        True(d.Restarts >= 1, "the jump restarts detection");
+        foreach (var tr in d.Tracks) True(tr.Kind != TrackKind.PersonCandidate, $"#{tr.Id} did not move (h {tr.Height:0.00})");
+    }
+
+    private static void FloorRisesBackToHeadsetFloor()
+    {
+        var fe = new FloorEstimator();
+        Near(-0.3f, fe.Update(FloorPatch(-0.3f), 0f), 0.03f, "a wrong low floor while tracking shifted");
+        fe.Update(FloorPatch(0f), 0f);
+        fe.Update(FloorPatch(0f), 0f);
+        Near(0f, fe.Update(FloorPatch(0f), 0f), 0.03f, "back to the floor that agrees with the headset after 3 measurements");
+    }
+
+    private static void NoGreyFlicker()
+    {
+        // A still rack; every 10th update it merges with something wide for one update
+        var d = new PersonDetector();
+        var kinds = new List<TrackKind>();
+        for (int i = 0; i < 80; i++)
+        {
+            var pts = Rack(0f, 3f);
+            if (i % 10 == 9) pts = Join(pts, Box(0.95f, 3f, 1.4f, 0.3f, 0.7f));
+            d.Process(pts, Floor, HeadX, HeadZ, i * 0.2f);
+            int id = IdNear(d, 0f);
+            foreach (var tr in d.Tracks) if (tr.Id == id && i > 2) kinds.Add(tr.Kind);
+        }
+        True(!kinds.Contains(TrackKind.NotPerson), "never grey for a single odd update");
     }
 
     private static void FloorMeasured()
