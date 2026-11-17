@@ -226,4 +226,15 @@ describe('API requests', () => {
     await expectError(await post('/api/patients/admit', { ...patient, photo_url: '/uploads/patients/../../index.html' }), 400);
     await expectError(await post('/api/patients/admit', { ...patient, patient_id: 'P 1' }), 400);
   });
+
+  test('height and weight outside their range, or not numbers, are a 400', async () => {
+    const patient = { full_name: 'Test Patient', nric_passport: 'A1234567', dob: '1960-01-01', phone_number: '0123456789' };
+    assert.match((await expectError(await post('/api/patients/admit', { ...patient, height_cm: 39 }), 400)).error, /height_cm/);
+    await expectError(await post('/api/patients/admit', { ...patient, height_cm: 231 }), 400);
+    await expectError(await post('/api/patients/admit', { ...patient, height_cm: 165.5 }), 400);
+    await expectError(await post('/api/patients/admit', { ...patient, height_cm: 'tall' }), 400);
+    assert.match((await expectError(await post('/api/patients/admit', { ...patient, weight_kg: 1.9 }), 400)).error, /weight_kg/);
+    await expectError(await post('/api/patients/admit', { ...patient, weight_kg: 301 }), 400);
+    await expectError(await post('/api/patients/update', { patient_id: 'P-001', weight_kg: true }), 400);
+  });
 });

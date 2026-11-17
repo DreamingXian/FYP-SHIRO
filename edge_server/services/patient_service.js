@@ -26,6 +26,15 @@ function calculateAge(dobString) {
   return age >= 0 ? age : 0;
 }
 
+/** A patient row as the API returns it: age added, weight as a number (the driver gives DECIMAL as text). */
+function toPatient(row) {
+  return {
+    ...row,
+    weight_kg: row.weight_kg === null || row.weight_kg === undefined ? null : Number(row.weight_kg),
+    age: calculateAge(row.dob)
+  };
+}
+
 /**
  * Retrieves all patients with joined ward titles, bed codes, and calculated ages.
  * @param {string} filterStatus - 'ALL' | 'ADMITTED' | 'DISCHARGED'
@@ -43,6 +52,8 @@ async function getAllPatients(filterStatus = 'ALL') {
       p.assigned_ward_id,
       p.assigned_bed_id,
       p.fall_risk_score,
+      p.height_cm,
+      p.weight_kg,
       p.medical_history,
       p.photo_url,
       DATE_FORMAT(p.admission_date, '%Y-%m-%d %H:%i') AS admission_date,
@@ -64,10 +75,7 @@ async function getAllPatients(filterStatus = 'ALL') {
   query += ` ORDER BY p.admission_date DESC, p.patient_id DESC`;
 
   const [rows] = await pool.query(query, params);
-  return rows.map(r => ({
-    ...r,
-    age: calculateAge(r.dob)
-  }));
+  return rows.map(toPatient);
 }
 
 /**
@@ -86,6 +94,8 @@ async function getPatientById(patientId) {
       p.assigned_ward_id,
       p.assigned_bed_id,
       p.fall_risk_score,
+      p.height_cm,
+      p.weight_kg,
       p.medical_history,
       p.photo_url,
       DATE_FORMAT(p.admission_date, '%Y-%m-%d %H:%i') AS admission_date,
@@ -101,10 +111,7 @@ async function getPatientById(patientId) {
   `;
   const [rows] = await pool.query(query, [patientId]);
   if (!rows || rows.length === 0) return null;
-  return {
-    ...rows[0],
-    age: calculateAge(rows[0].dob)
-  };
+  return toPatient(rows[0]);
 }
 
 /**
@@ -295,11 +302,13 @@ async function admitPatient(patientData) {
         assigned_ward_id,
         assigned_bed_id,
         fall_risk_score,
+        height_cm,
+        weight_kg,
         medical_history,
         photo_url,
         admission_date,
         status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'ADMITTED')
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 'ADMITTED')
     `;
 
     await conn.query(insertSql, [
@@ -312,6 +321,8 @@ async function admitPatient(patientData) {
       wardId,
       bedId,
       patientData.fall_risk_score || 'LOW',
+      patientData.height_cm ?? null,
+      patientData.weight_kg ?? null,
       patientData.medical_history ? patientData.medical_history.trim() : '',
       photoUrl
     ]);
@@ -391,6 +402,8 @@ async function updatePatient(patientId, updateData) {
         assigned_ward_id = ?,
         assigned_bed_id = ?,
         fall_risk_score = ?,
+        height_cm = ?,
+        weight_kg = ?,
         medical_history = ?,
         photo_url = COALESCE(?, photo_url)
       WHERE patient_id = ?
@@ -405,6 +418,9 @@ async function updatePatient(patientId, updateData) {
       newWardId,
       newBedId,
       updateData.fall_risk_score || current.fall_risk_score,
+      // Sent (a number, or null to clear) replaces the value; not sent keeps it
+      updateData.height_cm !== undefined ? updateData.height_cm : current.height_cm,
+      updateData.weight_kg !== undefined ? updateData.weight_kg : current.weight_kg,
       updateData.medical_history !== undefined ? updateData.medical_history : current.medical_history,
       updateData.photo_url || null,
       patientId

@@ -4,12 +4,17 @@
 // =============================================================================
 const patientService = require('../services/patient_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
-const { requireId, optionalId, optionalOneOf, optionalText } = require('../utils/validate');
+const { requireId, optionalId, optionalOneOf, optionalText, optionalInt, optionalNumber } = require('../utils/validate');
 
 const PATIENT_STATUS_FILTERS = ['ALL', 'ADMITTED', 'DISCHARGED'];
 const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
 const FALL_RISK_SCORES = ['LOW', 'MEDIUM', 'HIGH'];
 const DATE_PATTERN = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+
+// Optional body measurements. Absent, null or empty means "not recorded";
+// on an update, null or empty clears the recorded value.
+const HEIGHT_CM_RANGE = { min: 40, max: 230 };
+const WEIGHT_KG_RANGE = { min: 2, max: 300 };
 
 // A patient photo is always a file this server stores in public/uploads/patients.
 const PHOTO_URL_PATTERN = /^[/]uploads[/]patients[/][A-Za-z0-9][A-Za-z0-9_.-]{0,99}[.](png|jpg|jpeg|webp|svg)$/;
@@ -29,6 +34,15 @@ function checkPatientFields(payload) {
   optionalText(payload.medical_history, 'medical_history', 5000);
   optionalOneOf(payload.gender, GENDERS, 'gender');
   optionalOneOf(payload.fall_risk_score, FALL_RISK_SCORES, 'fall_risk_score');
+
+  // Replaced by the checked number (or null), so the service stores exactly that
+  if (payload.height_cm !== undefined) {
+    payload.height_cm = optionalInt(payload.height_cm, 'height_cm', HEIGHT_CM_RANGE);
+  }
+  if (payload.weight_kg !== undefined) {
+    const kg = optionalNumber(payload.weight_kg, 'weight_kg', WEIGHT_KG_RANGE);
+    payload.weight_kg = kg === null ? null : Math.round(kg * 10) / 10;
+  }
 
   const dob = optionalText(payload.dob, 'dob', 10);
   if (dob !== null && (!DATE_PATTERN.test(dob) || Number.isNaN(Date.parse(dob)))) {

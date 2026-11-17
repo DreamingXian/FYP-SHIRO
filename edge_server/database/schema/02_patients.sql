@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS `patients` (
     `assigned_ward_id` VARCHAR(32) NULL,
     `assigned_bed_id` VARCHAR(32) NULL,
     `fall_risk_score` ENUM('LOW', 'MEDIUM', 'HIGH') DEFAULT 'LOW',
+    `height_cm` SMALLINT UNSIGNED NULL,  -- NULL: not recorded (never a default)
+    `weight_kg` DECIMAL(4,1) NULL,       -- NULL: not recorded
     `medical_history` TEXT NULL,
     `photo_url` VARCHAR(255) NULL,
     `admission_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
