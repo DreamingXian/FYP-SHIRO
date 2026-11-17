@@ -74,6 +74,8 @@ namespace ShiroMR
         private Text _autoWardBtnText;
         private Text _depthBtnText;
         private Text _moveReqBtnText;
+        private Text _linkBtnText;
+        private Text _fakeBtnText;
         private float _autoWardLabelTimer;
 
         // Tab 1 (IPS Location) UI References
@@ -1635,24 +1637,42 @@ namespace ShiroMR
             Button pairBtn = CreateButton(p.transform, "PairBtn", "🔑 Pair headset (code)", new Vector2(420f, 45f), new Color(0.55f, 0.40f, 0.08f), OpenPairingPad);
             pairBtn.transform.localPosition = new Vector3(250f, -150f, 0);
 
-            // Row 3: depth test view (8D) and its movement rule
-            Button depthBtn = CreateButton(p.transform, "DepthBtn", "🔬 Depth test: OFF", new Vector2(480f, 45f), new Color(0.22f, 0.18f, 0.40f), () =>
+            // Row 3: person detection and linking (8D): depth view, movement rule, linking, fake wristband
+            Button depthBtn = CreateButton(p.transform, "DepthBtn", "🔬 Depth view: OFF", new Vector2(255f, 45f), new Color(0.22f, 0.18f, 0.40f), () =>
             {
                 var probe = ShiroDepthProbe.Instance;
                 if (probe != null) probe.SetRunning(!probe.IsRunning);
                 RefreshAutoWardLabel();
             });
-            depthBtn.transform.localPosition = new Vector3(-250f, -205f, 0);
+            depthBtn.transform.localPosition = new Vector3(-405f, -205f, 0);
             _depthBtnText = depthBtn.GetComponentInChildren<Text>();
 
-            Button moveBtn = CreateButton(p.transform, "MoveReqBtn", "🚶 Movement required: ON", new Vector2(420f, 45f), new Color(0.22f, 0.30f, 0.22f), () =>
+            Button moveBtn = CreateButton(p.transform, "MoveReqBtn", "🚶 Move rule: ON", new Vector2(255f, 45f), new Color(0.22f, 0.30f, 0.22f), () =>
             {
                 var probe = ShiroDepthProbe.Instance;
                 if (probe != null) probe.SetMovementRequired(!probe.MovementRequired);
                 RefreshAutoWardLabel();
             });
-            moveBtn.transform.localPosition = new Vector3(250f, -205f, 0);
+            moveBtn.transform.localPosition = new Vector3(-135f, -205f, 0);
             _moveReqBtnText = moveBtn.GetComponentInChildren<Text>();
+
+            Button linkBtn = CreateButton(p.transform, "LinkBtn", "🔗 Linking: OFF", new Vector2(255f, 45f), new Color(0.12f, 0.35f, 0.30f), () =>
+            {
+                var link = ShiroPatientLinking.Instance;
+                if (link != null) link.SetLinkingEnabled(!link.LinkingEnabled);
+                RefreshAutoWardLabel();
+            });
+            linkBtn.transform.localPosition = new Vector3(135f, -205f, 0);
+            _linkBtnText = linkBtn.GetComponentInChildren<Text>();
+
+            Button fakeBtn = CreateButton(p.transform, "FakeBtn", "🧪 Fake band: OFF", new Vector2(255f, 45f), new Color(0.40f, 0.28f, 0.10f), () =>
+            {
+                var link = ShiroPatientLinking.Instance;
+                if (link != null) link.SetFakeEnabled(!link.FakeEnabled);
+                RefreshAutoWardLabel();
+            });
+            fakeBtn.transform.localPosition = new Vector3(405f, -205f, 0);
+            _fakeBtnText = fakeBtn.GetComponentInChildren<Text>();
 
             BuildPairingPad(p.transform);
             RefreshPairingStatus();
@@ -2060,8 +2080,11 @@ namespace ShiroMR
                 : det.IsEnabled ? $"🧭 Auto ward ON · {det.StatusText}" : "🧭 Auto ward OFF";
             if (_autoWardBtnText != null && _autoWardBtnText.text != text) _autoWardBtnText.text = text;
             var probe = ShiroDepthProbe.Instance;
-            if (_depthBtnText != null) _depthBtnText.text = probe != null && probe.IsRunning ? "🔬 Depth test: ON" : "🔬 Depth test: OFF";
-            if (_moveReqBtnText != null) _moveReqBtnText.text = probe == null || probe.MovementRequired ? "🚶 Movement required: ON" : "🚶 Movement required: OFF (test)";
+            if (_depthBtnText != null) _depthBtnText.text = probe != null && probe.IsRunning ? "🔬 Depth view: ON" : "🔬 Depth view: OFF";
+            if (_moveReqBtnText != null) _moveReqBtnText.text = probe == null || probe.MovementRequired ? "🚶 Move rule: ON" : "🚶 Move rule: OFF";
+            var link = ShiroPatientLinking.Instance;
+            if (_linkBtnText != null) _linkBtnText.text = link != null && link.LinkingEnabled ? "🔗 Linking: ON" : "🔗 Linking: OFF";
+            if (_fakeBtnText != null) _fakeBtnText.text = link != null && link.FakeEnabled ? "🧪 Fake band: ON" : "🧪 Fake band: OFF";
         }
 
         private void UpdateAlertBlink()

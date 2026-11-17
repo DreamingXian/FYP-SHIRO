@@ -101,6 +101,18 @@ namespace ShiroMR
         private Vector3 _customBedOffset = Vector3.zero;
         private bool _isManuallyLocked = false;
 
+        // Person linking (8D): the panel follows a person seen by the depth sensor
+        private bool _linkingActive;
+        private bool _depthLinked;
+        private Vector3 _depthLinkPos;
+        public ShiroMR.Linking.LinkState depthLinkState { get; private set; } = ShiroMR.Linking.LinkState.BleOnly;
+        public string depthLinkReason { get; private set; } = "";
+        /// <summary>A Bluetooth position has arrived for this panel.</summary>
+        public bool HasIpsPosition { get; private set; }
+        /// <summary>The Bluetooth position on the floor (world).</summary>
+        public Vector3 IpsWorldPosition => _rawIpsWorldPos;
+        public bool IsManuallyLocked => _isManuallyLocked;
+
         private void Start()
         {
             if (Camera.main != null)
@@ -194,7 +206,12 @@ namespace ShiroMR
                 }
                 else
                 {
-                    if (motionState == "STATIONARY" || motionState == "SETTLING")
+                    if (_depthLinked && trackingState == PatientTrackingState.InTransit)
+                    {
+                        _targetPosition = _depthLinkPos;
+                        transform.position = Vector3.SmoothDamp(transform.position, _targetPosition, ref _currentVelocity, smoothTime, maxSpeed);
+                    }
+                    else if (motionState == "STATIONARY" || motionState == "SETTLING")
                     {
                         transform.position = Vector3.MoveTowards(transform.position, _targetPosition, 0.50f * Time.deltaTime);
                     }
@@ -414,6 +431,7 @@ namespace ShiroMR
         {
             motionState = motion ?? "STATIONARY";
             isOnline = true;
+            HasIpsPosition = true;
 
             // Calculate Nominal Ground World Position from Ward Coordinates
             if (WardSpatialManager.Instance != null)
@@ -544,6 +562,7 @@ namespace ShiroMR
                     detectedPersonPosition = new Vector3(_lastStationaryWorldPos.x, 0, _lastStationaryWorldPos.z);
                 }
 
+                if (_depthLinked) detectedPersonPosition = _depthLinkPos;
                 _targetPosition = detectedPersonPosition;
             }
 
@@ -562,7 +581,43 @@ namespace ShiroMR
         public void EvaluatePersonDetection()
         {
             bool hasLivingPulse = (heartRateBpm >= 40 && heartRateBpm <= 220);
-            isPersonDetected = (hasLivingPulse || _isManuallyLocked);
+            isPersonDetected = (hasLivingPulse || _isManuallyLocked || _depthLinked);
+        }
+
+        /// <summary>
+        /// Person linking result (8D). Linked / LinkedManual: the panel follows that person
+        /// (floor position, world). Otherwise it uses the Bluetooth position as before.
+        /// </summary>
+        public void SetDepthLink(ShiroMR.Linking.LinkState state, Vector3 personFloorPos, string reason)
+        {
+            _linkingActive = true;
+            depthLinkState = state;
+            depthLinkReason = reason ?? "";
+            _depthLinked = state == ShiroMR.Linking.LinkState.Linked || state == ShiroMR.Linking.LinkState.LinkedManual;
+            if (_depthLinked)
+            {
+                _depthLinkPos = new Vector3(personFloorPos.x, 0f, personFloorPos.z);
+                if (trackingState == PatientTrackingState.InTransit && !_isPanelDragging)
+                {
+                    detectedPersonPosition = _depthLinkPos;
+                    _targetPosition = _depthLinkPos;
+                }
+            }
+            else if (trackingState == PatientTrackingState.InTransit && HasIpsPosition && !_isManuallyLocked)
+            {
+                // Back to the Bluetooth position
+                detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0f, _rawIpsWorldPos.z);
+                _targetPosition = detectedPersonPosition;
+            }
+            EvaluatePersonDetection();
+        }
+
+        /// <summary>Person linking switched off: the panel uses the Bluetooth position as before.</summary>
+        public void ClearDepthLink()
+        {
+            if (!_linkingActive) return;
+            SetDepthLink(ShiroMR.Linking.LinkState.BleOnly, Vector3.zero, "");
+            _linkingActive = false;
         }
 
         /// <summary>
@@ -716,8 +771,31 @@ namespace ShiroMR
                 }
                 else
                 {
-                    _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PULSE DETECTED)" : "🚶 IN-TRANSIT (NO PULSE READING)";
-                    _trackingBadgeText.color = isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
+                    if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Linked)
+                    {
+                        _trackingBadgeText.text = "🔗 FOLLOWING PERSON";
+                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                    }
+                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
+                    {
+                        _trackingBadgeText.text = "🔗 FOLLOWING CHOSEN PERSON";
+                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                    }
+                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Unclear)
+                    {
+                        _trackingBadgeText.text = "❓ UNCLEAR: CHOOSE PERSON";
+                        _trackingBadgeText.color = new Color(1.0f, 0.75f, 0.2f);
+                    }
+                    else if (_linkingActive)
+                    {
+                        _trackingBadgeText.text = "📶 BLUETOOTH POSITION";
+                        _trackingBadgeText.color = new Color(0.95f, 0.85f, 0.35f);
+                    }
+                    else
+                    {
+                        _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PULSE DETECTED)" : "🚶 IN-TRANSIT (NO PULSE READING)";
+                        _trackingBadgeText.color = isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
+                    }
                 }
             }
 

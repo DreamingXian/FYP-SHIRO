@@ -13,5 +13,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Assets/Scripts/ShiroMR/ShiroPersonDetection.cs" Link="ShiroPersonDetection.cs" />
+    <Compile Include="../../Assets/Scripts/ShiroMR/ShiroPersonLinking.cs" Link="ShiroPersonLinking.cs" />
   </ItemGroup>
 </Project>

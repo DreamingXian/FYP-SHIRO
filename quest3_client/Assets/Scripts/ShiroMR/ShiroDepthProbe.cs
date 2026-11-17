@@ -44,7 +44,15 @@ namespace ShiroMR
         private const float PointSize = 0.012f;
         private const int RowsPerFrame = 6;     // 240 rays per frame: a sweep takes 5 frames
 
+        /// <summary>The depth view (points, objects, status line) is shown.</summary>
         public bool IsRunning { get; private set; }
+        /// <summary>Depth sensing runs: for the view, or because person linking needs it.</summary>
+        public bool IsSensing => IsRunning || _sensingRequested;
+        /// <summary>Raised after every detection update (five times per second while sensing).</summary>
+        public event System.Action OnDetectionUpdated;
+        /// <summary>Optional text added to an object's label (for example the linked patient).</summary>
+        public System.Func<int, string> ExtraLabel;
+        private bool _sensingRequested;
         public bool MovementRequired => _detector.Settings.MovementRequired;
         public PersonDetector Detector => _detector;
         public string StatusText { get; private set; } = "off";
@@ -105,17 +113,37 @@ namespace ShiroMR
             PlayerPrefs.Save();
         }
 
+        /// <summary>Shows or hides the depth view (sensing starts with it when needed).</summary>
         public void SetRunning(bool on)
         {
             if (on == IsRunning) return;
+            bool wasSensing = IsSensing;
             IsRunning = on;
+            if (on) EnsureVisuals();
+            if (_pointObj != null) _pointObj.SetActive(on);
+            if (_statusText != null) _statusText.gameObject.SetActive(on);
+            foreach (var m in _markers) m.root.SetActive(false);
+            SensingChanged(wasSensing);
+        }
+
+        /// <summary>Person linking asks for depth sensing (without the view).</summary>
+        public void SetSensingRequested(bool on)
+        {
+            if (on == _sensingRequested) return;
+            bool wasSensing = IsSensing;
+            _sensingRequested = on;
+            SensingChanged(wasSensing);
+        }
+
+        private void SensingChanged(bool wasSensing)
+        {
+            if (IsSensing == wasSensing) return;
             _detector.Reset();
             _floor.Reset();
             _sweepRow = -1;
             _previous.Clear();
-            if (on)
+            if (IsSensing)
             {
-                EnsureVisuals();
                 EnsureRaycaster();
                 if (_raycaster != null) _raycaster.enabled = true;
                 StatusText = "starting";
@@ -125,9 +153,6 @@ namespace ShiroMR
                 if (_raycaster != null) _raycaster.enabled = false;
                 StatusText = "off";
             }
-            if (_pointObj != null) _pointObj.SetActive(on);
-            if (_statusText != null) _statusText.gameObject.SetActive(on);
-            foreach (var m in _markers) m.root.SetActive(false);
         }
 
         private void EnsureRaycaster()
@@ -141,7 +166,7 @@ namespace ShiroMR
         {
             float dt = Time.unscaledDeltaTime;
             if (dt > 0f) _fps += (1f / dt - _fps) * 0.05f;
-            if (!IsRunning) return;
+            if (!IsSensing) return;
 
             Camera cam = Camera.main;
             if (cam == null) return;
@@ -229,8 +254,12 @@ namespace ShiroMR
 
             Vector3 head = cam.transform.position;
             _detector.Process(_combined, _floorY, head.x, head.z, Time.realtimeSinceStartup);
-            DrawPoints(cam);
-            DrawTracks(cam);
+            if (IsRunning)
+            {
+                DrawPoints(cam);
+                DrawTracks(cam);
+            }
+            OnDetectionUpdated?.Invoke();
             frameMs = (float)watch.Elapsed.TotalMilliseconds;
             if (frameMs > _sweepMaxFrameMs) _sweepMaxFrameMs = frameMs;
 
@@ -375,7 +404,7 @@ namespace ShiroMR
                             : "not person";
                 m.label.text = t.Kind == TrackKind.NotPerson
                     ? $"{t.Height:0.00} m"
-                    : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · {MovedText(t)}";
+                    : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · {MovedText(t)}{LinkedText(t.Id)}";
                 m.label.characterSize = t.Kind == TrackKind.NotPerson ? 0.0025f : 0.004f;
                 m.label.color = col;
                 m.label.transform.position = top + Vector3.up * 0.12f;
@@ -383,6 +412,12 @@ namespace ShiroMR
                 look.y = 0f;
                 if (look.sqrMagnitude > 0.001f) m.label.transform.rotation = Quaternion.LookRotation(look);
             }
+        }
+
+        private string LinkedText(int trackId)
+        {
+            string extra = ExtraLabel?.Invoke(trackId);
+            return string.IsNullOrEmpty(extra) ? "" : $"\n{extra}";
         }
 
         /// <summary>Why the object counts as moved, or how far it is from where it started.</summary>

@@ -43,6 +43,8 @@ internal static class Program
         Run("pacing back and forth without stopping counts as moved", PacingContinuously);
         Run("a still rack seen from one side, then the other, for 2 minutes: no step", StillRackSeenFromEachSide);
 
+        LinkingTests.RunAll(Run);
+
         Console.WriteLine();
         Console.WriteLine($"{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
