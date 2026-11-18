@@ -234,6 +234,7 @@
             <input type="checkbox" checked${actionAttrs('setIncidentHistorySimulated', [], { event: 'change', element: true })}> Live Lab tests
           </label>
           <div id="incident-range-pills" style="display:flex; gap:6px; background:#F1F5F9; padding:4px; border-radius:6px; border:1px solid var(--border);">${pillsHtml}</div>
+          <button type="button" class="btn btn-outline btn-sm" id="incident-csv-btn"${actionAttrs('downloadIncidentCsv', [])} title="Download this list (same filters, up to 10,000 incidents) as a CSV file for Excel" style="font-size:12px; font-weight:600;">⬇ CSV</button>
         </div>
       </div>
       <div id="incident-history-container" style="min-height:300px;">
@@ -271,10 +272,53 @@
     loadIncidentHistory();
   }
 
+  /** The list with the current filters as a CSV file (GET /api/alerts/history.csv). */
+  async function downloadIncidentCsv() {
+    const params = new URLSearchParams({ range: state.range, simulated: state.includeSimulated ? 'include' : 'exclude' });
+    if (state.patientId) params.set('patient_id', state.patientId);
+    if (state.category) params.set('category', state.category);
+    const btn = document.getElementById('incident-csv-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(`/api/alerts/history.csv?${params.toString()}`);
+      if (!res.ok) {
+        let message = `server answered ${res.status}`;
+        try { message = (await res.json()).error || message; } catch { /* not JSON */ }
+        if (window.showToast) window.showToast(`CSV export failed: ${message}`, 'danger');
+        return;
+      }
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const fileName = match ? match[1] : 'shiro-incidents.csv';
+      const total = Number(res.headers.get('X-Shiro-Total-Count'));
+      const exported = Number(res.headers.get('X-Shiro-Exported-Count'));
+
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      if (window.showToast) {
+        window.showToast(Number.isFinite(total) && Number.isFinite(exported) && total > exported
+          ? `Saved ${fileName}: the newest ${exported} of ${total} incidents.`
+          : `Saved ${fileName} (${Number.isFinite(exported) ? exported : '?'} incidents).`, 'success');
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast('The edge server cannot be reached. The CSV was not saved.', 'danger');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   window.openIncidentHistoryModal = openIncidentHistoryModal;
   window.setIncidentHistoryRange = setIncidentHistoryRange;
   window.setIncidentHistoryCategory = setIncidentHistoryCategory;
   window.setIncidentHistorySimulated = setIncidentHistorySimulated;
+  window.downloadIncidentCsv = downloadIncidentCsv;
   // For tests in the browser console
   window.shiroIncidentHistory = { formatDuration, measurementsText, locationText };
 })();
