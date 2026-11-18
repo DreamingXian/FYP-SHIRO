@@ -964,6 +964,11 @@ async function viewPatientProfileReadOnly(patientId) {
       <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; margin-top:8px; color:var(--danger); border-color:var(--danger);">
         🚨 <span>Incident History (falls, critical vitals, ward exits)</span>
       </button>
+
+      <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:12px;">
+        <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">🔗 Wristband History</div>
+        <div id="profile-binding-history" style="color:var(--text-muted);">Loading…</div>
+      </div>
     `;
 
     if (window.showModal) {
@@ -974,10 +979,47 @@ async function viewPatientProfileReadOnly(patientId) {
         confirmText: 'Close',
         cancelText: null
       });
+      loadProfileBindingHistory(p.patient_id);
     }
   } catch (err) {
     console.error('View read-only profile error:', err);
   }
+}
+
+/**
+ * Fills the profile's "Wristband History": every wristband this patient wore, newest first.
+ */
+async function loadProfileBindingHistory(patientId) {
+  let text = null;
+  let historyItems = '';
+  try {
+    const res = await fetch(`/api/bindings/history?patient_id=${encodeURIComponent(patientId)}&limit=50`);
+    const data = await res.json();
+    if (!data.success || !Array.isArray(data.history)) {
+      text = 'Wristband history could not be loaded.';
+    } else if (data.history.length === 0) {
+      text = 'No wristband has been bound to this patient.';
+    } else {
+      const duration = window.formatBindingDuration || ((m) => `${m} min`);
+      historyItems = data.history.map(b => `
+        <div style="padding:6px 0; border-top:1px solid var(--border);">
+          <span class="mono" style="color:var(--text-primary); font-weight:600;">${escapeHtml(b.device_id || 'deleted wristband')}</span>
+          <span class="mono" style="color:var(--text-muted);">(${escapeHtml(b.mac_address || 'MAC not recorded')})</span>
+          · ${escapeHtml(b.status === 'ACTIVE' ? 'worn now' : b.status === 'DISCHARGED' ? 'ended at discharge' : 'unbound')}
+          <div style="color:var(--text-secondary); margin-top:2px;">
+            ${escapeHtml(b.bound_at || 'not recorded')} (${escapeHtml(b.bound_by || 'not recorded')})
+            → ${escapeHtml(b.status === 'ACTIVE' ? 'now' : `${b.unbound_at || 'not recorded'} (${b.unbound_by || 'not recorded'})`)}
+            · ${escapeHtml(duration(b.duration_minutes))}
+          </div>
+        </div>`).join('');
+    }
+  } catch (err) {
+    text = 'Wristband history could not be loaded.';
+  }
+  const box = document.getElementById('profile-binding-history');
+  if (!box) return;
+  if (text !== null) box.textContent = text;
+  else box.innerHTML = historyItems;
 }
 
 /**

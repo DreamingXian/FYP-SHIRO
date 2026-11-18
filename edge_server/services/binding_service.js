@@ -133,8 +133,9 @@ async function getUnpairedCandidates() {
 
 /**
  * Creates an atomic patient-to-wristband binding.
+ * boundBy: the signed-in clinician (actor label), or null when unknown (never invented).
  */
-async function bindPatientWristband(patientId, deviceId, boundBy = 'DOC-8821') {
+async function bindPatientWristband(patientId, deviceId, boundBy = null) {
   if (!patientId || !deviceId) {
     throw new Error('Both Patient ID and Device ID are required for binding.');
   }
@@ -187,12 +188,21 @@ async function bindPatientWristband(patientId, deviceId, boundBy = 'DOC-8821') {
       throw new Error(`Wristband ${deviceId} is already bound to patient ${existingDevBind[0].patient_id}.`);
     }
 
-    // 5. Insert active binding
-    const [insertResult] = await conn.query(
-      `INSERT INTO patient_bindings (patient_id, device_id, bound_at, bound_by, stream_rate, status)
-       VALUES (?, ?, NOW(), ?, '5 Hz Live Stream', 'ACTIVE')`,
-      [patientId, deviceId, boundBy || null]
-    );
+    // 5. Insert active binding (the MAC address is copied: the history keeps it if the device is deleted)
+    let insertResult;
+    try {
+      [insertResult] = await conn.query(
+        `INSERT INTO patient_bindings (patient_id, device_id, wristband_mac, bound_at, bound_by, stream_rate, status)
+         VALUES (?, ?, ?, NOW(), ?, '5 Hz Live Stream', 'ACTIVE')`,
+        [patientId, deviceId, devRows[0].mac_address, boundBy || null]
+      );
+    } catch (err) {
+      // The database allows one ACTIVE binding per patient and per wristband (uk_active_*)
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        throw new Error(`Patient ${patientRows[0].full_name} or wristband ${deviceId} is already bound.`);
+      }
+      throw err;
+    }
 
     // 6. Update device availability status to IN_USE
     await conn.query(
@@ -231,8 +241,10 @@ async function bindPatientWristband(patientId, deviceId, boundBy = 'DOC-8821') {
 
 /**
  * Unbinds an active patient-wristband pairing and releases the wristband back to AVAILABLE.
+ * The binding is kept as history (UNBOUND, with the time and who unbound it).
+ * unboundBy: the signed-in clinician (actor label), or null when unknown.
  */
-async function unbindPatientWristband(identifier) {
+async function unbindPatientWristband(identifier, unboundBy = null) {
   if (!identifier) {
     throw new Error('Binding identifier is required.');
   }
@@ -260,8 +272,11 @@ async function unbindPatientWristband(identifier) {
 
     const b = bindRows[0];
 
-    // 2. Remove binding record
-    await conn.query(`DELETE FROM patient_bindings WHERE binding_id = ?`, [b.binding_id]);
+    // 2. End the binding; the row stays as history
+    await conn.query(
+      `UPDATE patient_bindings SET status = 'UNBOUND', unbound_at = NOW(), unbound_by = ? WHERE binding_id = ?`,
+      [unboundBy || null, b.binding_id]
+    );
 
     // 3. Mark wristband as AVAILABLE
     await conn.query(`UPDATE devices SET availability_status = 'AVAILABLE' WHERE device_id = ?`, [b.device_id]);
@@ -294,11 +309,52 @@ async function unbindPatientWristband(identifier) {
   }
 }
 
+const HISTORY_DEFAULT_LIMIT = 200;
+const HISTORY_MAX_LIMIT = 1000;
+
+/**
+ * Binding history: every binding, current and ended, newest first.
+ * Filters (optional): patientId, deviceId. limit: 1 to 1000 (default 200).
+ * A wristband deleted from the registry appears with device_id null and its copied MAC address.
+ */
+async function getBindingHistory({ patientId = null, deviceId = null, limit = HISTORY_DEFAULT_LIMIT } = {}) {
+  const where = [];
+  const params = [];
+  if (patientId) { where.push('pb.patient_id = ?'); params.push(patientId); }
+  if (deviceId) { where.push('pb.device_id = ?'); params.push(deviceId); }
+  const n = Math.min(Math.max(1, Number(limit) || HISTORY_DEFAULT_LIMIT), HISTORY_MAX_LIMIT);
+  params.push(n);
+
+  const [rows] = await getPool().query(`
+    SELECT
+      pb.binding_id,
+      pb.patient_id,
+      p.full_name AS patient_name,
+      pb.device_id,
+      COALESCE(d.mac_address, pb.wristband_mac) AS mac_address,
+      pb.status,
+      DATE_FORMAT(pb.bound_at, '%Y-%m-%d %H:%i') AS bound_at,
+      pb.bound_by,
+      DATE_FORMAT(pb.unbound_at, '%Y-%m-%d %H:%i') AS unbound_at,
+      pb.unbound_by,
+      TIMESTAMPDIFF(MINUTE, pb.bound_at, COALESCE(pb.unbound_at, NOW())) AS duration_minutes
+    FROM patient_bindings pb
+    JOIN patients p ON pb.patient_id = p.patient_id
+    LEFT JOIN devices d ON pb.device_id = d.device_id
+    ${where.length > 0 ? 'WHERE ' + where.join(' AND ') : ''}
+    ORDER BY pb.bound_at DESC, pb.binding_id DESC
+    LIMIT ?
+  `, params);
+  return rows.map(r => ({ ...r, device_deleted: r.device_id === null }));
+}
+
 module.exports = {
   getActiveBindings,
   getUnpairedCandidates,
   bindPatientWristband,
   unbindPatientWristband,
+  getBindingHistory,
+  HISTORY_MAX_LIMIT,
   calculateAge
 };
 

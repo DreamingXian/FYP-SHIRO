@@ -3,6 +3,7 @@
 // REST API Handlers for Inpatient Directory, Admissions & Bed Sync
 // =============================================================================
 const patientService = require('../services/patient_service');
+const { actorLabel } = require('../services/auth/auth_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const { requireId, optionalId, optionalOneOf, optionalText, optionalInt, optionalNumber } = require('../utils/validate');
 
@@ -148,7 +149,9 @@ async function dischargePatient(req, res, body, parsedUrl) {
   try {
     const payload = parseJsonBody(body);
     const patientId = requireId(payload.patient_id || parsedUrl.searchParams.get('id'), 'patient_id');
-    const result = await patientService.dischargePatient(patientId);
+    // Recorded on the ended binding as the signed-in clinician
+    const dischargedBy = req.actor ? actorLabel(req.actor).slice(0, 64) : null;
+    const result = await patientService.dischargePatient(patientId, dischargedBy);
     sendJson(res, 200, result);
   } catch (err) {
     sendFailure(res, err, 'dischargePatient');

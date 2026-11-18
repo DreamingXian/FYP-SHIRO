@@ -5,6 +5,7 @@
 
 const logger = require('../utils/logger');
 const deviceService = require('../services/device_service');
+const { actorLabel } = require('../services/auth/auth_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const { requireId, requireMac, requireOneOf, optionalOneOf, optionalText, optionalInt } = require('../utils/validate');
 
@@ -104,7 +105,8 @@ async function deleteDevice(req, res, body, parsedUrl) {
   try {
     const payload = parseJsonBody(body);
     const deviceId = requireId(payload.device_id || parsedUrl.searchParams.get('id'), 'device_id');
-    const result = await deviceService.deleteDevice(deviceId);
+    const deletedBy = req.actor ? actorLabel(req.actor).slice(0, 64) : null;
+    const result = await deviceService.deleteDevice(deviceId, deletedBy);
     sendJson(res, 200, result);
   } catch (err) {
     sendFailure(res, err, 'deleteDevice');

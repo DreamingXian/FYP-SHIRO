@@ -96,6 +96,8 @@ async function applySchema() {
   await migrateHeadsetAssignment();
   const { migrate: migratePatientBody } = require('./migrate_patient_body');
   await migratePatientBody();
+  const { migrate: migrateBindingHistory } = require('./migrate_binding_history');
+  await migrateBindingHistory();
 }
 
 /**

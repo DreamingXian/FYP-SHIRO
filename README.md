@@ -106,6 +106,7 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
   * **Ward Configuration Editor:** Room dimensions, ensuite cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor placement, stored in MySQL.
   * **2D Live Ward Map:** Scaled patient marker, movement trail, bed docking status, and wristband unbinding. A patient whom a headset has linked to a person it sees is drawn where the headset sees them (violet dot, 👁, "seen by headset …"), with the Bluetooth estimate as a faint dot and its distance on the card; after 1.5 s without news from the headset the marker goes back to Bluetooth.
   * **Device Provisioning Radar:** Lists nearby devices that are not yet enrolled, with one-click enrollment.
+  * **Binding History:** Unbinding a wristband or discharging a patient keeps the binding, with when it ended and who ended it. The Bindings tab lists every binding (patient, wristband, bound at and by, ended at and by, how it ended, duration), and the patient profile shows the patient's wristbands. Deleting a wristband from the registry keeps its history under its MAC address. The database allows only one active binding per patient and per wristband.
   * **Patient Inpatient Directory:** Admission, fall risk score, medical history, optional height and weight ("not recorded" when empty; the headset uses the height to tell people apart), bed allocation, wristband binding and discharge.
   * **Live Lab & Diagnostics:** Live vitals and motion from the wristband, raw versus Kalman-filtered RSSI per anchor, and an MQTT telemetry inspector.
   * **System Health:** Live server uptime, memory, event-loop delay and database load, and the status of every enrolled anchor and headset.
@@ -313,7 +314,7 @@ Code/
   * ✅ Optional patient height and weight; one spatial anchor per headset and ward; automatic ward detection (walk between two rooms not tested yet).
   * Geofence detection on the server.
   * Patient profile and 24-hour history in the headset.
-  * Binding history instead of deleting binding rows.
+  * ✅ Binding history instead of deleting binding rows.
   * Shift summary report.
   * Standalone Android APK build for the Quest 3.
   * Clearer panels and hand slate (UI/UX).

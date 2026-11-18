@@ -438,8 +438,9 @@ async function updatePatient(patientId, updateData) {
 
 /**
  * Discharges an admitted patient, releases their hospital cubicle bed back to AVAILABLE.
+ * dischargedBy: the signed-in clinician (actor label), recorded on the ended binding; null when unknown.
  */
-async function dischargePatient(patientId) {
+async function dischargePatient(patientId, dischargedBy = null) {
   const pool = getPool();
   const conn = await pool.getConnection();
 
@@ -472,12 +473,22 @@ async function dischargePatient(patientId) {
     // 2. Release any active wristband wearable tag back to AVAILABLE.
     //    Part of the same transaction: if this fails, the whole discharge is
     //    rolled back, so a discharged patient never keeps a wristband bound.
-    const [bindRows] = await conn.query('SELECT device_id FROM patient_bindings WHERE patient_id = ?', [patientId]);
+    //    The binding is kept as history (DISCHARGED, with the time and who discharged).
+    const [bindRows] = await conn.query(
+      "SELECT device_id FROM patient_bindings WHERE patient_id = ? AND status = 'ACTIVE'",
+      [patientId]
+    );
     for (const b of bindRows) {
-      await conn.query(`UPDATE devices SET availability_status = 'AVAILABLE' WHERE device_id = ?`, [b.device_id]);
+      if (b.device_id) {
+        await conn.query(`UPDATE devices SET availability_status = 'AVAILABLE' WHERE device_id = ?`, [b.device_id]);
+      }
     }
     if (bindRows.length > 0) {
-      await conn.query('DELETE FROM patient_bindings WHERE patient_id = ?', [patientId]);
+      await conn.query(
+        `UPDATE patient_bindings SET status = 'DISCHARGED', unbound_at = NOW(), unbound_by = ?
+         WHERE patient_id = ? AND status = 'ACTIVE'`,
+        [dischargedBy || null, patientId]
+      );
     }
 
     // 2. Mark patient as DISCHARGED
@@ -536,7 +547,15 @@ async function deletePatient(patientId) {
       );
     }
 
-    // 2. Delete patient row
+    // 2. A wristband still bound to the patient becomes available again (before, it
+    //    stayed IN_USE and could not be bound to anyone)
+    await conn.query(
+      `UPDATE devices SET availability_status = 'AVAILABLE'
+       WHERE device_id IN (SELECT device_id FROM patient_bindings WHERE patient_id = ? AND status = 'ACTIVE')`,
+      [patientId]
+    );
+
+    // 3. Delete patient row (their binding history goes with them: ON DELETE CASCADE)
     await conn.query(`DELETE FROM patients WHERE patient_id = ?`, [patientId]);
 
     await conn.commit();

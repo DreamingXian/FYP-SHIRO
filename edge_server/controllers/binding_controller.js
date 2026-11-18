@@ -4,7 +4,7 @@
 
 const bindingService = require('../services/binding_service');
 const { sendJson, sendFailure, parseJsonBody } = require('../utils/http');
-const { requireId } = require('../utils/validate');
+const { requireId, optionalId, optionalInt } = require('../utils/validate');
 const { actorLabel } = require('../services/auth/auth_service');
 
 /**
@@ -67,10 +67,29 @@ async function removeBinding(req, res, body, parsedUrl) {
       (payload.binding_id !== undefined ? String(payload.binding_id) : null) || payload.patient_id || payload.device_id,
       'id'
     );
-    const result = await bindingService.unbindPatientWristband(identifier);
+    // Recorded as the signed-in clinician
+    const unboundBy = req.actor ? actorLabel(req.actor).slice(0, 64) : null;
+    const result = await bindingService.unbindPatientWristband(identifier, unboundBy);
     sendJson(res, 200, result);
   } catch (err) {
     sendFailure(res, err, 'removeBinding');
+  }
+}
+
+/**
+ * GET /api/bindings/history?patient_id=…&device_id=…&limit=…
+ * Every binding, current and ended, newest first (both filters optional).
+ */
+async function listHistory(req, res, parsedUrl) {
+  try {
+    const q = parsedUrl.searchParams;
+    const patientId = optionalId(q.get('patient_id'), 'patient_id');
+    const deviceId = optionalId(q.get('device_id'), 'device_id');
+    const limit = optionalInt(q.get('limit'), 'limit', { min: 1, max: bindingService.HISTORY_MAX_LIMIT });
+    const history = await bindingService.getBindingHistory({ patientId, deviceId, limit: limit || undefined });
+    sendJson(res, 200, { success: true, count: history.length, history });
+  } catch (err) {
+    sendFailure(res, err, 'listBindingHistory');
   }
 }
 
@@ -78,5 +97,6 @@ module.exports = {
   listBindings,
   getUnpairedCandidates,
   createBinding,
-  removeBinding
+  removeBinding,
+  listHistory
 };

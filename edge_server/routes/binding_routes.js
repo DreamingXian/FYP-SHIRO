@@ -28,6 +28,12 @@ async function handleBindingRoutes(pathname, req, res, parsedUrl, body) {
     return true;
   }
 
+  // 5. GET /api/bindings/history (signed-in clinicians: not in the permission table, so STAFF)
+  if (pathname === '/api/bindings/history' && req.method === 'GET') {
+    await bindingController.listHistory(req, res, parsedUrl);
+    return true;
+  }
+
   return false;
 }
 
