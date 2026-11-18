@@ -159,6 +159,23 @@ namespace ShiroMR
         public string motion_state; // STATIONARY, HAND_MOVEMENT, WALKING, SETTLING
         public float confidence;
         public long timestamp;
+        // Where x, y come from: "HEADSET" (a headset's depth sensor sees the patient, while it
+        // is linked to the wristband) or "BLE" (Bluetooth). Missing from an older edge server.
+        public string source;
+        public string seen_by;      // the headset that sees the patient
+        public bool has_ble;        // ble_x / ble_y are known
+        public float ble_x, ble_y;  // the Bluetooth position, always
+
+        public bool FromHeadset => source == "HEADSET";
+
+        /// <summary>The Bluetooth position (for the panel's own decisions: bed rule, linking).
+        /// False when only a headset's position is known.</summary>
+        public bool TryGetBle(out float x, out float y)
+        {
+            if (string.IsNullOrEmpty(source)) { x = this.x; y = this.y; return true; } // older server: x, y are Bluetooth
+            x = ble_x; y = ble_y;
+            return has_ble;
+        }
     }
 
     [Serializable]

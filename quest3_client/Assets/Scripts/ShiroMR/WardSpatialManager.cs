@@ -231,6 +231,22 @@ namespace ShiroMR
         }
 
         /// <summary>
+        /// The room is aligned to the ward plan: a saved spatial anchor is in use, or an
+        /// alignment was saved for the active ward. Only then do ward coordinates of what
+        /// the headset sees mean anything.
+        /// </summary>
+        public bool IsAligned
+        {
+            get
+            {
+                if (wardOrigin == null) return false;
+                if (currentNativeAnchor != null) return true;
+                string ward = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+                return !string.IsNullOrEmpty(ward) && PlayerPrefs.HasKey($"WARD_ALIGN_{ward}_SAVED");
+            }
+        }
+
+        /// <summary>
         /// Converts 2D Ward Coordinates (X = Width, Y = Length) and Elevation (Z = Up)
         /// to Unity 3D World Space coordinates.
         /// </summary>

@@ -73,6 +73,9 @@ describe('permission table', () => {
     assert.equal(decideCommand('DEVICE_HEARTBEAT', headset), 'ok');
     assert.equal(decideCommand('UPDATE_CALIBRATION', nurse), 'forbidden');
     assert.equal(decideCommand('SET_ACTIVE_MODE', headset), 'ok');
+    assert.equal(decideCommand('PATIENT_SEEN', headset), 'ok');      // only a headset sees patients
+    assert.equal(decideCommand('PATIENT_SEEN', admin), 'forbidden');
+    assert.equal(decideCommand('PATIENT_SEEN', null), 'forbidden');
     assert.equal(decideCommand('SOMETHING_ELSE', admin), 'forbidden');
   });
 });

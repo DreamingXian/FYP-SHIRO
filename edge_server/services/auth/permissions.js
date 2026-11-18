@@ -90,7 +90,8 @@ const COMMAND_ACCESS = Object.freeze({
   UPDATE_CALIBRATION: ACCESS.ADMIN,
   SET_ACTIVE_MODE: ACCESS.STAFF_OR_HEADSET,
   DEVICE_HANDSHAKE: 'HEADSET',
-  DEVICE_HEARTBEAT: 'HEADSET'
+  DEVICE_HEARTBEAT: 'HEADSET',
+  PATIENT_SEEN: 'HEADSET'        // a headset's depth position of a linked patient
 });
 
 /** Same answers as decide(), for a WebSocket command. */

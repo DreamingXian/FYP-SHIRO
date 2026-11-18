@@ -10,6 +10,8 @@ const deviceService = require('./device_service');
 const calibrationService = require('./calibration_service');
 const timeSeriesService = require('./time_series_service');
 const bindingCache = require('./binding_cache');
+const headsetPositions = require('./ips/headset_positions');
+const { HttpError } = require('../utils/http');
 const { getMedian, solveWeightedTrilateration, refinePositionWithinRoom, computeWeightedCentroid } = require('./ips/geometry');
 
 // Zero-latency in-memory lookup caches
@@ -599,7 +601,9 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
         last_seen_ms: a.last_seen_ms
       })),
       calibration: getCalibration(),
-      timestamp: now
+      timestamp: now,
+      // A headset that sees the patient gives the map position (x, y); ble_x / ble_y stay Bluetooth
+      ...headsetPositions.positionFields({ x: smoothX, y: smoothY }, headsetPositions.fresh(canonicalTagId, now))
     });
 
     // Log spatial trajectory to InfluxDB (Table 4.10)
@@ -627,21 +631,81 @@ function runOfflineCheck() {
     if ((pos.status === 'ONLINE' || pos.status === 'CHARGING') && (now - pos.last_seen > OFFLINE_TIMEOUT_MS)) {
       pos.status = 'OFFLINE';
       pos.confidence = 'LAST_KNOWN';
-
-      broadcastToClients({
-        type: 'IPS_POSITION_UPDATE',
-        ward_id: pos.ward_id,
-        tag_id: tagId,
-        tag_mac: pos.tag_mac,
-        x: pos.x,
-        y: pos.y,
-        status: 'OFFLINE',
-        confidence: 'LAST_KNOWN',
-        anchors_used: [],
-        timestamp: pos.last_seen
-      });
+      broadcastCurrentPosition(tagId, now);
     }
   }
+  // A headset that stopped sending (looked away, lost the person): back to Bluetooth
+  for (const tagId of headsetPositions.takeStale(now)) broadcastCurrentPosition(tagId, now);
+}
+
+/**
+ * Broadcasts a tag's position as it is now: the headset's while fresh, else the
+ * last Bluetooth position (with its status, ONLINE or OFFLINE).
+ */
+function broadcastCurrentPosition(tagId, now = Date.now()) {
+  const pos = tagSmoothedPositions.get(tagId);
+  if (!pos) return;
+  broadcastToClients({
+    type: 'IPS_POSITION_UPDATE',
+    ward_id: pos.ward_id,
+    tag_id: tagId,
+    tag_mac: pos.tag_mac,
+    x: pos.x,
+    y: pos.y,
+    status: pos.status,
+    motion_state: pos.motion_state,
+    confidence: pos.status === 'OFFLINE' ? 'LAST_KNOWN' : pos.confidence,
+    // Offline: no anchor hears it. Otherwise left out, so the map keeps the anchors last heard
+    anchors_used: pos.status === 'OFFLINE' ? [] : undefined,
+    timestamp: pos.status === 'OFFLINE' ? pos.last_seen : now,
+    ...headsetPositions.positionFields(pos, headsetPositions.fresh(tagId, now))
+  });
+}
+
+/** The key of a tracked tag, matched without regard to case (the headset uses upper case). */
+function trackedTagKey(tagId) {
+  if (!tagId) return null;
+  if (tagSmoothedPositions.has(tagId)) return tagId;
+  const upper = String(tagId).toUpperCase();
+  for (const key of tagSmoothedPositions.keys()) if (key.toUpperCase() === upper) return key;
+  return null;
+}
+
+/**
+ * A headset sees the patient of this wristband (it linked the wristband to a person
+ * its depth sensor sees): their position in ward coordinates. While renewed, it is
+ * the patient's position on the maps and for alerts. Only for a wristband that is
+ * tracked here, in a known ward; a position outside the ward is not used.
+ * Returns true when the position is used.
+ */
+function applyHeadsetPosition(tagId, { x, y, wardId, heightM = null, manual = false }, headsetId, now = Date.now()) {
+  const key = trackedTagKey(tagId);
+  if (!key) throw new HttpError(404, `Wristband ${tagId} is not being tracked.`);
+  const dim = wardDimensionsMap.get(wardId);
+  if (!dim) throw new HttpError(404, `Ward ${wardId} is not known.`);
+  if (!headsetPositions.insideWard(x, y, dim)) {
+    // In the corridor, or the room alignment is off: the map stays on Bluetooth
+    if (headsetPositions.end(key, headsetId)) broadcastCurrentPosition(key, now);
+    return false;
+  }
+  if (headsetPositions.set(key, { x, y, wardId, heightM, manual, headsetId }, now)) {
+    logger.info(`[IPS ENGINE] Headset ${headsetId} sees the patient of ${key}${manual ? ' (chosen by hand)' : ''}: map position from the headset.`);
+  }
+  if (headsetPositions.broadcastDue(key, now, MIN_BROADCAST_INTERVAL_MS)) broadcastCurrentPosition(key, now);
+  return true;
+}
+
+/** The headset no longer sees the patient of this wristband: back to Bluetooth at once. */
+function endHeadsetPosition(tagId, headsetId, now = Date.now()) {
+  const key = trackedTagKey(tagId);
+  if (!key || !headsetPositions.end(key, headsetId)) return;
+  logger.info(`[IPS ENGINE] Headset ${headsetId} no longer sees the patient of ${key}: Bluetooth position.`);
+  broadcastCurrentPosition(key, now);
+}
+
+/** A headset disconnected: the positions it gave end. */
+function headsetDisconnected(headsetId, now = Date.now()) {
+  for (const tagId of headsetPositions.takeFromHeadset(headsetId)) broadcastCurrentPosition(tagId, now);
 }
 
 /**
@@ -661,11 +725,19 @@ function stopOfflineWatchdog() {
   }
 }
 
+/** A tag's cached position with the headset's position applied while it is fresh. */
+function withHeadsetPosition(tagId, pos, now = Date.now()) {
+  const seen = headsetPositions.fresh(tagId, now);
+  return { ...pos, ...headsetPositions.positionFields(pos, seen) };
+}
+
 /**
- * Retrieve the latest known position for a specific tag
+ * Retrieve the latest known position for a specific tag: where a headset sees the
+ * patient while it does, else the Bluetooth position (ble_x / ble_y always).
  */
 function getTagPosition(tagId) {
-  return tagSmoothedPositions.get(tagId) || null;
+  const pos = tagSmoothedPositions.get(tagId);
+  return pos ? withHeadsetPosition(tagId, pos) : null;
 }
 
 /**
@@ -674,8 +746,9 @@ function getTagPosition(tagId) {
 function getWardTagPositions(wardId) {
   const result = [];
   for (const [tagId, pos] of tagSmoothedPositions.entries()) {
-    if (pos.ward_id === wardId) {
-      result.push({ tag_id: tagId, ...pos });
+    const best = withHeadsetPosition(tagId, pos);
+    if (best.ward_id === wardId) {
+      result.push({ tag_id: tagId, ...best });
     }
   }
   return result;
@@ -697,6 +770,7 @@ function purgeTag(tagId, mac = null) {
   for (const k of keysToPurge) {
     tagSmoothedPositions.delete(k);
     tagKinematics.delete(k);
+    headsetPositions.end(k);
 
     for (const wardMap of tagReadings.values()) {
       wardMap.delete(k);
@@ -727,6 +801,9 @@ module.exports = {
   solveWeightedTrilateration,
   getTagPosition,
   getWardTagPositions,
+  applyHeadsetPosition,
+  endHeadsetPosition,
+  headsetDisconnected,
   purgeTag,
   startOfflineWatchdog,
   stopOfflineWatchdog

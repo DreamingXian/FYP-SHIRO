@@ -61,6 +61,12 @@ namespace ShiroMR
             public string wardId;
             public float lastSeen;
             public string motion;
+            // Seen by a headset (x, y from its depth sensor), with the Bluetooth estimate alongside
+            public bool fromHeadset;
+            public string seenBy;
+            public bool hasBle;
+            public float bleX, bleY;
+            public RectTransform bleDot, bleLine;
         }
         private readonly Dictionary<string, TagMark> _tags = new Dictionary<string, TagMark>();
         private readonly List<GameObject> _staticParts = new List<GameObject>();
@@ -163,6 +169,11 @@ namespace ShiroMR
             mark.wardId = pos.ward_id;
             mark.motion = pos.motion_state;
             mark.lastSeen = Time.time;
+            mark.fromHeadset = pos.FromHeadset;
+            mark.seenBy = pos.seen_by;
+            mark.hasBle = pos.FromHeadset && pos.has_ble;
+            mark.bleX = pos.ble_x;
+            mark.bleY = pos.ble_y;
         }
 
         private void HandlePurge(string tagId)
@@ -327,7 +338,7 @@ namespace ShiroMR
             string viewNote = ViewingActiveWard ? "" : $"Viewing {ward.ward_id} (you are not placed on this map). ";
             _status.text = (connected ? "" : "⚠ Not connected: positions are not updated. ") + viewNote
                 + (shown == 0 ? "No wristband position received for this ward yet." : $"{shown} wristband(s){(stale > 0 ? $", {stale} not heard for >{StaleAfterSeconds:F0} s (grey)" : "")}. Tap a patient for details and 1 Hz vitals.")
-                + " Positions are BLE estimates (about ±1 m or worse).";
+                + " 👁 violet = seen by a headset's depth sensor (faint dot: its Bluetooth estimate); others are Bluetooth estimates (about ±1 m or worse).";
             _status.color = connected ? new Color(0.75f, 0.85f, 0.95f) : new Color(0.95f, 0.65f, 0.25f);
         }
 
@@ -408,12 +419,58 @@ namespace ShiroMR
         {
             if (m.button != null) m.button.gameObject.SetActive(visible);
             if (m.label != null) m.label.gameObject.SetActive(visible);
+            if (!visible) SetBleVisible(m, false);
+        }
+
+        private void SetBleVisible(TagMark m, bool visible)
+        {
+            if (m.bleDot != null) m.bleDot.gameObject.SetActive(visible);
+            if (m.bleLine != null) m.bleLine.gameObject.SetActive(visible);
         }
 
         private void DestroyMark(TagMark m)
         {
             if (m.button != null) { _dropButton?.Invoke(m.button); Destroy(m.button.gameObject); }
             if (m.label != null) Destroy(m.label.gameObject);
+            if (m.bleDot != null) Destroy(m.bleDot.gameObject);
+            if (m.bleLine != null) Destroy(m.bleLine.gameObject);
+        }
+
+        /// <summary>
+        /// The Bluetooth estimate of a patient seen by a headset: a faint dot with a line to
+        /// where the headset sees them (drawn behind the patient's dot).
+        /// </summary>
+        private void DrawBleEstimate(TagMark m, WardConfig ward, float cx, float cy)
+        {
+            if (m.bleDot == null)
+            {
+                m.bleDot = AddTagPart($"TagBle_{m.tag}", new Vector2(18f, 18f), new Color(0.15f, 0.95f, 0.55f, 0.30f), new Vector2(0.5f, 0.5f));
+                m.bleLine = AddTagPart($"TagBleLine_{m.tag}", new Vector2(1f, 2f), new Color(0.6f, 0.6f, 1f, 0.55f), new Vector2(0f, 0.5f));
+                int behind = m.button.transform.GetSiblingIndex();
+                m.bleLine.SetSiblingIndex(behind);
+                m.bleDot.SetSiblingIndex(behind);
+            }
+            float bx = Mathf.Clamp(m.bleX, 0f, ward.length_x), by = Mathf.Clamp(m.bleY, 0f, ward.width_y);
+            PlaceAt(m.bleDot, bx, by);
+            Vector2 d = new Vector2(cx - bx, cy - by) * _scale;
+            PlaceAt(m.bleLine, bx, by);
+            m.bleLine.sizeDelta = new Vector2(d.magnitude, 2f);
+            m.bleLine.localRotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
+            SetBleVisible(m, true);
+        }
+
+        private RectTransform AddTagPart(string name, Vector2 size, Color color, Vector2 pivot)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(_mapRoot, false);
+            var rt = go.GetComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = Vector2.zero;
+            rt.pivot = pivot;
+            rt.sizeDelta = size;
+            var img = go.GetComponent<Image>();
+            img.color = color;
+            img.raycastTarget = false; // never in the way of tapping a patient
+            return rt;
         }
 
         private static TrackedSubject FindSubject(List<TrackedSubject> subjects, string tag)
@@ -488,11 +545,16 @@ namespace ShiroMR
             }
             else
             {
-                m.dotImage.color = new Color(0.15f, 0.95f, 0.55f);
+                // Seen by a headset: where its depth sensor sees the patient (violet)
+                m.dotImage.color = m.fromHeadset ? new Color(0.55f, 0.5f, 1f) : new Color(0.15f, 0.95f, 0.55f);
                 m.label.text = string.IsNullOrEmpty(m.motion) ? name : $"{name} · {m.motion.ToLower().Replace('_', ' ')}";
+                if (m.fromHeadset) m.label.text = $"👁 {m.label.text}";
                 m.label.color = Color.white;
             }
             if (selected) m.label.text = $"▶ {m.label.text}";
+
+            if (m.fromHeadset && m.hasBle && !stale) DrawBleEstimate(m, ward, cx, cy);
+            else SetBleVisible(m, false);
         }
 
         private void UpdateHeadset(WardConfig ward)
@@ -625,7 +687,13 @@ namespace ShiroMR
             {
                 lines.Add("No vitals received from this wristband yet.");
             }
-            if (mark != null) lines.Add($"Position ({mark.x:F1} m, {mark.y:F1} m), {Time.time - mark.lastSeen:F0} s ago");
+            if (mark != null)
+            {
+                string from = !mark.fromHeadset ? "Bluetooth estimate"
+                    : $"👁 seen by headset {mark.seenBy}" +
+                      (mark.hasBle ? $" · Bluetooth estimate {Vector2.Distance(new Vector2(mark.x, mark.y), new Vector2(mark.bleX, mark.bleY)):0.0} m away" : "");
+                lines.Add($"Position ({mark.x:F1} m, {mark.y:F1} m), {Time.time - mark.lastSeen:F0} s ago\n{from}");
+            }
             _cardBody.text = string.Join("\n", lines);
 
             string live = _liveText;

@@ -553,6 +553,29 @@ namespace ShiroMR
             return true;
         }
 
+        /// <summary>
+        /// Tells the edge server where this headset sees the patient of a wristband (a person
+        /// its depth sensor sees, linked to the wristband), in ward coordinates: the maps then
+        /// show the patient there instead of at the Bluetooth position. seen: false when it no
+        /// longer does (the link ended). Sent a few times a second while linked.
+        /// </summary>
+        public bool SendPatientSeen(string tagId, bool seen, float wardX, float wardY, float heightM, bool manual)
+        {
+            if (string.IsNullOrEmpty(tagId) || !isWsConnected || !HasWard) return false;
+            string safeTag = System.Text.RegularExpressions.Regex.Replace(tagId, "[^A-Za-z0-9_:-]", "");
+            string safeWard = System.Text.RegularExpressions.Regex.Replace(targetWardId, "[^A-Za-z0-9_-]", "");
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            string json = "{\"action\":\"PATIENT_SEEN\",\"tag_id\":\"" + safeTag + "\",\"ward_id\":\"" + safeWard + "\"" +
+                          (seen
+                              ? ",\"seen\":true,\"x\":" + wardX.ToString("0.000", inv) + ",\"y\":" + wardY.ToString("0.000", inv) +
+                                (heightM >= 0.5f && heightM <= 2.5f ? ",\"height_m\":" + heightM.ToString("0.00", inv) : "") +
+                                ",\"manual\":" + (manual ? "true" : "false")
+                              : ",\"seen\":false") +
+                          "}";
+            _ = SendSafeAsync(json, CancellationToken.None);
+            return true;
+        }
+
         // ----- Another ward, only for viewing on the Live Map -----
 
         /// <summary>

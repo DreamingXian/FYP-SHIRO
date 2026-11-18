@@ -11,7 +11,7 @@ const { decideCommand } = require('./auth/permissions');
 const audit = require('./audit_service');
 const {
   requireId, optionalId, requireMac, optionalMac, requireDeviceRef, requireLabel,
-  optionalOneOf, optionalNumber, optionalInt, optionalText, normalizeMac
+  optionalOneOf, requireNumber, optionalNumber, optionalInt, optionalText, normalizeMac
 } = require('../utils/validate');
 
 // Commands are short JSON objects. A larger message is refused by the socket.
@@ -21,6 +21,8 @@ const RSSI_AT_1M = { min: -120, max: 0 };   // calibration value A, dBm
 const PATH_LOSS = { min: 0.5, max: 10 };    // calibration value n
 const ACTIVE_MODE_SECONDS = { min: 5, max: 600 };
 const ACTIVE_MODE_DEFAULT_SECONDS = 60;     // the length of one activation in the firmware
+const WARD_COORDINATE = { min: -100, max: 100 }; // m from the ward's corner
+const PERSON_HEIGHT = { min: 0.5, max: 2.5 };    // m, measured by the headset
 
 let wss = null;
 
@@ -52,6 +54,22 @@ function validateCommand(cmd) {
         targetMac: optionalMac(cmd.target_mac || data.targetMac, 'target_mac'),
         duration: optionalInt(cmd.duration !== undefined ? cmd.duration : data.duration, 'duration', ACTIVE_MODE_SECONDS, ACTIVE_MODE_DEFAULT_SECONDS)
       };
+
+    // A headset sees the patient of a wristband (linked to a person its depth sensor
+    // sees) at x, y in ward coordinates; seen: false when it no longer does
+    case 'PATIENT_SEEN': {
+      const seen = cmd.seen !== false;
+      return {
+        action: cmd.action,
+        tagId: requireDeviceRef(cmd.tag_id, 'tag_id'),
+        wardId: requireId(cmd.ward_id, 'ward_id'),
+        seen,
+        x: seen ? requireNumber(cmd.x, 'x', WARD_COORDINATE) : null,
+        y: seen ? requireNumber(cmd.y, 'y', WARD_COORDINATE) : null,
+        heightM: seen ? optionalNumber(cmd.height_m, 'height_m', PERSON_HEIGHT) : null,
+        manual: cmd.manual === true
+      };
+    }
 
     case 'DEVICE_HANDSHAKE':
     case 'DEVICE_HEARTBEAT':
@@ -249,6 +267,11 @@ function initWebSocketServer(httpServer) {
         } else if (cmd.action === 'SET_ACTIVE_MODE') {
           await handleActiveMode(cmd);
           await audit.record({ actor: ws.actor, action: 'ACTIVE_MODE', targetType: 'DEVICE', targetId: cmd.tagId, details: { duration: cmd.duration }, ip });
+        } else if (cmd.action === 'PATIENT_SEEN') {
+          // Five times a second per patient: not audited one by one (start and end are logged)
+          const ipsService = require('./ips_service');
+          if (cmd.seen) ipsService.applyHeadsetPosition(cmd.tagId, cmd, ws.actor.id);
+          else ipsService.endHeadsetPosition(cmd.tagId, ws.actor.id);
         } else {
           // A headset reports only itself
           if (cmd.deviceId !== ws.actor.id) {
@@ -268,6 +291,10 @@ function initWebSocketServer(httpServer) {
     });
 
     ws.on('close', async () => {
+      if (ws.actor && ws.actor.type === 'HEADSET') {
+        // The patients it saw go back to their Bluetooth position
+        try { require('./ips_service').headsetDisconnected(ws.actor.id); } catch (err) { logger.warn('[WEBSOCKET] Could not end the headset\'s positions:', err.message); }
+      }
       if (ws.associatedDeviceId) {
         try {
           const deviceService = require('./device_service');

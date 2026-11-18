@@ -9,6 +9,15 @@
 // or stays at the Bluetooth position. The bed rule comes first: a panel at its
 // bed is not linked. A panel placed by hand (manual aim) is left alone.
 //
+// While a real wristband is linked to a detected person (automatically or chosen by
+// hand) and the room is aligned, the person's position is sent to the edge server
+// in ward coordinates after every depth update (PATIENT_SEEN): the web and headset
+// maps then show the patient where the headset sees them instead of at the
+// Bluetooth position, with the Bluetooth estimate alongside. When the link ends,
+// "no longer seen" is sent; if nothing more arrives (headset off, connection lost),
+// the edge server goes back to Bluetooth after 1.5 s. The panels themselves keep
+// deciding with the Bluetooth position (see ShiroMRManager).
+//
 // Fake wristband (System tab "Fake band", for testing alone): a test panel whose
 // "Bluetooth position" wanders smoothly at random (0.3 m/s) within 1.2 m of a
 // spot 2 m in front of the wearer, shown as a cyan disc on the floor. With a
@@ -41,6 +50,7 @@ namespace ShiroMR
         public bool FakeEnabled { get; private set; }
 
         private readonly Dictionary<string, PersonLinker> _linkers = new Dictionary<string, PersonLinker>();
+        private readonly HashSet<string> _reported = new HashSet<string>(); // tags whose position the edge server has from here
         private bool _subscribed;
 
         // Fake wristband
@@ -85,6 +95,7 @@ namespace ShiroMR
             if (!on)
             {
                 if (FakeEnabled) SetFakeEnabled(false);
+                foreach (var tag in new List<string>(_reported)) EndReport(tag);
                 _linkers.Clear();
                 var mr = ShiroMRManager.Instance;
                 if (mr != null) foreach (var h in mr.Holograms.Values) if (h != null) h.ClearDepthLink();
@@ -147,6 +158,7 @@ namespace ShiroMR
                 {
                     if (_linkers.TryGetValue(tag, out var idle)) idle.Release();
                     holo.ClearDepthLink();
+                    EndReport(tag);
                     continue;
                 }
 
@@ -162,12 +174,38 @@ namespace ShiroMR
                 float heightM = fake ? _fakeHeightM : HeightOf(mr.FindSubject(tag));
                 linker.Update(tracks, holo.HasIpsPosition, ble.x, ble.z, motion, heightM, now);
                 holo.SetDepthLink(linker.State, new Vector3(linker.X, 0f, linker.Z), linker.Reason, linker.LinkedHeight);
+                if (!fake) Report(tag, linker);
             }
 
             // Linkers of panels that are gone
             var stale = new List<string>();
             foreach (var tag in _linkers.Keys) if (!seen.Contains(tag)) stale.Add(tag);
-            foreach (var tag in stale) _linkers.Remove(tag);
+            foreach (var tag in stale) { _linkers.Remove(tag); EndReport(tag); }
+        }
+
+        /// <summary>
+        /// While linked to a detected person (and the room is aligned), tells the edge server
+        /// where the patient is seen, in ward coordinates; when no longer, says so once.
+        /// </summary>
+        private void Report(string tag, PersonLinker linker)
+        {
+            var net = ShiroNetworkManager.Instance;
+            var spatial = WardSpatialManager.Instance;
+            bool linked = (linker.State == LinkState.Linked || linker.State == LinkState.LinkedManual) && linker.HasPosition;
+            if (!linked || net == null || !net.IsConnected || spatial == null || !spatial.IsAligned)
+            {
+                EndReport(tag);
+                return;
+            }
+            Vector3 ward = spatial.wardOrigin.InverseTransformPoint(new Vector3(linker.X, spatial.wardOrigin.position.y, linker.Z));
+            if (net.SendPatientSeen(tag, true, ward.x, ward.z, linker.LinkedHeight, linker.State == LinkState.LinkedManual))
+                _reported.Add(tag);
+        }
+
+        private void EndReport(string tag)
+        {
+            if (!_reported.Remove(tag)) return;
+            ShiroNetworkManager.Instance?.SendPatientSeen(tag, false, 0f, 0f, 0f, false);
         }
 
         /// <summary>Linked patients of a detected person, for the depth view's label.</summary>

@@ -306,9 +306,13 @@ namespace ShiroMR
         {
             if (pos == null || string.IsNullOrEmpty(pos.tag_id)) return;
 
+            // The panel decides with the Bluetooth position (bed rule, linking to a detected
+            // person). x, y may be where a headset sees the patient: fed back here, a wristband
+            // would always seem to be right at the linked person, and a wrong link could never end
+            if (!pos.TryGetBle(out float bleX, out float bleY)) return;
             string cleanTag = pos.tag_id.ToUpper().Trim();
             PatientHologram hologram = GetOrCreateHologram(cleanTag);
-            hologram.UpdatePosition(pos.x, pos.y, pos.motion_state);
+            hologram.UpdatePosition(bleX, bleY, pos.motion_state);
         }
 
         private void HandleTelemetryUpdated(TelemetryUpdate tel)
