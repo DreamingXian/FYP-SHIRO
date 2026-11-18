@@ -3,7 +3,7 @@
 // The lockout test runs last: it locks 127.0.0.1 out of this server for a minute.
 process.env.INFLUX_TOKEN = '';
 
-const { db, freshDatabase, startServer, connectMqtt, anchorClientId, TEST_MQTT_LOGIN } = require('./helper');
+const { db, freshDatabase, startServer, connectMqtt, anchorClientId, TEST_MQTT_LOGIN, signIn } = require('./helper');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
@@ -37,7 +37,8 @@ describe('MQTT broker access', () => {
     await db.closePool();
     server = startServer({ HTTP_PORT: String(HTTP_PORT), MQTT_PORT: String(MQTT_PORT) });
     await server.ready;
-    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`);
+    const cookie = await signIn(`http://127.0.0.1:${HTTP_PORT}`);
+    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`, { headers: { Cookie: cookie } });
     ws.on('message', (data) => { received.push(JSON.parse(data.toString())); });
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
   });

@@ -1,0 +1,137 @@
+<!-- =============================================================================
+     SHIRO Hospital Edge Server - Admin: accounts, headset pairing, audit log
+     Shown only to admins; the server refuses these requests for anyone else.
+     ============================================================================= -->
+
+<div class="view-container">
+
+  <!-- Section 1: Clinician accounts -->
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+      <div>
+        <div class="card-title"><span>👩‍⚕️ Clinician Accounts</span></div>
+        <div class="card-subtitle" style="margin-top: 4px;">
+          Every action on the dashboard is recorded with the account that did it. Admins also manage devices, wards and accounts.
+        </div>
+      </div>
+      <button class="btn btn-outline btn-sm" id="admin-refresh-accounts">↻ Refresh</button>
+    </div>
+
+    <form id="admin-create-account" style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: end; margin-bottom: 16px;" autocomplete="off">
+      <div class="form-group" style="margin: 0;">
+        <label class="form-label" for="admin-new-fullname">Full name</label>
+        <input class="form-control" id="admin-new-fullname" required maxlength="120">
+      </div>
+      <div class="form-group" style="margin: 0;">
+        <label class="form-label" for="admin-new-username">Username</label>
+        <input class="form-control" id="admin-new-username" required maxlength="32" placeholder="lowercase">
+      </div>
+      <div class="form-group" style="margin: 0;">
+        <label class="form-label" for="admin-new-role">Role</label>
+        <select class="form-control" id="admin-new-role">
+          <option value="CLINICIAN">Clinician</option>
+          <option value="ADMIN">Admin</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin: 0;">
+        <label class="form-label" for="admin-new-password">Initial password (10+)</label>
+        <input class="form-control" id="admin-new-password" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary" type="submit">➕ Create account</button>
+    </form>
+
+    <div class="data-table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Last sign-in</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="admin-accounts-body">
+          <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading accounts...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Section 2: Headset pairing -->
+  <div class="card" style="margin-bottom: 24px;">
+    <div class="card-header">
+      <div>
+        <div class="card-title"><span>🥽 Headset Pairing</span></div>
+        <div class="card-subtitle" style="margin-top: 4px;">
+          A headset is paired once: create a code here and enter it on the headset's hand slate (System tab) within 5 minutes.
+          The headset keeps its access until it is revoked here.
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-outline btn-sm" id="admin-refresh-headsets">↻ Refresh</button>
+        <button class="btn btn-primary btn-sm" id="admin-new-pairing-code">🔑 Create pairing code</button>
+      </div>
+    </div>
+
+    <div id="admin-pairing-code-box" style="display: none; text-align: center; padding: 16px; margin-bottom: 16px; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px;">
+      <div style="font-size: 13px; color: var(--text-secondary);">Pairing code (single use)</div>
+      <div id="admin-pairing-code" class="mono" style="font-size: 40px; font-weight: 800; letter-spacing: 8px; color: var(--primary);"></div>
+      <div id="admin-pairing-countdown" style="font-size: 13px; color: var(--text-muted);"></div>
+    </div>
+
+    <div class="data-table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Headset</th>
+            <th>Used by</th>
+            <th>Paired by</th>
+            <th>Paired at</th>
+            <th>Status</th>
+            <th style="text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="admin-headsets-body">
+          <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading pairings...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Section 3: Audit log -->
+  <div class="card">
+    <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+      <div>
+        <div class="card-title"><span>🧾 Audit Log</span></div>
+        <div class="card-subtitle" style="margin-top: 4px;">Who did what and when. Newest first.</div>
+      </div>
+      <form id="admin-audit-filter" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <input class="form-control" id="admin-audit-actor" placeholder="Actor ID (CLN-001, QUEST3-…)" maxlength="32" style="width: 190px;">
+        <input class="form-control" id="admin-audit-action" placeholder="Action (e.g. PATIENT_ADMIT)" maxlength="48" style="width: 200px;">
+        <input class="form-control" id="admin-audit-target" placeholder="Target (P-001, TAG-001, …)" maxlength="32" style="width: 180px;">
+        <button class="btn btn-primary btn-sm" type="submit">Filter</button>
+        <button class="btn btn-outline btn-sm" type="button" id="admin-audit-clear">Clear</button>
+      </form>
+    </div>
+    <div class="data-table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Who</th>
+            <th>Action</th>
+            <th>Target</th>
+            <th>Details</th>
+            <th>From</th>
+          </tr>
+        </thead>
+        <tbody id="admin-audit-body">
+          <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading the audit log...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>

@@ -34,11 +34,43 @@ async function dropTestDatabase() {
   }
 }
 
-/** Drops and recreates the test database: empty tables plus sample data. */
+// Accounts every fresh test database has (never used outside shiro_test)
+const TEST_ADMIN = { username: 'itest-admin', fullName: 'Integration Admin', role: 'ADMIN', password: 'itest-admin-password-1' };
+const TEST_NURSE = { username: 'itest-nurse', fullName: 'Integration Nurse', role: 'CLINICIAN', password: 'itest-nurse-password-2' };
+
+/** Drops and recreates the test database: empty tables plus sample data and the two test accounts. */
 async function freshDatabase() {
   await dropTestDatabase();
   await db.initDatabase();
+  const authService = require('../../services/auth/auth_service');
+  await authService.createClinician(TEST_ADMIN);
+  await authService.createClinician(TEST_NURSE, 'CLN-001');
   return db.getPool();
+}
+
+/** Signs in on a running test server. Resolves with the Cookie header value. */
+async function signIn(baseUrl, account = TEST_ADMIN) {
+  const res = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: account.username, password: account.password })
+  });
+  if (res.status !== 200) throw new Error(`sign-in failed: ${res.status} ${await res.text()}`);
+  const setCookie = res.headers.get('set-cookie') || '';
+  return setCookie.split(';')[0];
+}
+
+/** Pairs a headset through the API (as an admin, then as the headset). Resolves with its token. */
+async function pairHeadset(baseUrl, adminCookie, deviceId, mac) {
+  const codeRes = await fetch(`${baseUrl}/api/admin/headsets/pairing-code`, { method: 'POST', headers: { Cookie: adminCookie } });
+  const { code } = await codeRes.json();
+  const res = await fetch(`${baseUrl}/api/headset/pair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_id: deviceId, mac_address: mac, code })
+  });
+  if (res.status !== 200) throw new Error(`pairing failed: ${res.status} ${await res.text()}`);
+  return (await res.json()).token;
 }
 
 /** Simulates a server restart: new pool, initialisation runs again. */
@@ -263,6 +295,10 @@ function connectMqtt(port, clientId, login = TEST_MQTT_LOGIN) {
 module.exports = {
   db,
   freshDatabase,
+  signIn,
+  pairHeadset,
+  TEST_ADMIN,
+  TEST_NURSE,
   startServer,
   connectMqtt,
   ANCHOR_TOPIC,

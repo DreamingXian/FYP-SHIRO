@@ -87,6 +87,7 @@ namespace ShiroMR
         private Text _dockToggleBtnText;
         private Button _cancelAimBtn;
         private Text _cancelAimBtnText;
+        private Button _autoBtn;            // ends a choice made by hand (pinned spot or chosen person)
 
         // Floor Uncertainty Footprint Circle
         private GameObject _floorRingObj;
@@ -100,6 +101,21 @@ namespace ShiroMR
         private float _dragDistance = 2.0f;
         private Vector3 _customBedOffset = Vector3.zero;
         private bool _isManuallyLocked = false;
+
+        // Person linking (8D): the panel follows a person seen by the depth sensor
+        private bool _linkingActive;
+        private bool _depthLinked;
+        private Vector3 _depthLinkPos;
+        private float _depthLinkHeight;
+        private bool _sideLayout;           // the card is beside the person (restored when the link ends)
+        private TextMesh _nameTag;          // the patient's name above the linked person's head
+        public ShiroMR.Linking.LinkState depthLinkState { get; private set; } = ShiroMR.Linking.LinkState.BleOnly;
+        public string depthLinkReason { get; private set; } = "";
+        /// <summary>A Bluetooth position has arrived for this panel.</summary>
+        public bool HasIpsPosition { get; private set; }
+        /// <summary>The Bluetooth position on the floor (world).</summary>
+        public Vector3 IpsWorldPosition => _rawIpsWorldPos;
+        public bool IsManuallyLocked => _isManuallyLocked;
 
         private void Start()
         {
@@ -194,7 +210,12 @@ namespace ShiroMR
                 }
                 else
                 {
-                    if (motionState == "STATIONARY" || motionState == "SETTLING")
+                    if (_depthLinked && trackingState == PatientTrackingState.InTransit)
+                    {
+                        _targetPosition = _depthLinkPos;
+                        transform.position = Vector3.SmoothDamp(transform.position, _targetPosition, ref _currentVelocity, smoothTime, maxSpeed);
+                    }
+                    else if (motionState == "STATIONARY" || motionState == "SETTLING")
                     {
                         transform.position = Vector3.MoveTowards(transform.position, _targetPosition, 0.50f * Time.deltaTime);
                     }
@@ -237,10 +258,71 @@ namespace ShiroMR
 
             // 5. Refresh UI Badges & Text
             RefreshUiText();
+
+            // 6. Emergency alarm: flashing red card and floor ring until it is handled
+            if (isAlarmActive) UpdateAlarmVisuals();
+        }
+
+        // ----- Emergency alarm (set by ShiroAlertManager) -----
+        public bool isAlarmActive { get; private set; }
+        private string _alarmLabel = "";
+        private float _alarmTimer;
+        private static readonly Color CardNormalColor = new Color(0.06f, 0.10f, 0.18f, 0.92f);
+
+        /// <summary>
+        /// Shows or clears the emergency state of this patient's panel: the card and
+        /// the floor ring flash red and the status line names the alert.
+        /// </summary>
+        public void SetAlarm(bool active, string label = "")
+        {
+            isAlarmActive = active;
+            _alarmLabel = label ?? "";
+            _alarmTimer = 0f;
+            if (active)
+            {
+                if (_floorRingObj != null) _floorRingObj.SetActive(true);
+                return;
+            }
+            // Back to the normal look of the current tracking state
+            if (_cardBackground != null) _cardBackground.color = CardNormalColor;
+            if (_floorRingObj != null)
+            {
+                _floorRingObj.transform.localScale = new Vector3(0.65f, 0.005f, 0.65f);
+                _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+                _floorRingObj.SetActive(trackingState != PatientTrackingState.BedDocked);
+            }
+            RefreshStatusBanner();
+        }
+
+        private void UpdateAlarmVisuals()
+        {
+            _alarmTimer += Time.deltaTime;
+            bool on = Mathf.Repeat(_alarmTimer, 0.6f) < 0.3f; // ~1.7 flashes per second
+            if (_cardBackground != null)
+            {
+                _cardBackground.color = on ? new Color(0.78f, 0.05f, 0.08f, 0.96f) : new Color(0.30f, 0.03f, 0.05f, 0.94f);
+            }
+            if (_floorRingObj != null)
+            {
+                if (!_floorRingObj.activeSelf) _floorRingObj.SetActive(true);
+                // On the floor below the panel (a bed-docked panel hangs at the headboard)
+                float floorY = (WardSpatialManager.Instance != null && WardSpatialManager.Instance.wardOrigin != null)
+                    ? WardSpatialManager.Instance.wardOrigin.position.y : 0f;
+                _floorRingObj.transform.position = new Vector3(transform.position.x, floorY + 0.005f, transform.position.z);
+                float s = 0.9f + 0.35f * Mathf.Abs(Mathf.Sin(_alarmTimer * 3.5f));
+                _floorRingObj.transform.localScale = new Vector3(s, 0.005f, s);
+                if (_floorRingRenderer != null) _floorRingRenderer.material.color = new Color(0.95f, 0.08f, 0.10f, on ? 0.85f : 0.45f);
+            }
+            if (_statusBannerText != null)
+            {
+                _statusBannerText.text = $"🚨 {_alarmLabel} • WAITING FOR RESPONSE";
+                _statusBannerText.color = on ? new Color(1f, 0.85f, 0.85f) : new Color(1f, 0.35f, 0.35f);
+            }
         }
 
         private void LateUpdate()
         {
+            UpdateLinkedLayout();
             if (_hudContainer == null || _isPanelDragging) return;
 
             // =========================================================================
@@ -269,6 +351,63 @@ namespace ShiroMR
                     }
                 }
             }
+        }
+
+        // ----- Layout while linked to a detected person (8D) -----
+        // The name floats above the person's head; the card stands beside the person
+        // (on the right as the clinician sees it), so it never covers the person.
+        private const float SideDistance = 0.65f;   // m from the person's centre
+        private const float CardHeight = 1.15f;     // m above the floor
+
+        private void UpdateLinkedLayout()
+        {
+            bool linkedLayout = _depthLinked && trackingState == PatientTrackingState.InTransit && _cameraTransform != null;
+            if (linkedLayout)
+            {
+                Vector3 toCam = _cameraTransform.position - transform.position;
+                toCam.y = 0f;
+                if (toCam.sqrMagnitude < 0.01f) toCam = Vector3.forward;
+                Vector3 right = Vector3.Cross(toCam.normalized, Vector3.up); // the clinician's right
+
+                if (_hudContainer != null && !_isPanelDragging)
+                {
+                    Vector3 cardPos = transform.position + right * SideDistance + Vector3.up * CardHeight;
+                    _hudContainer.transform.position = _sideLayout
+                        ? Vector3.Lerp(_hudContainer.transform.position, cardPos, 8f * Time.deltaTime)
+                        : cardPos;
+                }
+                _sideLayout = true;
+
+                EnsureNameTag();
+                _nameTag.gameObject.SetActive(true);
+                _nameTag.text = fullName;
+                float top = _depthLinkHeight > 0.3f ? _depthLinkHeight : 1.7f;
+                _nameTag.transform.position = transform.position + Vector3.up * (top + 0.15f);
+                _nameTag.transform.rotation = Quaternion.LookRotation(-toCam.normalized);
+                _nameTag.color = isAlarmActive ? new Color(1f, 0.3f, 0.3f) : Color.white;
+            }
+            else
+            {
+                if (_nameTag != null) _nameTag.gameObject.SetActive(false);
+                if (_sideLayout && _hudContainer != null && !_isPanelDragging && trackingState == PatientTrackingState.InTransit)
+                {
+                    _hudContainer.transform.localPosition = hudOffset;
+                }
+                _sideLayout = false;
+            }
+        }
+
+        private void EnsureNameTag()
+        {
+            if (_nameTag != null) return;
+            var obj = new GameObject("LinkedNameTag");
+            obj.transform.SetParent(transform, false);
+            _nameTag = obj.AddComponent<TextMesh>();
+            _nameTag.fontSize = 60;
+            _nameTag.characterSize = 0.005f;
+            _nameTag.fontStyle = FontStyle.Bold;
+            _nameTag.anchor = TextAnchor.LowerCenter;
+            _nameTag.alignment = TextAlignment.Center;
         }
 
         /// <summary>
@@ -313,21 +452,10 @@ namespace ShiroMR
                 }
             }
 
-            // 3. Substring match (e.g. "1" in "BED-001" or "Bed 1")
-            foreach (var b in _cachedWardConfig.beds)
-            {
-                if (b != null)
-                {
-                    if (cleanAssigned.Contains("1") && (b.bed_code.Contains("1") || b.bed_id.Contains("1")))
-                    {
-                        _assignedWardBed = b;
-                        return;
-                    }
-                }
-            }
-
-            // 4. Default to first bed in ward if available
-            _assignedWardBed = _cachedWardConfig.beds[0];
+            // No bed of this ward matches: the patient has no bed here. Guessing one
+            // (first bed, or any bed with a "1" in it) would dock the panel at
+            // another patient's bed.
+            _assignedWardBed = null;
         }
 
         /// <summary>
@@ -365,6 +493,7 @@ namespace ShiroMR
         {
             motionState = motion ?? "STATIONARY";
             isOnline = true;
+            HasIpsPosition = true;
 
             // Calculate Nominal Ground World Position from Ward Coordinates
             if (WardSpatialManager.Instance != null)
@@ -414,7 +543,10 @@ namespace ShiroMR
             }
             else if (trackingState == PatientTrackingState.InTransit)
             {
-                if (distToBed <= 0.85f && motionState != "WALKING")
+                // A person chosen by hand is kept (the clinician sees the patient elsewhere)
+                // until that person is lost from view; then the bed rule applies again.
+                bool chosenByHand = depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
+                if (distToBed <= 0.85f && motionState != "WALKING" && !chosenByHand)
                 {
                     _bedSettleTimer += 0.20f; // Settle accumulation
                     if (_bedSettleTimer >= 1.5f)
@@ -463,7 +595,8 @@ namespace ShiroMR
             else
             {
                 // In-Transit Mode: Attach floating HUD next to the real human
-                if (_hudContainer != null && !_isPanelDragging)
+                // (while linked to a detected person, UpdateLinkedLayout places it beside them)
+                if (_hudContainer != null && !_isPanelDragging && !_sideLayout)
                 {
                     _hudContainer.transform.localPosition = hudOffset;
                 }
@@ -495,6 +628,7 @@ namespace ShiroMR
                     detectedPersonPosition = new Vector3(_lastStationaryWorldPos.x, 0, _lastStationaryWorldPos.z);
                 }
 
+                if (_depthLinked) detectedPersonPosition = _depthLinkPos;
                 _targetPosition = detectedPersonPosition;
             }
 
@@ -513,7 +647,44 @@ namespace ShiroMR
         public void EvaluatePersonDetection()
         {
             bool hasLivingPulse = (heartRateBpm >= 40 && heartRateBpm <= 220);
-            isPersonDetected = (hasLivingPulse || _isManuallyLocked);
+            isPersonDetected = (hasLivingPulse || _isManuallyLocked || _depthLinked);
+        }
+
+        /// <summary>
+        /// Person linking result (8D). Linked / LinkedManual: the panel follows that person
+        /// (floor position, world). Otherwise it uses the Bluetooth position as before.
+        /// </summary>
+        public void SetDepthLink(ShiroMR.Linking.LinkState state, Vector3 personFloorPos, string reason, float personHeight = 0f)
+        {
+            _depthLinkHeight = personHeight;
+            _linkingActive = true;
+            depthLinkState = state;
+            depthLinkReason = reason ?? "";
+            _depthLinked = state == ShiroMR.Linking.LinkState.Linked || state == ShiroMR.Linking.LinkState.LinkedManual;
+            if (_depthLinked)
+            {
+                _depthLinkPos = new Vector3(personFloorPos.x, 0f, personFloorPos.z);
+                if (trackingState == PatientTrackingState.InTransit && !_isPanelDragging)
+                {
+                    detectedPersonPosition = _depthLinkPos;
+                    _targetPosition = _depthLinkPos;
+                }
+            }
+            else if (trackingState == PatientTrackingState.InTransit && HasIpsPosition && !_isManuallyLocked)
+            {
+                // Back to the Bluetooth position
+                detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0f, _rawIpsWorldPos.z);
+                _targetPosition = detectedPersonPosition;
+            }
+            EvaluatePersonDetection();
+        }
+
+        /// <summary>Person linking switched off: the panel uses the Bluetooth position as before.</summary>
+        public void ClearDepthLink()
+        {
+            if (!_linkingActive) return;
+            SetDepthLink(ShiroMR.Linking.LinkState.BleOnly, Vector3.zero, "");
+            _linkingActive = false;
         }
 
         /// <summary>
@@ -527,7 +698,49 @@ namespace ShiroMR
                 ShiroVRPointer.Instance.SetReattachTargeting(true);
             }
 
-            SetStatusBanner("🎯 AIM AT PATIENT & PINCH / CLICK TO LOCK POSITION", 15.0f, new Color(1.0f, 0.85f, 0.2f));
+            SetStatusBanner(LinkingOn
+                ? "🎯 AIM AT THE PATIENT & PINCH: LINKS TO THE PERSON SEEN THERE"
+                : "🎯 AIM AT PATIENT & PINCH / CLICK TO LOCK POSITION", 15.0f, new Color(1.0f, 0.85f, 0.2f));
+            RefreshUiText();
+        }
+
+        private static bool LinkingOn => ShiroPatientLinking.Instance != null && ShiroPatientLinking.Instance.LinkingEnabled;
+
+        /// <summary>
+        /// Choosing a person by hand (8D-5): the clinician aimed at a detected person and pinched.
+        /// The panel follows that person until the person is lost from view (or "Auto").
+        /// </summary>
+        public void ChoosePerson(Vector3 personFloorPos, float personHeight, string reason)
+        {
+            trackingState = PatientTrackingState.InTransit;
+            _isManuallyLocked = false;
+            _bedSettleTimer = 0f;
+            if (ShiroVRPointer.Instance != null) ShiroVRPointer.Instance.SetReattachTargeting(false);
+            if (_floorRingObj != null)
+            {
+                _floorRingObj.SetActive(true);
+                _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+            }
+            SetDepthLink(ShiroMR.Linking.LinkState.LinkedManual, personFloorPos, reason, personHeight);
+            SetStatusBanner("✅ LINKED TO THE PERSON YOU CHOSE • 🔄 Auto to undo", 4.0f, new Color(0.2f, 0.95f, 0.5f));
+            RefreshUiText();
+        }
+
+        /// <summary>"🔄 Auto": ends a pinned spot or a person chosen by hand; automatic linking resumes.</summary>
+        public void ReturnToAuto()
+        {
+            _isManuallyLocked = false;
+            _hasStationaryLock = false;
+            ShiroPatientLinking.Instance?.ReleaseChoice(tagId);
+            if (depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
+                SetDepthLink(ShiroMR.Linking.LinkState.BleOnly, Vector3.zero, "back to automatic: waiting for the next update");
+            else if (trackingState == PatientTrackingState.InTransit && HasIpsPosition)
+            {
+                detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0f, _rawIpsWorldPos.z);
+                _targetPosition = detectedPersonPosition;
+            }
+            EvaluatePersonDetection();
+            SetStatusBanner("🔄 AUTOMATIC AGAIN", 2.5f, Color.white);
             RefreshUiText();
         }
 
@@ -628,8 +841,23 @@ namespace ShiroMR
             }
             else if (trackingState == PatientTrackingState.ManualAim)
             {
-                _statusBannerText.text = "🎯 Aim at patient & pinch/click to lock position";
+                _statusBannerText.text = LinkingOn
+                    ? "🎯 Aim at the patient & pinch (nobody seen there: pins the panel)"
+                    : "🎯 Aim at patient & pinch/click to lock position";
                 _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+            }
+            else if (_isManuallyLocked)
+            {
+                _statusBannerText.text = "📍 Pinned here by you • 🔄 Auto to undo";
+                _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+            }
+            else if (_linkingActive && !string.IsNullOrEmpty(depthLinkReason))
+            {
+                // Short reason of the person linking, e.g. "linked: person 1.62 m, 0.3 m from the wristband"
+                _statusBannerText.text = depthLinkReason;
+                _statusBannerText.color = _depthLinked ? new Color(0.2f, 0.95f, 0.5f)
+                    : depthLinkState == ShiroMR.Linking.LinkState.Unclear ? new Color(1.0f, 0.75f, 0.2f)
+                    : new Color(0.95f, 0.85f, 0.35f);
             }
             else
             {
@@ -667,8 +895,31 @@ namespace ShiroMR
                 }
                 else
                 {
-                    _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PULSE DETECTED)" : "🚶 IN-TRANSIT (NO PULSE READING)";
-                    _trackingBadgeText.color = isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
+                    if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Linked)
+                    {
+                        _trackingBadgeText.text = "🔗 FOLLOWING PERSON";
+                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                    }
+                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
+                    {
+                        _trackingBadgeText.text = "🔗 FOLLOWING CHOSEN PERSON";
+                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                    }
+                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Unclear)
+                    {
+                        _trackingBadgeText.text = "❓ UNCLEAR: CHOOSE PERSON";
+                        _trackingBadgeText.color = new Color(1.0f, 0.75f, 0.2f);
+                    }
+                    else if (_linkingActive)
+                    {
+                        _trackingBadgeText.text = "📶 BLUETOOTH POSITION";
+                        _trackingBadgeText.color = new Color(0.95f, 0.85f, 0.35f);
+                    }
+                    else
+                    {
+                        _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PULSE DETECTED)" : "🚶 IN-TRANSIT (NO PULSE READING)";
+                        _trackingBadgeText.color = isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
+                    }
                 }
             }
 
@@ -745,6 +996,11 @@ namespace ShiroMR
             if (_cancelAimBtn != null)
             {
                 _cancelAimBtn.gameObject.SetActive(trackingState == PatientTrackingState.ManualAim);
+            }
+            if (_autoBtn != null)
+            {
+                bool chosenByHand = _isManuallyLocked || depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
+                _autoBtn.gameObject.SetActive(trackingState == PatientTrackingState.InTransit && chosenByHand);
             }
             if (_dockToggleBtn != null)
             {
@@ -1023,12 +1279,43 @@ namespace ShiroMR
             cTxtRect.anchorMax = Vector2.one;
             cTxtRect.sizeDelta = Vector2.zero;
 
+            // Button 4: [🔄 Auto] (same place; shown while a choice made by hand is in force)
+            GameObject autoObj = new GameObject("Btn_Auto");
+            autoObj.transform.SetParent(bgObj.transform, false);
+            Image autoImg = autoObj.AddComponent<Image>();
+            autoImg.color = new Color(0.20f, 0.45f, 0.30f, 0.90f);
+            _autoBtn = autoObj.AddComponent<Button>();
+            _autoBtn.onClick.AddListener(ReturnToAuto);
+            BoxCollider colD = autoObj.AddComponent<BoxCollider>();
+            colD.size = new Vector3(135, 32, 35);
+            RectTransform autoRect = autoObj.GetComponent<RectTransform>();
+            autoRect.anchoredPosition = new Vector2(75, -64);
+            autoRect.sizeDelta = new Vector2(135, 30);
+            autoObj.SetActive(false);
+
+            GameObject autoTxtObj = new GameObject("Txt");
+            autoTxtObj.transform.SetParent(autoObj.transform, false);
+            Text autoTxt = autoTxtObj.AddComponent<Text>();
+            autoTxt.font = defaultFont;
+            autoTxt.fontSize = 12;
+            autoTxt.fontStyle = FontStyle.Bold;
+            autoTxt.alignment = TextAnchor.MiddleCenter;
+            autoTxt.color = Color.white;
+            autoTxt.text = "🔄 Auto";
+            RectTransform aTxtRect = autoTxtObj.GetComponent<RectTransform>();
+            aTxtRect.anchorMin = Vector2.zero;
+            aTxtRect.anchorMax = Vector2.one;
+            aTxtRect.sizeDelta = Vector2.zero;
+
             // Row 7: Status Banner Text
             GameObject statusObj = new GameObject("StatusBanner");
             statusObj.transform.SetParent(bgObj.transform, false);
             _statusBannerText = statusObj.AddComponent<Text>();
             _statusBannerText.font = defaultFont;
             _statusBannerText.fontSize = 10;
+            _statusBannerText.resizeTextForBestFit = true; // a long linking reason shrinks instead of being cut
+            _statusBannerText.resizeTextMinSize = 7;
+            _statusBannerText.resizeTextMaxSize = 10;
             _statusBannerText.alignment = TextAnchor.MiddleCenter;
             _statusBannerText.color = new Color(0.3f, 0.85f, 1.0f);
             _statusBannerText.text = "🛏️ Bed Headboard Poster • Center Wall Mount (Zero Jitter)";

@@ -5,9 +5,13 @@ const logger = require('../utils/logger');
 const { WebSocketServer } = require('ws');
 const { getCalibration, updateCalibration, setAnchorCalibration } = require('./kalman_filter');
 const { HttpError, isCrossSiteRequest } = require('../utils/http');
+const { actorOf, clientIp } = require('./auth/request_auth');
+const { actorLabel } = require('./auth/auth_service');
+const { decideCommand } = require('./auth/permissions');
+const audit = require('./audit_service');
 const {
   requireId, optionalId, requireMac, optionalMac, requireDeviceRef, requireLabel,
-  optionalOneOf, optionalNumber, optionalInt, optionalText, normalizeMac
+  optionalOneOf, requireNumber, optionalNumber, optionalInt, optionalText, normalizeMac
 } = require('../utils/validate');
 
 // Commands are short JSON objects. A larger message is refused by the socket.
@@ -17,6 +21,8 @@ const RSSI_AT_1M = { min: -120, max: 0 };   // calibration value A, dBm
 const PATH_LOSS = { min: 0.5, max: 10 };    // calibration value n
 const ACTIVE_MODE_SECONDS = { min: 5, max: 600 };
 const ACTIVE_MODE_DEFAULT_SECONDS = 60;     // the length of one activation in the firmware
+const WARD_COORDINATE = { min: -100, max: 100 }; // m from the ward's corner
+const PERSON_HEIGHT = { min: 0.5, max: 2.5 };    // m, measured by the headset
 
 let wss = null;
 
@@ -48,6 +54,22 @@ function validateCommand(cmd) {
         targetMac: optionalMac(cmd.target_mac || data.targetMac, 'target_mac'),
         duration: optionalInt(cmd.duration !== undefined ? cmd.duration : data.duration, 'duration', ACTIVE_MODE_SECONDS, ACTIVE_MODE_DEFAULT_SECONDS)
       };
+
+    // A headset sees the patient of a wristband (linked to a person its depth sensor
+    // sees) at x, y in ward coordinates; seen: false when it no longer does
+    case 'PATIENT_SEEN': {
+      const seen = cmd.seen !== false;
+      return {
+        action: cmd.action,
+        tagId: requireDeviceRef(cmd.tag_id, 'tag_id'),
+        wardId: requireId(cmd.ward_id, 'ward_id'),
+        seen,
+        x: seen ? requireNumber(cmd.x, 'x', WARD_COORDINATE) : null,
+        y: seen ? requireNumber(cmd.y, 'y', WARD_COORDINATE) : null,
+        heightM: seen ? optionalNumber(cmd.height_m, 'height_m', PERSON_HEIGHT) : null,
+        manual: cmd.manual === true
+      };
+    }
 
     case 'DEVICE_HANDSHAKE':
     case 'DEVICE_HEARTBEAT':
@@ -184,16 +206,36 @@ function sendCommandError(ws, action, message) {
   }));
 }
 
+/**
+ * A socket is accepted only from this server's own pages or a non-browser client,
+ * and only with a signed-in session (dashboard) or a paired headset's token.
+ */
+function verifyClient(info, done) {
+  if (isCrossSiteRequest(info.req)) {
+    done(false, 403, 'Forbidden');
+    return;
+  }
+  actorOf(info.req)
+    .then((actor) => {
+      if (actor) done(true);
+      else done(false, 401, 'Sign in or pair this headset first');
+    })
+    .catch((err) => {
+      logger.warn('[WEBSOCKET] Could not check who is connecting:', err.message);
+      done(false, 503, 'Service unavailable');
+    });
+}
+
 function initWebSocketServer(httpServer) {
   wss = new WebSocketServer({
     server: httpServer,
     maxPayload: MAX_MESSAGE_BYTES,
-    // A page of another website must not be able to open a socket to this server
-    verifyClient: (info) => !isCrossSiteRequest(info.req)
+    verifyClient
   });
 
   wss.on('connection', (ws, req) => {
-    logger.info('[WEBSOCKET] Web Dashboard / HMD connected.');
+    ws.actor = req.actor || null;
+    logger.info(`[WEBSOCKET] Connected: ${ws.actor ? actorLabel(ws.actor) : 'unknown'}.`);
     ws.send(JSON.stringify({
       type: 'STATUS',
       message: 'Connected to SHIRO Edge Server',
@@ -212,9 +254,31 @@ function initWebSocketServer(httpServer) {
         action = parsed && parsed.action;
         const cmd = validateCommand(parsed);
 
-        if (cmd.action === 'UPDATE_CALIBRATION') handleCalibration(cmd);
-        else if (cmd.action === 'SET_ACTIVE_MODE') await handleActiveMode(cmd);
-        else await handleDevicePresence(cmd, ws, req);
+        if (decideCommand(cmd.action, ws.actor) !== 'ok') {
+          throw new HttpError(403, ws.actor && ws.actor.type === 'HEADSET'
+            ? 'A headset cannot send this command.'
+            : 'Your account does not have permission for this command.');
+        }
+        const ip = clientIp(req);
+
+        if (cmd.action === 'UPDATE_CALIBRATION') {
+          handleCalibration(cmd);
+          await audit.record({ actor: ws.actor, action: 'CALIBRATION_UPDATE', targetType: 'DEVICE', targetId: cmd.anchorId, details: { A: cmd.A, n: cmd.n }, ip });
+        } else if (cmd.action === 'SET_ACTIVE_MODE') {
+          await handleActiveMode(cmd);
+          await audit.record({ actor: ws.actor, action: 'ACTIVE_MODE', targetType: 'DEVICE', targetId: cmd.tagId, details: { duration: cmd.duration }, ip });
+        } else if (cmd.action === 'PATIENT_SEEN') {
+          // Five times a second per patient: not audited one by one (start and end are logged)
+          const ipsService = require('./ips_service');
+          if (cmd.seen) ipsService.applyHeadsetPosition(cmd.tagId, cmd, ws.actor.id);
+          else ipsService.endHeadsetPosition(cmd.tagId, ws.actor.id);
+        } else {
+          // A headset reports only itself
+          if (cmd.deviceId !== ws.actor.id) {
+            throw new HttpError(403, `This headset is paired as ${ws.actor.id}, not ${cmd.deviceId}.`);
+          }
+          await handleDevicePresence(cmd, ws, req);
+        }
       } catch (err) {
         if (err instanceof HttpError) {
           logger.warn(`[WEBSOCKET] Command refused (${typeof action === 'string' ? action.slice(0, 40) : 'no action'}): ${err.message}`);
@@ -227,6 +291,10 @@ function initWebSocketServer(httpServer) {
     });
 
     ws.on('close', async () => {
+      if (ws.actor && ws.actor.type === 'HEADSET') {
+        // The patients it saw go back to their Bluetooth position
+        try { require('./ips_service').headsetDisconnected(ws.actor.id); } catch (err) { logger.warn('[WEBSOCKET] Could not end the headset\'s positions:', err.message); }
+      }
       if (ws.associatedDeviceId) {
         try {
           const deviceService = require('./device_service');
@@ -256,6 +324,43 @@ function broadcastToClients(data) {
   });
 }
 
+/**
+ * Ends the open sockets of one clinician or one headset, after a sign-out,
+ * deactivation, password reset or revoked pairing.
+ */
+function closeConnectionsOf(type, id) {
+  if (!wss) return 0;
+  let closed = 0;
+  wss.clients.forEach((client) => {
+    if (client.actor && client.actor.type === type && client.actor.id === id) {
+      client.close(4001, 'Access ended');
+      closed++;
+    }
+  });
+  return closed;
+}
+
+/**
+ * A headset was assigned to another clinician (or to nobody): its open sockets
+ * act for the new clinician from now on, and the headset is told who it is.
+ */
+function updateHeadsetUser(deviceId, user) {
+  if (!wss) return 0;
+  let updated = 0;
+  const payload = JSON.stringify({ type: 'HEADSET_ASSIGNMENT', device_id: deviceId, assigned_clinician: user || null });
+  wss.clients.forEach((client) => {
+    if (client.actor && client.actor.type === 'HEADSET' && client.actor.id === deviceId) {
+      client.actor = { ...client.actor, user: user || null };
+      if (client.readyState === 1) client.send(payload);
+      updated++;
+    }
+  });
+  return updated;
+}
+
+const closeHeadsetConnections = (deviceId) => closeConnectionsOf('HEADSET', deviceId);
+const closeClinicianConnections = (clinicianId) => closeConnectionsOf('CLINICIAN', clinicianId);
+
 function getConnectedClientsCount() {
   if (!wss) return 0;
   let count = 0;
@@ -284,6 +389,9 @@ module.exports = {
   closeWebSocketServer,
   broadcastToClients,
   getConnectedClientsCount,
+  closeHeadsetConnections,
+  closeClinicianConnections,
+  updateHeadsetUser,
   validateCommand,
   MAX_MESSAGE_BYTES
 };

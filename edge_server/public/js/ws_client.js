@@ -22,7 +22,7 @@ class WSClient {
         const dot = document.getElementById('global-status-dot');
         const text = document.getElementById('global-server-text');
         if (dot) dot.style.background = '#059669';
-        if (text) text.innerText = 'Connected (127.0.0.1:3000)';
+        if (text) text.innerText = `Connected (${window.location.host})`;
 
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer);
@@ -39,13 +39,18 @@ class WSClient {
         }
       };
 
-      this.ws.onclose = () => {
-        console.warn('[WS] Disconnected from Edge Server. Reconnecting in', this.reconnectDelay, 'ms...');
+      this.ws.onclose = async (event) => {
         const dot = document.getElementById('global-status-dot');
         const text = document.getElementById('global-server-text');
         if (dot) dot.style.background = '#dc2626';
         if (text) text.innerText = 'Reconnecting...';
 
+        // 4001: the server ended this session's access (deactivated, password reset).
+        // A refused reconnect also lands here: check the session before trying again.
+        if (window.shiroAuth && !(await window.shiroAuth.stillSignedIn())) return;
+        if (event && event.code === 4001) return;
+
+        console.warn('[WS] Disconnected from Edge Server. Reconnecting in', this.reconnectDelay, 'ms...');
         this.scheduleReconnect();
       };
 

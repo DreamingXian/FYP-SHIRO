@@ -130,7 +130,78 @@ namespace ShiroMR
         private void HandleHeadsetMounted()
         {
             Debug.Log("[SHIRO SPATIAL] Headset mounted on user face. Re-verifying anchor localization.");
-            SyncWardOriginToAnchor();
+            RelocalizeAfterWake("headset put on");
+        }
+
+        // The app comes back after the headset slept (Quest pauses the app)
+        private void OnApplicationPause(bool paused)
+        {
+            if (!paused) RelocalizeAfterWake("app resumed");
+        }
+
+        // ----- Re-localization after sleep (regression finding F-5) -----
+
+        /// <summary>Last problem with the spatial anchor (save or restore), for the hand slate; null when none.</summary>
+        public string LastAnchorProblem { get; private set; }
+        /// <summary>Raised after a re-localization attempt: (success, text for the clinician).</summary>
+        public event Action<bool, string> OnRelocalized;
+        private bool _relocalizing;
+        private float _lastRelocalizeTime = -100f;
+
+        /// <summary>
+        /// The saved anchor ID of a ward: the one in use, the one from the edge server, or the
+        /// one kept on this headset. Null when the ward has no saved anchor.
+        /// </summary>
+        public string KnownAnchorUuid(string wardId)
+        {
+            if (!string.IsNullOrEmpty(activeAnchorUuid)) return activeAnchorUuid;
+            var net = ShiroNetworkManager.Instance;
+            if (net != null && net.IsWardLoaded && !string.IsNullOrEmpty(net.LastLoadedWardConfig.spatial_anchor_uuid))
+                return net.LastLoadedWardConfig.spatial_anchor_uuid;
+            if (string.IsNullOrEmpty(wardId)) return null;
+            string local = PlayerPrefs.GetString($"WARD_ANCHOR_UUID_{wardId}", "");
+            return string.IsNullOrEmpty(local) ? null : local;
+        }
+
+        /// <summary>
+        /// After the headset slept, the XR session may have restarted: the anchor handle from
+        /// before is then invalid and stops following the room, and the saved world position
+        /// no longer matches the tracking origin. So the old handle is dropped and the anchor
+        /// is loaded again by its ID, which lets the headset find it in the room again.
+        /// </summary>
+        public async void RelocalizeAfterWake(string reason)
+        {
+            if (_relocalizing || Time.realtimeSinceStartup - _lastRelocalizeTime < 5f) return;
+            if (WardAlignmentTool.Instance != null &&
+                WardAlignmentTool.Instance.currentStep != AlignmentStep.Idle &&
+                WardAlignmentTool.Instance.currentStep != AlignmentStep.Completed) return; // calibrating
+
+            string ward = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+            string uuid = KnownAnchorUuid(ward);
+            if (string.IsNullOrEmpty(uuid)) return; // nothing was saved: nothing to restore
+
+            _relocalizing = true;
+            _lastRelocalizeTime = Time.realtimeSinceStartup;
+            try
+            {
+                Debug.Log($"[SHIRO SPATIAL] Re-localizing anchor {uuid} ({reason}).");
+                await Task.Delay(1500); // let tracking settle after waking
+                bool ok = false;
+                for (int attempt = 1; attempt <= 2 && !ok; attempt++)
+                {
+                    DetachCurrentAnchor(); // the old handle may be invalid
+                    ok = await LoadNativeSpatialAnchorAsync(uuid);
+                    if (!ok && attempt == 1) await Task.Delay(2000);
+                }
+                LastAnchorProblem = ok ? null : "the saved anchor was not found in the room after waking";
+                OnRelocalized?.Invoke(ok, ok
+                    ? "🎯 Room alignment restored from the saved spatial anchor."
+                    : "⚠️ The saved anchor was not found after the headset woke. The ward overlay may be off: press Re-Sync, or calibrate again and save.");
+            }
+            finally
+            {
+                _relocalizing = false;
+            }
         }
 
         private void SyncWardOriginToAnchor()
@@ -157,6 +228,22 @@ namespace ShiroMR
             string targetWard = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
             if (string.IsNullOrEmpty(targetWard)) return false; // no ward chosen: nothing saved to restore
             return LoadAlignmentFromPrefs(targetWard);
+        }
+
+        /// <summary>
+        /// The room is aligned to the ward plan: a saved spatial anchor is in use, or an
+        /// alignment was saved for the active ward. Only then do ward coordinates of what
+        /// the headset sees mean anything.
+        /// </summary>
+        public bool IsAligned
+        {
+            get
+            {
+                if (wardOrigin == null) return false;
+                if (currentNativeAnchor != null) return true;
+                string ward = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.targetWardId : "";
+                return !string.IsNullOrEmpty(ward) && PlayerPrefs.HasKey($"WARD_ALIGN_{ward}_SAVED");
+            }
         }
 
         /// <summary>
@@ -621,46 +708,74 @@ namespace ShiroMR
         {
             if (wardOrigin == null) return null;
 
-            try
+            // Two attempts: after the headset slept, the XR session may have restarted and a
+            // first anchor can fail with ErrorHandleInvalid (regression finding F-5). Each
+            // attempt uses a brand-new anchor, never a handle from before.
+            Vector3 pose = wardOrigin.position;
+            Quaternion rot = wardOrigin.rotation;
+            for (int attempt = 1; attempt <= 2; attempt++)
             {
+                try
+                {
+                    if (_nativeAnchorHost != null)
+                    {
+                        Destroy(_nativeAnchorHost);
+                        _nativeAnchorHost = null;
+                    }
+                    currentNativeAnchor = null;
+
+                    _nativeAnchorHost = new GameObject($"SpatialAnchorHost_{wardId}");
+                    _nativeAnchorHost.transform.position = pose;
+                    _nativeAnchorHost.transform.rotation = rot;
+
+                    var spatialAnchor = _nativeAnchorHost.AddComponent<OVRSpatialAnchor>();
+
+                    // The anchor must exist and be localized before it can be saved
+                    bool localized = await spatialAnchor.WhenLocalizedAsync();
+                    if (!localized)
+                    {
+                        LastAnchorProblem = "the new anchor could not be localized";
+                        Debug.LogWarning($"[SHIRO SPATIAL] Attempt {attempt}: new spatial anchor was not localized; not saved.");
+                    }
+                    else
+                    {
+                        // Save to local Meta headset persistent anchor store
+                        var saveResult = await spatialAnchor.SaveAnchorAsync();
+                        if (saveResult.Success)
+                        {
+                            currentNativeAnchor = spatialAnchor;
+                            activeAnchorUuid = spatialAnchor.Uuid.ToString();
+                            LastAnchorProblem = null;
+
+                            SaveAlignmentToPrefs(wardId);
+                            PlayerPrefs.SetString($"WARD_ANCHOR_UUID_{wardId}", activeAnchorUuid);
+                            PlayerPrefs.Save();
+
+                            Debug.Log($"[SHIRO SPATIAL] Native OVRSpatialAnchor saved successfully (attempt {attempt}). UUID: {activeAnchorUuid}");
+                            return activeAnchorUuid;
+                        }
+                        LastAnchorProblem = $"save failed ({saveResult.Status})";
+                        Debug.LogWarning($"[SHIRO SPATIAL] Attempt {attempt}: SaveAnchorAsync failed: {saveResult.Status}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LastAnchorProblem = ex.Message;
+                    Debug.LogWarning($"[SHIRO SPATIAL] Attempt {attempt}: native anchor exception: {ex.Message}");
+                }
+
                 if (_nativeAnchorHost != null)
                 {
                     Destroy(_nativeAnchorHost);
                     _nativeAnchorHost = null;
                 }
-
-                _nativeAnchorHost = new GameObject($"SpatialAnchorHost_{wardId}");
-                _nativeAnchorHost.transform.position = wardOrigin.position;
-                _nativeAnchorHost.transform.rotation = wardOrigin.rotation;
-
-                var spatialAnchor = _nativeAnchorHost.AddComponent<OVRSpatialAnchor>();
-
-                // Await native localization
-                await spatialAnchor.WhenLocalizedAsync();
-
-                // Save to local Meta headset persistent anchor store
-                var saveResult = await spatialAnchor.SaveAnchorAsync();
-                if (saveResult.Success)
-                {
-                    currentNativeAnchor = spatialAnchor;
-                    activeAnchorUuid = spatialAnchor.Uuid.ToString();
-
-                    SaveAlignmentToPrefs(wardId);
-                    PlayerPrefs.SetString($"WARD_ANCHOR_UUID_{wardId}", activeAnchorUuid);
-                    PlayerPrefs.Save();
-
-                    Debug.Log($"[SHIRO SPATIAL] Native OVRSpatialAnchor saved successfully! UUID: {activeAnchorUuid}");
-                    return activeAnchorUuid;
-                }
-                else
-                {
-                    Debug.LogWarning($"[SHIRO SPATIAL] SaveAnchorAsync failed: {saveResult.Status}");
-                }
+                currentNativeAnchor = null;
+                if (attempt == 1) await Task.Delay(1000);
             }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[SHIRO SPATIAL] Native anchor runtime exception (Editor fallback active): {ex.Message}");
-            }
+
+            // The ward stays where it was aligned (the anchor host is gone, so nothing moves it)
+            wardOrigin.position = pose;
+            wardOrigin.rotation = rot;
 
             // Fallback for PC editor testing
             SaveAlignmentToPrefs(wardId);

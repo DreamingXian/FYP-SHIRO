@@ -384,7 +384,7 @@ async function getWardIpsData(wardId) {
     SELECT 
       pb.binding_id, pb.patient_id, pb.device_id, pb.status AS binding_status,
       p.full_name, p.nric_passport, p.gender, p.dob, p.assigned_bed_id, p.assigned_ward_id,
-      p.medical_history, p.photo_url, p.status AS patient_status,
+      p.medical_history, p.photo_url, p.status AS patient_status, p.height_cm, p.weight_kg,
       d.mac_address, d.device_type, d.status AS device_status, d.battery_level, d.firmware_version
     FROM patient_bindings pb
     JOIN patients p ON pb.patient_id = p.patient_id
@@ -407,6 +407,8 @@ async function getWardIpsData(wardId) {
       medical_history: b.medical_history,
       photo_url: b.photo_url,
       patient_status: b.patient_status,
+      height_cm: b.height_cm === null ? null : Number(b.height_cm),
+      weight_kg: b.weight_kg === null ? null : Number(b.weight_kg),
       device_id: b.device_id,
       mac_address: b.mac_address,
       device_status: b.device_status,

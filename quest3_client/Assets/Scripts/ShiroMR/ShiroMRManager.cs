@@ -306,9 +306,13 @@ namespace ShiroMR
         {
             if (pos == null || string.IsNullOrEmpty(pos.tag_id)) return;
 
+            // The panel decides with the Bluetooth position (bed rule, linking to a detected
+            // person). x, y may be where a headset sees the patient: fed back here, a wristband
+            // would always seem to be right at the linked person, and a wrong link could never end
+            if (!pos.TryGetBle(out float bleX, out float bleY)) return;
             string cleanTag = pos.tag_id.ToUpper().Trim();
             PatientHologram hologram = GetOrCreateHologram(cleanTag);
-            hologram.UpdatePosition(pos.x, pos.y, pos.motion_state);
+            hologram.UpdatePosition(bleX, bleY, pos.motion_state);
         }
 
         private void HandleTelemetryUpdated(TelemetryUpdate tel)
@@ -336,6 +340,26 @@ namespace ShiroMR
                 Debug.Log($"[SHIRO MR] Purged patient hologram for tag {cleanTag}.");
             }
         }
+
+        /// <summary>The patient panels shown, by tag id.</summary>
+        public IReadOnlyDictionary<string, PatientHologram> Holograms => _activeHolograms;
+
+        /// <summary>The bound patient of a wristband (tag id or MAC), or null.</summary>
+        public TrackedSubject FindSubject(string tagId)
+        {
+            if (string.IsNullOrEmpty(tagId)) return null;
+            return _patientRegistry.TryGetValue(tagId.ToUpper().Trim(), out var s) ? s : null;
+        }
+
+        /// <summary>A panel for testing (fake wristband): not a real wristband, no bed.</summary>
+        public PatientHologram SpawnTestHologram(string tagId, string patientId, string label)
+        {
+            PatientHologram holo = GetOrCreateHologram(tagId);
+            holo.SetPatientInfo(patientId, label, "--");
+            return holo;
+        }
+
+        public void RemoveHologram(string tagId) => HandleTagPurged(tagId);
 
         private PatientHologram GetOrCreateHologram(string tagId)
         {

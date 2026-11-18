@@ -191,7 +191,7 @@ async function bindPatientWristband(patientId, deviceId, boundBy = 'DOC-8821') {
     const [insertResult] = await conn.query(
       `INSERT INTO patient_bindings (patient_id, device_id, bound_at, bound_by, stream_rate, status)
        VALUES (?, ?, NOW(), ?, '5 Hz Live Stream', 'ACTIVE')`,
-      [patientId, deviceId, boundBy || 'DOC-8821']
+      [patientId, deviceId, boundBy || null]
     );
 
     // 6. Update device availability status to IN_USE

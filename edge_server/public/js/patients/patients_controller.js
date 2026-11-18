@@ -410,6 +410,7 @@ function renderPatientsTable(patients) {
         <td>${statusBadge}</td>
         <td style="text-align: right; white-space: nowrap;">
           <button class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="View InfluxDB Historical Vitals" style="margin-right: 4px;">📈 Vitals</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Falls and other incidents of this patient" style="margin-right: 4px;">🚨 Incidents</button>
           <button class="btn btn-outline btn-sm"${actionAttrs('editPatientInfo', [p.patient_id], { stop: true })} style="margin-right: 4px;">Edit Infos</button>
           ${secondaryActionBtn}
           <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeletePatient', [p.patient_id, p.full_name], { stop: true })} title="Delete record" style="margin-left: 4px;">🗑️</button>
@@ -597,6 +598,11 @@ async function handlePatientAdmission(event) {
   const risk = document.querySelector('input[name="fall_risk"]:checked').value;
   const history = document.getElementById('adm-history').value.trim();
   let photoUrl = document.getElementById('adm-photo-url').value;
+  const body = readBodyMeasurements('adm-height', 'adm-weight');
+  if (body.error) {
+    if (window.showToast) window.showToast(body.error, 'warning');
+    return;
+  }
 
   const hasBedAssignment = wardId && bedId;
   let confirmTitle = '';
@@ -655,6 +661,8 @@ async function handlePatientAdmission(event) {
             assigned_ward_id: wardId || null,
             assigned_bed_id: bedId || null,
             fall_risk_score: risk,
+            height_cm: body.height_cm,
+            weight_kg: body.weight_kg,
             medical_history: history,
             photo_url: photoUrl
           };
@@ -932,6 +940,10 @@ async function viewPatientProfileReadOnly(patientId) {
           <strong style="color:${p.fall_risk_score === 'HIGH' ? 'var(--danger)' : p.fall_risk_score === 'MEDIUM' ? 'var(--warning)' : 'var(--success)'};">● ${escapeHtml(p.fall_risk_score)} RISK</strong>
         </div>
         <div>
+          <span style="color:var(--text-muted);">Height / Weight:</span><br>
+          <strong style="color:var(--text-primary);">${escapeHtml(bodySummary(p))}</strong>
+        </div>
+        <div>
           <span style="color:var(--text-muted);">Admission Timestamp:</span><br>
           <span style="color:var(--text-secondary);">${escapeHtml(p.admission_date || '-')}</span>
         </div>
@@ -948,6 +960,9 @@ async function viewPatientProfileReadOnly(patientId) {
 
       <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; color:var(--primary); border-color:var(--primary);">
         📈 <span>View InfluxDB Historical Vitals Trends (Table 4.10: 30-Day Retention)</span>
+      </button>
+      <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; margin-top:8px; color:var(--danger); border-color:var(--danger);">
+        🚨 <span>Incident History (falls, critical vitals, ward exits)</span>
       </button>
     `;
 
@@ -1085,6 +1100,17 @@ async function editPatientInfo(patientId) {
           </div>
         </div>
 
+        <div class="form-row" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div class="form-group">
+            <label class="form-label">Height (cm)</label>
+            <input type="number" class="form-control" id="edit-patient-height" min="40" max="230" step="1" placeholder="Optional" value="${escapeHtml(p.height_cm ?? '')}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Weight (kg)</label>
+            <input type="number" class="form-control" id="edit-patient-weight" min="2" max="300" step="0.1" placeholder="Optional" value="${escapeHtml(p.weight_kg ?? '')}">
+          </div>
+        </div>
+
         <div class="form-group" style="margin-bottom:0;">
           <label class="form-label" style="font-weight:600;">Medical History, Chronic Conditions &amp; Drug Allergies</label>
           <textarea id="edit-patient-history" class="form-control" rows="3" style="font-size:12px;">${escapeHtml(p.medical_history || '')}</textarea>
@@ -1104,6 +1130,11 @@ async function editPatientInfo(patientId) {
           const updatedRisk = document.querySelector('input[name="edit_fall_risk"]:checked')?.value || p.fall_risk_score;
           const updatedHistory = document.getElementById('edit-patient-history')?.value.trim();
           let updatedPhoto = document.getElementById('edit-patient-photo-url')?.value || photoSrc;
+          const updatedBody = readBodyMeasurements('edit-patient-height', 'edit-patient-weight');
+          if (updatedBody.error) {
+            if (window.showToast) window.showToast(updatedBody.error, 'warning');
+            return;
+          }
 
           // Validation
           if (!updatedPhone || !/^(\+?6?01[0-9]{1}-?[0-9]{7,8}|\+?[0-9\s-]{8,15})$/.test(updatedPhone)) {
@@ -1114,7 +1145,7 @@ async function editPatientInfo(patientId) {
           // Confirmation prompt before saving notes / changes
           window.showModal({
             title: 'Confirm Changes',
-            message: `Save updated clinical information for "${p.full_name}" (${p.patient_id})?\n\n• Phone: ${updatedPhone}\n• Fall Risk: ${updatedRisk}\n• Photo: ${updatedPhoto !== photoSrc ? 'Updated' : 'Unchanged'}`,
+            message: `Save updated clinical information for "${p.full_name}" (${p.patient_id})?\n\n• Phone: ${updatedPhone}\n• Fall Risk: ${updatedRisk}\n• Height / Weight: ${bodySummary(updatedBody)}\n• Photo: ${updatedPhoto !== photoSrc ? 'Updated' : 'Unchanged'}`,
             type: 'info',
             confirmText: '💾 Save Changes',
             cancelText: 'Cancel',
@@ -1142,6 +1173,8 @@ async function editPatientInfo(patientId) {
                     patient_id: p.patient_id,
                     phone_number: updatedPhone,
                     fall_risk_score: updatedRisk,
+                    height_cm: updatedBody.height_cm,
+                    weight_kg: updatedBody.weight_kg,
                     medical_history: updatedHistory,
                     photo_url: updatedPhoto
                   })
@@ -1195,6 +1228,11 @@ function resetAdmissionForm() {
   if (ageBadge) ageBadge.innerText = '--';
   const sexEl = document.getElementById('adm-sex');
   if (sexEl) sexEl.value = '';
+
+  for (const fieldId of ['adm-height', 'adm-weight']) {
+    const el = document.getElementById(fieldId);
+    if (el) el.value = '';
+  }
 
   // Reset Fall Risk radio to LOW
   const lowRiskRadio = document.querySelector('input[name="fall_risk"][value="LOW"]');
@@ -1537,3 +1575,36 @@ document.addEventListener('DOMContentLoaded', () => {
     initPatientsModule();
   }
 });
+
+// =============================================================================
+// Height and weight (optional): an empty field means "not recorded"
+// =============================================================================
+
+/** Reads two optional inputs. Returns { height_cm, weight_kg } (null when empty) or { error }. */
+function readBodyMeasurements(heightId, weightId) {
+  const hText = (document.getElementById(heightId)?.value || '').trim();
+  const wText = (document.getElementById(weightId)?.value || '').trim();
+  let height_cm = null;
+  let weight_kg = null;
+  if (hText !== '') {
+    height_cm = Number(hText);
+    if (!Number.isInteger(height_cm) || height_cm < 40 || height_cm > 230) {
+      return { error: 'Height must be a whole number of cm between 40 and 230, or empty.' };
+    }
+  }
+  if (wText !== '') {
+    weight_kg = Number(wText);
+    if (!Number.isFinite(weight_kg) || weight_kg < 2 || weight_kg > 300) {
+      return { error: 'Weight must be between 2 and 300 kg, or empty.' };
+    }
+    weight_kg = Math.round(weight_kg * 10) / 10;
+  }
+  return { height_cm, weight_kg };
+}
+
+/** "165 cm · 58.5 kg", with "not recorded" for a missing value. */
+function bodySummary(p) {
+  const h = p.height_cm === null || p.height_cm === undefined ? 'not recorded' : `${p.height_cm} cm`;
+  const w = p.weight_kg === null || p.weight_kg === undefined ? 'not recorded' : `${p.weight_kg} kg`;
+  return `${h} · ${w}`;
+}

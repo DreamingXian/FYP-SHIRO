@@ -82,6 +82,33 @@ describe('headset presence (DEVICE_HANDSHAKE, DEVICE_HEARTBEAT)', () => {
   });
 });
 
+describe('a patient seen by a headset (PATIENT_SEEN)', () => {
+  const seen = { action: 'PATIENT_SEEN', tag_id: 'TAG-002', ward_id: 'WARD-004', x: 2.4, y: 1.15, height_m: 1.62, manual: false };
+
+  test('the position of a linked patient is accepted', () => {
+    assert.deepEqual(validateCommand(seen), {
+      action: 'PATIENT_SEEN', tagId: 'TAG-002', wardId: 'WARD-004', seen: true, x: 2.4, y: 1.15, heightM: 1.62, manual: false
+    });
+    assert.equal(validateCommand({ ...seen, manual: true }).manual, true);
+    assert.equal(validateCommand({ ...seen, height_m: undefined }).heightM, null);
+  });
+
+  test('"no longer seen" needs no position', () => {
+    assert.deepEqual(validateCommand({ action: 'PATIENT_SEEN', tag_id: 'TAG-002', ward_id: 'WARD-004', seen: false }), {
+      action: 'PATIENT_SEEN', tagId: 'TAG-002', wardId: 'WARD-004', seen: false, x: null, y: null, heightM: null, manual: false
+    });
+  });
+
+  test('a position that is missing or not a number is refused: none is assumed', () => {
+    refuses({ ...seen, x: undefined }, 'x');
+    refuses({ ...seen, y: 'near the bed' }, 'y');
+    refuses({ ...seen, x: 5000 }, 'x');
+    refuses({ ...seen, height_m: 4 }, 'height_m');
+    refuses({ ...seen, tag_id: undefined }, 'tag_id');
+    refuses({ ...seen, ward_id: "x' OR '1'='1" }, 'ward_id');
+  });
+});
+
 describe('anything else', () => {
   test('unknown actions and non-objects are refused', () => {
     for (const cmd of [{}, { action: 'DROP_ALL' }, { action: 5 }, null, 'text', 7, [], [{ action: 'SET_ACTIVE_MODE', tag_id: 'TAG-002' }]]) {

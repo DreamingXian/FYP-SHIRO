@@ -121,6 +121,11 @@ namespace ShiroMR
         public string medical_history;
         public string photo_url;
         public string patient_status;
+        // Optional body measurements. The server sends null when not recorded,
+        // which JsonUtility reads as 0: 0 means "not recorded", never a real value.
+        public int height_cm;
+        public float weight_kg;
+        public bool HasHeight => height_cm > 0;
         public string device_id; // Tag ID (e.g. TAG-001)
         public string mac_address;
         public string device_status;
@@ -154,6 +159,23 @@ namespace ShiroMR
         public string motion_state; // STATIONARY, HAND_MOVEMENT, WALKING, SETTLING
         public float confidence;
         public long timestamp;
+        // Where x, y come from: "HEADSET" (a headset's depth sensor sees the patient, while it
+        // is linked to the wristband) or "BLE" (Bluetooth). Missing from an older edge server.
+        public string source;
+        public string seen_by;      // the headset that sees the patient
+        public bool has_ble;        // ble_x / ble_y are known
+        public float ble_x, ble_y;  // the Bluetooth position, always
+
+        public bool FromHeadset => source == "HEADSET";
+
+        /// <summary>The Bluetooth position (for the panel's own decisions: bed rule, linking).
+        /// False when only a headset's position is known.</summary>
+        public bool TryGetBle(out float x, out float y)
+        {
+            if (string.IsNullOrEmpty(source)) { x = this.x; y = this.y; return true; } // older server: x, y are Bluetooth
+            x = ble_x; y = ble_y;
+            return has_ble;
+        }
     }
 
     [Serializable]
@@ -198,6 +220,125 @@ namespace ShiroMR
         public string tag_id;
         public string canonical_id;
         public string mac;
+    }
+
+    /// <summary>
+    /// An incident from the edge server (fall, critical vitals, geofence): the
+    /// EMERGENCY_ALERT broadcast and the rows of /api/alerts/active.
+    /// A value the server sends as null is 0 here: 0 is shown as "not measured".
+    /// </summary>
+    [Serializable]
+    public class IncidentAlert
+    {
+        public string incident_id;
+        public string patient_id;
+        public string patient_name;
+        public string ward_id;
+        public string bed_id;
+        public string wristband_mac;
+        public string device_id;
+        public string incident_category; // FALL_ACCIDENT, CRITICAL_VITALS, GEOFENCE_BREACH
+        public string trigger_timestamp;
+        public float pos_x;
+        public float pos_y;
+        public float kinematic_impact_force;
+        public float post_impact_stillness;
+        public float freefall_min_g;
+        public int heart_rate;
+        public float spo2;
+        public string alert_message;
+        public string resolution_status;
+        public string attending_clinician;
+
+        // is_simulated is true/false in the broadcast and 0/1 in database rows; the
+        // server always starts the message of a test alarm with "[SIMULATION]".
+        public bool IsSimulated => !string.IsNullOrEmpty(alert_message) && alert_message.StartsWith("[SIMULATION]");
+
+        public string CategoryLabel =>
+            incident_category == "FALL_ACCIDENT" ? "FALL" :
+            incident_category == "CRITICAL_VITALS" ? "CRITICAL VITALS" :
+            incident_category == "GEOFENCE_BREACH" ? "LEFT THE WARD" : (incident_category ?? "INCIDENT");
+    }
+
+    [Serializable]
+    public class EmergencyAlertMessage : WsMessageBase
+    {
+        public IncidentAlert incident;
+    }
+
+    [Serializable]
+    public class EmergencyAcknowledgedMessage : WsMessageBase
+    {
+        public string incident_id;
+        public string attending_clinician;
+        public string timestamp;
+    }
+
+    [Serializable]
+    public class ActiveAlertsResponse
+    {
+        public bool success;
+        public List<IncidentAlert> alerts;
+        public string error;
+    }
+
+    /// <summary>A clinician as the server names one: { id, name }. Empty id = nobody.</summary>
+    [Serializable]
+    public class ClinicianRef
+    {
+        public string id;
+        public string name;
+        public bool IsSet => !string.IsNullOrEmpty(id);
+    }
+
+    [Serializable]
+    public class HeadsetAssignmentMessage : WsMessageBase
+    {
+        public string device_id;
+        public ClinicianRef assigned_clinician;
+    }
+
+    [Serializable]
+    public class AuthMeUser
+    {
+        public string type;
+        public string device_id;
+        public string paired_by;
+        public ClinicianRef assigned_clinician;
+    }
+
+    [Serializable]
+    public class AuthMeResponse
+    {
+        public bool success;
+        public AuthMeUser user;
+    }
+
+    /// <summary>The edge server sent the 1 Hz command for a wristband (ACTIVE_MODE_ENGAGED).</summary>
+    [Serializable]
+    public class ActiveModeEngagedMessage : WsMessageBase
+    {
+        public string tag_id;
+        public string via_anchor;
+        public string anchor_mac;
+        public int duration;
+    }
+
+    /// <summary>A refused command (type ERROR): which action and why.</summary>
+    [Serializable]
+    public class CommandErrorMessage : WsMessageBase
+    {
+        public string action;
+        public string error;
+    }
+
+    [Serializable]
+    public class AcknowledgeResponse
+    {
+        public bool success;
+        public string incident_id;
+        public string attending_clinician;
+        public string error;
     }
 }
 

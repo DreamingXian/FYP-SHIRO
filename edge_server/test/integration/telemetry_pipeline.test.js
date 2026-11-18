@@ -4,7 +4,7 @@
 // Time-series logging is off for this file, so nothing is written to InfluxDB.
 process.env.INFLUX_TOKEN = '';
 
-const { db, freshDatabase, startServer, connectMqtt, anchorClientId } = require('./helper');
+const { db, freshDatabase, startServer, connectMqtt, anchorClientId, signIn } = require('./helper');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const WebSocket = require('ws');
@@ -28,6 +28,7 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
   const ANCHORS = ['A0:00:00:00:00:01', 'A0:00:00:00:00:02', 'A0:00:00:00:00:03'];
   let server;
   let ws;
+  let cookie;         // session of the test admin
   let mqtt;           // anchor ANCHORS[0]
   let anchorClients;  // one connection per anchor, in the order of ANCHORS
   let pool;
@@ -41,7 +42,8 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
     server = startServer({ HTTP_PORT: String(HTTP_PORT), MQTT_PORT: String(MQTT_PORT) });
     await server.ready;
 
-    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`);
+    cookie = await signIn(`http://127.0.0.1:${HTTP_PORT}`);
+    ws = new WebSocket(`ws://127.0.0.1:${HTTP_PORT}`, { headers: { Cookie: cookie } });
     ws.on('message', (data) => { received.push(JSON.parse(data.toString())); });
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
 
@@ -140,7 +142,7 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
     mqtt.publish(JSON.stringify({ anchor_mac: ANCHORS[0], tag_mac: 'B0:00:00:00:00:06', rssi: -60, v: 2, bpm: 'x', spo2: [], g: {}, motion: 7, fall: 'maybe' }));
     await sleep(400);
 
-    const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/alerts/active`);
+    const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/alerts/active`, { headers: { Cookie: cookie } });
     assert.equal(res.status, 200);
     assert.equal(server.child.exitCode, null, 'the server must still be running');
     assert.doesNotMatch(server.output, /ALERT PIPELINE ERROR|UnhandledPromiseRejection/);
@@ -149,7 +151,7 @@ describe('telemetry pipeline (MQTT -> server -> WebSocket and audit log)', () =>
   test('the Live Lab test bench creates incidents that are marked as simulated', async () => {
     const res = await fetch(`http://127.0.0.1:${HTTP_PORT}/api/alerts/trigger-simulation`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
       body: JSON.stringify({ category: 'FALL_ACCIDENT', patient_id: 'P-001', wristband_mac: 'B0:00:00:00:00:07' })
     });
     const body = await res.json();
@@ -168,9 +170,10 @@ describe('simulation switch', () => {
     const server = startServer({ HTTP_PORT: '3995', MQTT_PORT: '1885', ENABLE_SIMULATION: 'false' });
     try {
       await server.ready;
+      const cookie = await signIn('http://127.0.0.1:3995');
       const res = await fetch('http://127.0.0.1:3995/api/alerts/trigger-simulation', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
         body: JSON.stringify({ category: 'FALL_ACCIDENT' })
       });
       assert.equal(res.status, 403);

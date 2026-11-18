@@ -3,6 +3,7 @@
 // =============================================================================
 const logger = require('../utils/logger');
 const wardService = require('../services/ward_service');
+const headsetAnchors = require('../services/headset_anchor_service');
 const { broadcastToClients } = require('../services/websocket_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const {
@@ -83,7 +84,7 @@ function checkWardPayload(payload) {
 
 async function listWards(req, res) {
   try {
-    const wards = await wardService.getAllWards();
+    const wards = await headsetAnchors.forViewer(req.actor, await wardService.getAllWards());
     sendJson(res, 200, { success: true, wards });
   } catch (err) {
     sendFailure(res, err, 'listWards');
@@ -95,7 +96,7 @@ async function getWard(req, res, parsedUrl) {
     const wardId = requireId(parsedUrl.searchParams.get('ward_id'), 'ward_id');
     const config = await wardService.getWardConfig(wardId);
     if (!config) throw new HttpError(404, 'Ward not found');
-    sendJson(res, 200, { success: true, ward: config });
+    sendJson(res, 200, { success: true, ward: await headsetAnchors.forViewer(req.actor, config) });
   } catch (err) {
     sendFailure(res, err, 'getWard');
   }
@@ -164,6 +165,7 @@ async function getWardIps(req, res, parsedUrl) {
     const wardId = requireId(parsedUrl.searchParams.get('ward_id'), 'ward_id');
     const ipsData = await wardService.getWardIpsData(wardId);
     if (!ipsData) throw new HttpError(404, 'Ward not found');
+    ipsData.ward = await headsetAnchors.forViewer(req.actor, ipsData.ward);
     sendJson(res, 200, { success: true, ...ipsData });
   } catch (err) {
     sendFailure(res, err, 'getWardIps');
@@ -258,13 +260,23 @@ async function resetCalibration(req, res, body) {
 
 /**
  * POST /api/ward/save-anchor
- * The headset stores the reference of the spatial anchor it placed for a ward.
+ * A headset stores the reference of the spatial anchor it placed for a ward
+ * (an empty reference removes it). It is kept for that headset only: another
+ * headset cannot load it. A staff request sets the ward's reference field
+ * shown in the ward editor (kept for older clients).
  */
 async function saveSpatialAnchor(req, res, body) {
   try {
     const payload = parseJsonBody(body);
     const wardId = requireId(payload.ward_id, 'ward_id');
     const uuid = optionalAnchorRef(payload.spatial_anchor_uuid, 'spatial_anchor_uuid') || '';
+
+    if (req.actor && req.actor.type === 'HEADSET') {
+      await headsetAnchors.saveAnchor(req.actor.id, wardId, uuid);
+      logger.info(`[WARD SPATIAL ANCHOR] ${req.actor.id}: ${uuid ? `saved anchor "${uuid}"` : 'removed its anchor'} for ${wardId}`);
+      sendJson(res, 200, { success: true, ward_id: wardId, spatial_anchor_uuid: uuid, device_id: req.actor.id });
+      return;
+    }
 
     const { getPool } = require('../database/db');
     const [result] = await getPool().query('UPDATE ward_rooms SET spatial_anchor_uuid = ? WHERE ward_id = ?', [uuid, wardId]);

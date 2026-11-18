@@ -391,7 +391,18 @@
     if (coordsEl) {
       if (pos && pos.x !== undefined && pos.y !== undefined) {
         const prefix = isOffline ? 'Last Known: ' : '';
-        coordsEl.innerText = `${prefix}(${pos.x.toFixed(2)}m, ${pos.y.toFixed(2)}m)`;
+        let where = `${prefix}(${pos.x.toFixed(2)}m, ${pos.y.toFixed(2)}m)`;
+        if (!isOffline && pos.source === 'HEADSET') {
+          // Seen by a headset: say so, and how far off the Bluetooth estimate is
+          where += ` · 👁 seen by headset ${pos.seenBy || ''}${pos.seenManual ? ' (chosen by hand)' : ''}`;
+          if (pos.bleX !== undefined && pos.bleY !== undefined) {
+            const off = Math.hypot(pos.bleX - pos.x, pos.bleY - pos.y);
+            where += ` · Bluetooth estimate ${off.toFixed(1)} m away`;
+          }
+        } else if (!isOffline) {
+          where += ' · Bluetooth estimate (about ±1 m)';
+        }
+        coordsEl.innerText = where;
       } else {
         coordsEl.innerText = 'Awaiting signal...';
       }
@@ -1062,6 +1073,34 @@
 
       // 45cm diameter human occupant footprint (radius = 0.225m in physical space)
       const humanRadiusPx = Math.max(14, (0.45 / 2) * t.scale);
+      // Seen by a headset: the dot is where its depth sensor sees the patient
+      const seenByHeadset = pos.source === 'HEADSET' && !isOffline;
+
+      // 1b. The Bluetooth estimate, faint, with a line to where the headset sees the patient
+      if (seenByHeadset && pos.bleX !== undefined && pos.bleY !== undefined) {
+        const b = metricToCanvas(pos.bleX, pos.bleY, t);
+        ctx.beginPath();
+        ctx.moveTo(b.x, b.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.strokeStyle = 'rgba(79, 70, 229, 0.45)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, humanRadiusPx * 0.6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(13, 148, 136, 0.15)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(13, 148, 136, 0.55)';
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (isSelected) {
+          ctx.font = '10px sans-serif';
+          ctx.fillStyle = 'rgba(15, 118, 110, 0.9)';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'top';
+          ctx.fillText('Bluetooth estimate', b.x, b.y + humanRadiusPx * 0.6 + 3);
+        }
+      }
 
       // 2. Ripple Expanding Wave Animation (ONLY when ONLINE, disabled when OFFLINE)
       if (!isOffline) {
@@ -1090,7 +1129,7 @@
       // 4. Core Human Scale Circle (~45cm true scale)
       ctx.beginPath();
       ctx.arc(p.x, p.y, humanRadiusPx, 0, Math.PI * 2);
-      ctx.fillStyle = isOffline ? '#64748B' : (isSelected ? '#0284C7' : '#0D9488');
+      ctx.fillStyle = isOffline ? '#64748B' : (isSelected ? '#0284C7' : (seenByHeadset ? '#4F46E5' : '#0D9488'));
       ctx.fill();
       ctx.strokeStyle = isOffline ? '#CBD5E1' : '#FFFFFF';
       ctx.lineWidth = 2.5;
@@ -1120,6 +1159,7 @@
         } else {
           nameText = `${baseName} 🔒`;
         }
+        if (seenByHeadset) nameText = `👁 ${nameText}`;
 
         ctx.font = 'bold 11px sans-serif';
         const textW = ctx.measureText(nameText).width;
@@ -1954,6 +1994,16 @@
         liveTagPositions.delete(msg.tag_mac);
       }
 
+      // Where the patient is: seen by a headset (source HEADSET: its depth sensor, about as
+      // accurate as the room alignment) or the Bluetooth estimate (often 1-3 m off).
+      // The Bluetooth position is kept as well, to show how far off it is.
+      const seen = {
+        source: msg.source === 'HEADSET' ? 'HEADSET' : 'BLE',
+        seenBy: msg.seen_by || null,
+        seenManual: !!msg.seen_manual,
+        bleX: msg.has_ble ? msg.ble_x : undefined,
+        bleY: msg.has_ble ? msg.ble_y : undefined
+      };
       const existing = liveTagPositions.get(tagId);
       if (!existing) {
         liveTagPositions.set(tagId, {
@@ -1965,7 +2015,8 @@
           motion_state: msg.motion_state || 'STATIONARY',
           confidence: msg.confidence,
           anchors: msg.anchors_used || [],
-          lastSeen: msg.timestamp || Date.now()
+          lastSeen: msg.timestamp || Date.now(),
+          ...seen
         });
       } else {
         existing.targetX = msg.x;
@@ -1973,8 +2024,10 @@
         existing.status = msg.status || 'ONLINE';
         existing.motion_state = msg.motion_state || (existing.motion_state || 'STATIONARY');
         existing.confidence = msg.confidence;
-        existing.anchors = msg.anchors_used || [];
+        // Updates from a headset carry no anchors: keep the ones last heard
+        if (Array.isArray(msg.anchors_used)) existing.anchors = msg.anchors_used;
         existing.lastSeen = msg.timestamp || Date.now();
+        Object.assign(existing, seen);
       }
 
       const tagsBadge = document.getElementById('live-map-tags-badge');

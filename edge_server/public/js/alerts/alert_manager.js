@@ -12,6 +12,69 @@ class EmergencyAlertManager {
     this.alarmInterval = null;
     this.isMuted = false;
     this.currentModalIncident = null;
+    // Incidents this screen is acknowledging right now (request sent, answer not back yet)
+    this.ownAcknowledgements = new Set();
+  }
+
+  /**
+   * Someone else acknowledged an incident. If it is open here, the pop-up stays
+   * and says by whom and when; the alarm stops. Otherwise a note is shown.
+   */
+  onAcknowledgedElsewhere(incidentId, by, when) {
+    const wasActive = this.activeAlerts.some(a => a.incident_id === incidentId);
+    this.acknowledgedIncidentIds.add(incidentId);
+    this.activeAlerts = this.activeAlerts.filter(a => a.incident_id !== incidentId);
+    this.updateBannerState();
+
+    const backdrop = document.getElementById('emergency-modal-backdrop');
+    const isOpenHere = backdrop && backdrop.style.display !== 'none'
+      && this.currentModalIncident && this.currentModalIncident.incident_id === incidentId;
+    if (isOpenHere) {
+      this.showAcknowledgedState(by, when);
+    } else if (wasActive && typeof showToast === 'function') {
+      showToast(`Incident ${incidentId} was acknowledged by ${by || 'a clinician who was not recorded'}.`, 'info');
+    }
+  }
+
+  /** Turns the open pop-up into "acknowledged by …"; it closes with "OK, close". */
+  showAcknowledgedState(by, when) {
+    this.stopAudioAlarm();
+    let timeText = '';
+    if (when) {
+      const d = new Date(when);
+      timeText = isNaN(d.getTime()) ? String(when) : d.toLocaleTimeString();
+    }
+    const box = document.getElementById('emergency-modal-box');
+    if (box) {
+      box.style.borderColor = '#059669';
+      box.style.boxShadow = '0 25px 60px -15px rgba(5, 150, 105, 0.35)';
+    }
+    document.getElementById('em-ack-detail').innerText =
+      `Acknowledged by ${by || 'a clinician who was not recorded'}${timeText ? ` at ${timeText}` : ''}. ` +
+      'This incident needs no further action from this screen.';
+    document.getElementById('em-ack-status').style.display = 'block';
+    document.getElementById('em-btn-ack').style.display = 'none';
+    document.getElementById('em-btn-close').style.display = 'inline-block';
+  }
+
+  /** Back to the normal "respond" pop-up for a pending incident. */
+  resetModalState() {
+    const box = document.getElementById('emergency-modal-box');
+    if (box) {
+      box.style.borderColor = '#DC2626';
+      box.style.boxShadow = '0 25px 60px -15px rgba(220, 38, 38, 0.5), 0 0 30px rgba(220, 38, 38, 0.3)';
+    }
+    document.getElementById('em-ack-status').style.display = 'none';
+    document.getElementById('em-btn-ack').style.display = 'inline-block';
+    document.getElementById('em-btn-close').style.display = 'none';
+  }
+
+  /** After a pop-up is closed, the next incident still waiting is shown. */
+  showNextPending() {
+    if (this.activeAlerts.length > 0) {
+      this.showEmergencyModal(this.activeAlerts[0]);
+      this.playAudioAlarm();
+    }
   }
 
   init() {
@@ -178,6 +241,12 @@ class EmergencyAlertManager {
             </div>
           </div>
 
+          <!-- Shown when someone else acknowledged this incident while it was open here -->
+          <div id="em-ack-status" style="display: none; background: #ECFDF5; border-left: 4px solid #059669; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;">
+            <div style="font-size: 14px; color: #065F46; font-weight: 800;" id="em-ack-title">✔ ACKNOWLEDGED</div>
+            <div style="font-size: 13px; color: #065F46; font-weight: 600; margin-top: 4px; line-height: 1.5;" id="em-ack-detail"></div>
+          </div>
+
           <!-- Action Buttons -->
           <div style="display: flex; gap: 12px; justify-content: flex-end;">
             <button id="em-btn-locate" class="btn btn-outline" style="border-color: #1E60F2; color: #1E60F2; font-weight: 700; padding: 10px 18px;">
@@ -185,6 +254,9 @@ class EmergencyAlertManager {
             </button>
             <button id="em-btn-ack" class="btn btn-primary" style="background: #DC2626; border-color: #DC2626; font-weight: 800; padding: 10px 24px; box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);">
               ✓ ACKNOWLEDGE & RESPOND
+            </button>
+            <button id="em-btn-close" class="btn btn-primary" style="display: none; background: #059669; border-color: #059669; font-weight: 800; padding: 10px 24px;">
+              OK, close
             </button>
           </div>
         </div>
@@ -232,6 +304,12 @@ class EmergencyAlertManager {
           this.acknowledgeAlert(this.currentModalIncident.incident_id);
         }
       });
+
+      // Closes an incident that someone else acknowledged; the next pending one is shown
+      document.getElementById('em-btn-close').addEventListener('click', () => {
+        this.hideEmergencyModal();
+        this.showNextPending();
+      });
     }
 
     // Add pulse CSS animation keyframes
@@ -261,14 +339,14 @@ class EmergencyAlertManager {
         this.onNewEmergency(incident);
       });
 
-      // Listen for Acknowledgment events
+      // An incident was acknowledged: by this screen, another screen or a headset.
+      // Every screen that shows it says by whom; it is closed with "OK, close".
       window.wsClient.on('EMERGENCY_ACKNOWLEDGED', (msg) => {
         console.log('[WS EMERGENCY ACKNOWLEDGED]', msg);
-        this.activeAlerts = this.activeAlerts.filter(a => a.incident_id !== msg.incident_id);
-        this.updateBannerState();
-        if (this.currentModalIncident && this.currentModalIncident.incident_id === msg.incident_id) {
-          this.hideEmergencyModal();
-        }
+        if (!msg || !msg.incident_id) return;
+        // This screen's own click: acknowledgeAlert() handles the answer
+        if (this.ownAcknowledgements.has(msg.incident_id)) return;
+        this.onAcknowledgedElsewhere(msg.incident_id, msg.attending_clinician, msg.timestamp);
       });
     }
   }
@@ -307,6 +385,7 @@ class EmergencyAlertManager {
     this.currentModalIncident = incident;
     const backdrop = document.getElementById('emergency-modal-backdrop');
     if (!backdrop) return;
+    this.resetModalState();
 
     // Fill Modal Data
     const catEl = document.getElementById('em-modal-category');
@@ -378,28 +457,39 @@ class EmergencyAlertManager {
   }
 
   async acknowledgeAlert(incidentId) {
+    this.ownAcknowledgements.add(incidentId);
     try {
       const res = await fetch('/api/alerts/acknowledge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           incident_id: incidentId,
-          attending_clinician: 'DOC-8821 (Dr. Tan)',
+          // The server records the signed-in clinician
           notes: 'Emergency acknowledged and staff dispatched via Web Dashboard.'
         })
       });
       const data = await res.json();
       if (data.success) {
+        // Acknowledged by this screen: the pop-up closes, the next pending incident is shown
         this.acknowledgedIncidentIds.add(incidentId);
-        if (typeof showToast === 'function') {
-          showToast('Emergency alert acknowledged successfully', 'success');
-        }
+        if (typeof showToast === 'function') showToast('Emergency alert acknowledged successfully', 'success');
         this.activeAlerts = this.activeAlerts.filter(a => a.incident_id !== incidentId);
         this.updateBannerState();
         this.hideEmergencyModal();
+        this.showNextPending();
+      } else if (res.status === 409) {
+        // Someone else (another screen or a headset) was first: their acknowledgement
+        // is the record. The message names them; the pop-up says so until closed.
+        const by = /by (.*)\.$/.exec(data.error || '');
+        this.onAcknowledgedElsewhere(incidentId, by ? by[1] : null, null);
+      } else if (typeof showToast === 'function') {
+        showToast(`Not acknowledged: ${data.error || `server answered ${res.status}`}`, 'danger');
       }
     } catch (e) {
       console.error('[ACKNOWLEDGE ERROR]', e);
+      if (typeof showToast === 'function') showToast('Not acknowledged: the edge server cannot be reached.', 'danger');
+    } finally {
+      this.ownAcknowledgements.delete(incidentId);
     }
   }
 

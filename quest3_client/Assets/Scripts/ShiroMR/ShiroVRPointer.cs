@@ -669,8 +669,22 @@ namespace ShiroMR
 
                     if (isReattaching)
                     {
-                        _distanceBadgeText.text = $"🎯 LOCK PATIENT ({hitDistance:F2}m - PINCH/CLICK)";
-                        _distanceBadgeText.color = new Color(1.0f, 0.85f, 0.2f);
+                        var linking = ShiroPatientLinking.Instance;
+                        if (linking != null && linking.AimedTrackId >= 0)
+                        {
+                            _distanceBadgeText.text = $"🔗 LINK TO THIS PERSON ({linking.AimedHeight:0.00} m) - PINCH";
+                            _distanceBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                        }
+                        else if (linking != null && linking.LinkingEnabled)
+                        {
+                            _distanceBadgeText.text = $"📍 NOBODY SEEN HERE: PINCH TO PIN ({hitDistance:F2}m)";
+                            _distanceBadgeText.color = new Color(1.0f, 0.85f, 0.2f);
+                        }
+                        else
+                        {
+                            _distanceBadgeText.text = $"🎯 LOCK PATIENT ({hitDistance:F2}m - PINCH/CLICK)";
+                            _distanceBadgeText.color = new Color(1.0f, 0.85f, 0.2f);
+                        }
                     }
                     else if (currentHitNormal == Vector3.up || Mathf.Abs(currentHitPoint.y - GetPhysicalFloorHeight()) < 0.05f)
                     {
@@ -781,7 +795,10 @@ namespace ShiroMR
                     {
                         if (kvp.Value != null && kvp.Value.trackingState == PatientTrackingState.ManualAim)
                         {
-                            kvp.Value.LockManualPosition(currentHitPoint);
+                            // A detected person aimed at: link to them (8D-5); otherwise pin to the spot
+                            var linking = ShiroPatientLinking.Instance;
+                            if (linking == null || !linking.TryChoosePerson(kvp.Value))
+                                kvp.Value.LockManualPosition(currentHitPoint);
                             break;
                         }
                     }

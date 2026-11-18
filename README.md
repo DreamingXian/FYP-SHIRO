@@ -104,15 +104,16 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
   * Anchor placement suggestions on the ward editor, with line-of-sight checks against beds and walls.
 * **Web Management Portal:**
   * **Ward Configuration Editor:** Room dimensions, ensuite cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor placement, stored in MySQL.
-  * **2D Live Ward Map:** Scaled patient marker, movement trail, bed docking status, and wristband unbinding.
+  * **2D Live Ward Map:** Scaled patient marker, movement trail, bed docking status, and wristband unbinding. A patient whom a headset has linked to a person it sees is drawn where the headset sees them (violet dot, 👁, "seen by headset …"), with the Bluetooth estimate as a faint dot and its distance on the card; after 1.5 s without news from the headset the marker goes back to Bluetooth.
   * **Device Provisioning Radar:** Lists nearby devices that are not yet enrolled, with one-click enrollment.
-  * **Patient Inpatient Directory:** Admission, fall risk score, medical history, bed allocation, wristband binding and discharge.
+  * **Patient Inpatient Directory:** Admission, fall risk score, medical history, optional height and weight ("not recorded" when empty; the headset uses the height to tell people apart), bed allocation, wristband binding and discharge.
   * **Live Lab & Diagnostics:** Live vitals and motion from the wristband, raw versus Kalman-filtered RSSI per anchor, and an MQTT telemetry inspector.
   * **System Health:** Live server uptime, memory, event-loop delay and database load, and the status of every enrolled anchor and headset.
 * **Clinical Emergency Audit Logging:** Every fall and vitals alarm is written to a MySQL incident log with its own ID (`INC-YYYYMMDD-NNNN`), and its acknowledgement is recorded; measured vitals and positions also go to InfluxDB when it is running.
 * **Every Input Is Checked:** Each value that reaches the edge server over HTTP, WebSocket or MQTT is checked for type, form and range before it is used (`edge_server/utils/validate.js`). A request with a missing or malformed identifier is refused with a 400 response; it is never answered with a default patient, ward or device. Request bodies and messages have size limits, a photo upload is accepted only as PNG, JPEG or WebP by its content, and requests from pages of other websites are refused. The dashboard shows every value from the server as text (`public/js/html_safety.js`), so a name such as `<img src=x onerror=alert(1)>` is displayed, never run.
-* **Only the Project's Devices Are Accepted:** The MQTT broker requires the anchor login and an anchor client ID, limits each anchor to its own topics and locks out an address after 10 failed logins. MySQL and InfluxDB listen on the server PC only, the server uses a limited MySQL account, and the firewall opens only the dashboard and MQTT ports on private networks. What is protected, and the known limits (no TLS, unauthenticated BLE, shared anchor login, no clinician login yet), are in [docs/security.md](docs/security.md).
+* **Only the Project's Devices Are Accepted:** The MQTT broker requires the anchor login and an anchor client ID, limits each anchor to its own topics and locks out an address after 10 failed logins. MySQL and InfluxDB listen on the server PC only, the server uses a limited MySQL account, and the firewall opens only the dashboard and MQTT ports on private networks. What is protected, and the known limits (no TLS, unauthenticated BLE, shared anchor login, minimal sign-in), are in [docs/security.md](docs/security.md).
 * **Stable Under Continuous Telemetry:** Device presence is kept in memory and written in one batch every 5 s; status changes are written at once. In a 5-minute load test (3 anchors × 2 wristbands at 7 Hz) database queries fell from about 150 to 2.6 per second and memory stayed at about 95 MB instead of growing to 200 MB; a 30-minute run with the real hardware stayed level at 79–83 MB ([docs/test_records/load-test.md](docs/test_records/load-test.md)). Ctrl+C shuts the server down cleanly without losing buffered data; log lines carry a time stamp and a level (`LOG_LEVEL`); a database outage is logged without flooding and the server recovers by itself.
+* **Clinician Sign-in and Audit Trail:** The dashboard and API need a signed-in clinician (roles `ADMIN` and `CLINICIAN`; scrypt password hashes, 12-hour HttpOnly session, lockout after 5 wrong passwords). Every change, sign-in and failed sign-in is written to an audit log with who did it; bindings and acknowledgements record the real clinician. A headset is paired once with a 6-digit code from the dashboard and then uses its own revocable token. The ADMIN tab manages accounts, headset pairings and the audit log ([docs/security.md](docs/security.md)).
 * **One Anchor per 1 Hz Command:** The server sends the 1 Hz vitals command through the anchor that hears the wristband most strongly, so two anchors never compete for the same BLE connection.
 
 ### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
@@ -121,18 +122,30 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
   * **In-Transit Walking Mode:** 0.65 m floor occupancy ring and an eye-level vitals panel that turns to face the clinician.
   * **Bed-Docked Mode:** Detects when the patient is in their bed area and docks the panel to the bed headwall or bedside, aligned with the bed's rotation.
   * **Vitals Panel:** Heart rate with a heart icon pulsing at the measured rate, SpO2 (indicative), motion state badge, and dock mode toggle.
-  * **Manual Repositioning Handle:** `[✥ Move]` handle to pinch and drag the panel, with re-attach and cancel buttons.
+  * **Manual Repositioning Handle:** `[✥ Move]` handle to pinch and drag the panel.
+  * **Re-Attach and Auto:** `[🎯 Re-Attach]`, then aim and pinch. Aimed at a detected person (marked by an amber column, "🔗 LINK TO THIS PERSON"), the panel follows that person until they are lost from view, whatever the Bluetooth position says. Aimed where nobody is detected, the panel is pinned to that spot. `[🔄 Auto]` ends either choice.
+  * **Status Line:** why the panel is where it is, for example "linked: person 1.62 m, 0.3 m from the wristband" or "nobody within 0.5 m of the wristband: Bluetooth position".
+* **Person Detection and Linking (`ShiroDepthProbe.cs`, `ShiroPersonDetection.cs`, `ShiroPersonLinking.cs`, `ShiroPatientLinking.cs`):** a second source of position besides Bluetooth, without a camera image.
+  * Five times per second, 40 × 30 rays measure distances with Meta's Depth API. The points are grouped on a 10 cm floor grid into objects with a position and a height. The floor is measured, and walls and the wearer's own hands are left out.
+  * A person-sized object (0.9–2.1 m) becomes a person candidate once it has moved at least 0.4 m within 10 s. Each step needs evidence: its old spot is seen empty, or it now stands where empty space was seen before. A still cabinet or a flickering screen is therefore not a person.
+  * Each patient panel away from its bed links to the person candidate within 0.5 m of the wristband's Bluetooth position, also scored on the patient's recorded height and the wristband's motion state. Two people who fit equally give "unclear", and no guess is made. A link holds while the Bluetooth position stays within 1.5 m.
+  * While linked, the panel stands beside the person with the patient's name above their head, and both maps show the patient at the headset's position.
+  * Points are used for one update only; nothing is recorded. Test results and limitations: [docs/test_records/person-linking-8d.md](docs/test_records/person-linking-8d.md).
 * **Spatial Room Alignment Tool (`WardAlignmentTool.cs`, `WardSpatialManager.cs`):**
   * 2-point door frame calibration with floor height from the Meta XR environment raycast.
   * 2-point bed calibration (`AlignWardByBedTwoPoints`) and 2-point wall anchor calibration (`AlignWardByWallAnchors`).
   * Persistent spatial anchor, saved on the headset and its ID sent to the server (`/api/ward/save-anchor`).
+  * After the headset wakes from sleep, the saved anchor is loaded again by its ID and found in the room again; Re-Sync does the same. Saving checks that the new anchor is localized and tries a second, fresh anchor when the first fails.
+  * A spatial anchor exists only on the headset that saved it, so the server keeps one anchor per headset and ward. With **🧭 Auto ward** on, the headset keeps the anchors of its calibrated wards loaded. When it is inside another calibrated ward for 2 s, that ward becomes active and is aligned from its anchor, with no new calibration (tested in one room so far).
+* **Emergency Alerts on the Headset (`ShiroAlertManager.cs`):** a fall, critical-vitals or geofence incident makes the patient's panel and floor ring flash red, plays a two-tone alarm and opens the alert on the hand slate. **✓ Acknowledge & Respond** records the headset and the clinician using it (`QUEST3-… (Nurse Lim, CLN-002)`, assigned by an admin on the ADMIN tab) on the server; an alert acknowledged elsewhere turns green with who responded and when, until closed with **OK**. Pending alerts are fetched again after every reconnection.
 * **Own Identity per Headset:** Each headset reports its own ID (`QUEST3-` plus 6 characters, derived from the device) and must be enrolled on the dashboard; the ward is chosen on the hand slate, never assumed.
 * **Hand Slate HUD (`ShiroHandSlate.cs`, `ShiroHandVisualizer.cs`):**
   * Follows the left palm; hand contour outline and fingertip touch.
   * **Ward Setup:** door frame calibration, save or purge the spatial anchor, re-sync alignment, digital twin overlay on/off.
-  * **IPS Location:** find the current ward/room and continuous refresh, with the ward's real beds and anchors only.
-  * **Patient Vitals:** re-attach the hologram and switch between headboard and bedside mount.
-  * **System:** reconnect, server address presets (Wi-Fi, Hotspot, Localhost for Quest Link), headset ID and connection state.
+  * **Location:** find the current ward/room and continuous refresh, with the ward's real beds and anchors only.
+  * **Patient:** re-attach the hologram and switch between headboard and bedside mount; the alert status line.
+  * **System:** reconnect, server address presets (Wi-Fi, Hotspot, Localhost for Quest Link), headset ID and connection state, pairing. Person linking: **🔗 Linking** (on by default), **🔬 Depth view** (shows the depth points and every object found with its height and state), **🚶 Move rule** (off only to test with height alone) and **🧪 Fake band** (a test panel whose Bluetooth position wanders in front of the wearer).
+  * **Live Map (`ShiroWardMiniMap.cs`):** top view of the ward the headset is in (walls, door, beds, anchors) with each wristband's BLE position, this headset's position and heading, and patients with a pending alert blinking red. Wristbands not heard for 10 s turn grey with "last seen". The ward bar shows any other ward without changing the active ward. Tapping a patient opens their card (patient, bed, wristband, live vitals) and requests 1 Hz vitals for 60 s through the strongest anchor. A patient linked to a person seen by a headset is shown at that person's position (violet, 👁), with the Bluetooth estimate as a faint dot.
 
 ---
 
@@ -179,14 +192,14 @@ Detailed step-by-step instructions, including troubleshooting, are in [SYSTEM_ST
    cd d:\RSW\FYP\Code\edge_server
    npm start
    ```
-   Open the dashboard at `http://localhost:3000`.
+   Open the dashboard at `http://localhost:3000` and sign in. On the very first start, create the first admin account there (on the server PC only), then the other accounts on the ADMIN tab (startup guide, Section 3.6).
 3. **Power On Hardware Nodes:**
    * **Wristband:** Power the XIAO ESP32-C6 and wear it with the sensor on the outer side of the wrist, strap snug.
    * **Anchors:** Power the ESP32-WROOM-32E nodes. They connect to Wi-Fi and the MQTT broker by themselves and start publishing.
 4. **Launch Meta Quest 3 Client:**
    * In Unity Hub, open the project folder `quest3_client/` of this repository with Unity `6000.3.28f1` (platform: Android).
-   * Open `Assets/Scenes/SampleScene.unity`, connect the Quest 3 via Quest Link / Air Link and press Play.
-   * On the dashboard's Devices tab, enroll the headset ID shown in the Unity Console (`QUEST3-…`) once.
+   * Open `Assets/Scenes/SampleScene.unity`, connect the Quest 3 via Quest Link / Air Link and press Play. Person linking needs the depth sensor, which over Link needs **Meta Quest Link app → Settings → Developer → Spatial Data over Meta Quest Link** switched on.
+   * Pair the headset once: ADMIN tab → Create pairing code, then hand slate → System → Pair headset (code).
    * Look at the left palm → **Ward Setup** tab → choose the ward → **Start Door Frame Calibration** and aim at the door frame corners.
 
 ### Automated Tests
@@ -200,7 +213,14 @@ Run from `edge_server/`:
 | `npm run test:integration` | Database start-up, restart safety, bindings, incident log, alarm path, the full MQTT-to-dashboard pipeline, refused requests, commands and messages, MQTT access (no login, wrong login, forbidden topics, lockout), batched device presence, OFFLINE detection and clean shutdown, with a real server on spare ports | MySQL running. Uses a separate `shiro_test` database; InfluxDB checks are skipped when it is not running |
 | `node tools/load_test.js --duration 300` | Load test: replays anchors (default 3 anchors × 2 wristbands at 7 Hz) against a running server and reports messages per second, database queries per second, memory, event-loop delay and API answer times. Results of 15 Nov 2026: [docs/test_records/load-test.md](docs/test_records/load-test.md) | A server started against `shiro_test`, never the database with real patients |
 
-GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the lint, the unit tests, the integration tests (against a temporary MariaDB 10.4) and a compile of the anchor and wristband firmware on every push and pull request.
+The headset's person detection and linking are plain C# and are tested outside Unity, from the repository root:
+
+| Command | What it runs | Needs |
+| :--- | :--- | :--- |
+| `dotnet run --project "quest3_client/Tests~/DetectionTests"` | 69 tests: the person detector, 23 scenes of a ray-cast room simulation (a wearer walking past a rack, a cabinet, a monitor and a chair, with depth noise), the wristband-to-person linking and choosing a person by hand | .NET SDK 10 |
+| the same with `-c Release -- --seeds 100` | Every scene with 100 random seeds (path, noise, timing); about 8 minutes. Add a word after the number to run only the scenes whose name contains it | .NET SDK 10 |
+
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the lint, the unit tests, the integration tests (against a temporary MariaDB 10.4), the headset detection tests and a compile of the anchor and wristband firmware on every push and pull request.
 
 Firmware logic (fall state machine, telemetry packet, heart-rate and SpO2 estimation against recorded pulse signals) is tested on the PC, without a board:
 
@@ -236,7 +256,7 @@ Code/
 │   ├── eslint.config.js            # Lint rules (npm run lint)
 │   ├── .env.example                # Template for git-ignored .env (ports, MQTT anchor login, MySQL, InfluxDB token)
 │   ├── test/                       # Automated tests (unit/ and integration/)
-│   ├── tools/                      # start_influxdb.bat (InfluxDB on this PC only), load_test.js
+│   ├── tools/                      # start_influxdb.bat (InfluxDB on this PC only), load_test.js, reset_password.js
 │   ├── config/                     # Application, network, calibration and alarm threshold configs
 │   ├── database/                   # Connection pool, schema/ (tables), seed/ (sample data), migrations
 │   ├── controllers/                # Request handlers (Wards, Patients, Devices, Bindings)
@@ -259,14 +279,22 @@ Code/
     │   │   ├── WardSpatialManager.cs   # Coordinate math, bed docking, alignment
     │   │   ├── WardAlignmentTool.cs    # 2-point door & bed calibration laser tool
     │   │   ├── PatientHologram.cs      # Dual-mode in-situ vitals hologram & HUD
-    │   │   ├── ShiroHandSlate.cs       # 4-tab hand slate HUD
+    │   │   ├── ShiroHandSlate.cs       # 5-tab hand slate HUD
     │   │   ├── ShiroHandVisualizer.cs  # Hand outline contour tracking
     │   │   ├── ShiroVRPointer.cs       # Depth raycast laser pointer
+    │   │   ├── ShiroAlertManager.cs    # Emergency alerts on the headset (flash, tone, acknowledge)
+    │   │   ├── ShiroWardMiniMap.cs     # Live Map tab (2D ward map)
+    │   │   ├── ShiroWardAutoDetect.cs  # Auto ward: recognise a calibrated ward from its saved anchor
+    │   │   ├── ShiroDepthProbe.cs      # Depth rays, floor measurement, depth view
+    │   │   ├── ShiroPersonDetection.cs # Person detector (plain C#, tested outside Unity)
+    │   │   ├── ShiroPersonLinking.cs   # Wristband-to-person linking and aiming at a person (plain C#)
+    │   │   ├── ShiroPatientLinking.cs  # Links each panel, reports seen positions, fake wristband
     │   │   └── ShiroDataModels.cs      # Telemetry & JSON data contracts
     │   ├── Plugins/                # NativeWebSocket networking library
     │   ├── Resources/              # Runtime UI fonts & default assets
     │   ├── Settings/               # URP rendering pipelines & volume profiles
     │   └── XR/                     # OpenXR & Meta XR runtime configurations
+    ├── Tests~/DetectionTests/      # Tests of person detection and linking (dotnet run; ignored by Unity)
     ├── Packages/                   # Package manifest & lockfiles
     └── ProjectSettings/            # InputSystem, TagManager, QualitySettings
 ```
@@ -275,18 +303,22 @@ Code/
 
 ## 7. Upcoming Milestones & Roadmap
 
-* [ ] **Clinician sign-in:** clinician accounts and roles, sign-in for the dashboard and the headset, protected HTTP and WebSocket endpoints, and the real clinician recorded on bindings and acknowledgements.
+* [x] **Clinician sign-in (minimal):** accounts with two roles, protected HTTP and WebSocket endpoints, audit log, headset pairing, the real clinician recorded on bindings and acknowledgements. Not included: sign-in of a named clinician on the headset, password expiry, two-factor sign-in.
 * [ ] **Remaining clinical features:**
-  * Headset emergency overlay with alarm tone and acknowledge.
+  * ✅ Headset emergency overlay with alarm tone and acknowledge; live 2D ward map on the hand slate.
+  * ✅ Person linking on the headset: a wristband linked to the person the depth sensor sees, choosing by hand, maps showing where the headset sees the patient.
+  * ✅ Headset-triggered live mode (1 Hz from the Live Map card). Open: an explicit return to passive mode, and a longer live mode.
+  * ✅ Each patient's incident history on the dashboard's Patients page (🚨 Incidents on a patient row, 🚨 Incident log for every patient), with who responded and how fast.
+  * ✅ Headset: restore the ward alignment after the headset wakes from sleep (F-5, confirmed on the headset).
+  * ✅ Optional patient height and weight; one spatial anchor per headset and ward; automatic ward detection (walk between two rooms not tested yet).
   * Geofence detection on the server.
-  * Headset-triggered live mode and an explicit return to passive mode.
   * Patient profile and 24-hour history in the headset.
   * Binding history instead of deleting binding rows.
-  * Each patient's incident history on the dashboard's Patients page.
-  * Headset: restore the ward alignment after the headset wakes from sleep.
+  * Shift summary report.
   * Standalone Android APK build for the Quest 3.
+  * Clearer panels and hand slate (UI/UX).
 * [ ] **Evaluation:**
-  * Position accuracy measured at fixed points in the ward, and improved (the regression run of 16 Nov 2026 found it low in a small room).
+  * Position accuracy measured at fixed points in the ward, and improved (the regression run of 16 Nov 2026 found it low in a small room), together with the wristband's motion state (walking shown as hand movement).
   * End-to-end telemetry and tracking latency.
   * Frame rate and battery runtime on the Meta Quest 3 and the wristband.
   * Thesis chapters aligned with what was built.

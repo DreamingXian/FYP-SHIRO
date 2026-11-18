@@ -203,13 +203,34 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
 
    **Stopping the server:** press **Ctrl+C** once in its terminal. It disconnects the anchors and dashboards, writes the device status and InfluxDB points still in memory, closes the database and ends with `[SHUTDOWN] Done.` Closing the terminal window instead skips these steps; at most the last 5 seconds of "last seen" and battery values are then lost.
 
-3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`:
+3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The dashboard offers:
    * **Ward Configuration Editor:** Room dimensions, obstacle cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor placement suggestions with line-of-sight checks.
    * **Live Ward Map:** 2D real-time bird's-eye canvas with a scaled patient marker, movement trail, bed docking detection, and landmark calibration of each anchor ($A$ and $n$ parameters).
    * **Device Provisioning Radar:** Lists nearby anchors, wristbands and headsets that are not yet enrolled, with one-click enrollment.
    * **Patient Admissions Directory:** Patient profiles, fall risk scores, bed allocation, wristband binding and discharge.
    * **Live Telemetry & Diagnostics Lab:** Live heart rate, SpO2 (indicative), motion and sensor contact from the wristband, raw versus Kalman-filtered RSSI per anchor, and an MQTT telemetry inspector. The raw pulse waveform is not shown: the wristband sends only computed results.
    * **System Health:** live server state (uptime, memory, response delay, database queries per second) and the status of every enrolled anchor and headset, refreshed every 5 s.
+   * **Admin** (admins only): clinician accounts, headset pairing and the audit log.
+
+### 3.6 Clinician Accounts and Sign-in
+
+The dashboard and every API address need a signed-in clinician. Two roles exist:
+
+| Role | Can do |
+| :--- | :--- |
+| `CLINICIAN` | Patients (admit, edit, discharge, beds, photos), wristband bindings, alarms (acknowledge), live mode, everything that is read only |
+| `ADMIN` | Everything a clinician can, plus accounts, device enrollment and deletion, ward editing, anchor calibration, headset pairing and the audit log |
+
+**First start (once):**
+1. On the **server PC itself**, open `http://localhost:3000`. While no account exists, the sign-in page shows **Create the first admin account**. This form works only on the server PC.
+2. Enter your full name, a username (lowercase, for example `admin`) and a password of at least 10 characters. You are then signed in as admin.
+3. Open the **ADMIN** tab and create an account for each clinician (role `CLINICIAN`). Give each person their initial password in person.
+
+**Every day:** sign in with your username and password. A session lasts 12 hours; **Log out** (top right) ends it. After 5 wrong passwords an account is locked for 5 minutes.
+
+**Audit log:** ADMIN tab → Audit Log. Every change (admission, discharge, binding, acknowledgement, device, ward, calibration), every sign-in and failed sign-in, and every account and pairing change is listed with who did it, when and from which address. Filter by actor (`CLN-002`, `QUEST3-…`), action (`PATIENT_ADMIT`) or target (`P-001`).
+
+**Forgotten admin password:** on the server PC, in `edge_server`, run `node tools/reset_password.js <username>` and type the new password twice (it is not shown). Every session of that account ends.
 
 ---
 
@@ -346,13 +367,18 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
    * **Server Port:** `3000`.
    * **Target Ward ID:** leave empty. The ward is chosen on the hand slate (Section 6.6) and remembered on the headset; no ward is assumed.
    * **Auto Connect on Start:** Enabled.
-6. **Enroll the headset (once per headset).** Press Play. The Unity Console shows `[SHIRO NET] This headset is QUEST3-…`. On the dashboard's **Devices** tab, the same ID appears as a device that is not enrolled yet: enroll it. The Unity editor on a PC and the app installed on the Quest have different IDs, so each is enrolled once.
+6. **Pair the headset (once per headset).** Press Play. The hand slate's **System** tab shows `Edge Server: 🔑 NOT PAIRED`.
+   1. On the dashboard (signed in as admin): **ADMIN** tab → **Headset Pairing** → **Create pairing code**. A 6-digit code appears, valid for 5 minutes and usable once.
+   2. On the headset: System tab → **🔑 Pair headset (code)** → type the code on the number pad → **✓ Pair**.
+   3. The headset is enrolled automatically (as `QUEST3-…`, shown in the Unity Console as `[SHIRO NET] This headset is QUEST3-…`) and connects. It stays paired until an admin presses **Revoke** on the ADMIN tab.
+   4. On the ADMIN tab, choose the clinician who uses the headset in its **Used by** column. What the headset does (for example acknowledging an alert) is recorded as `QUEST3-… (name, CLN-…)`; without an assignment it is recorded as `QUEST3-… (no clinician assigned)`. The hand slate header shows the assignment. Pairing again clears it.
+   The Unity editor on a PC and the app installed on the Quest have different IDs, so each is paired once.
 
 ### 6.3 Running the Client (Two Methods)
 
 #### Method A: Instant Play via Meta Quest Link / Air Link (Fastest for Testing)
 1. Power on Meta Quest 3 and connect to your PC via USB-C cable or 5 GHz Wi-Fi (Air Link).
-2. Open the **Meta Quest Link** desktop app on your PC.
+2. Open the **Meta Quest Link** desktop app on your PC. First time only: **Settings → Developer → Spatial Data over Meta Quest Link** on. Without it the headset gets no depth data over Link, and person linking (Section 6.5) cannot see anyone.
 3. Put on the Quest 3, open Quick Settings, and launch **Quest Link**.
 4. Once inside the PC VR environment, look at your monitor and click **`▶ Play`** in the Unity Editor.
 5. Put the headset back on: You are now in color Passthrough with the live SHIRO MR system running!
@@ -398,6 +424,8 @@ To align the digital twin ward with your physical room:
 
 The alignment tool also has bed two-point and wall-anchor two-point methods (`WardAlignmentTool.cs`); they have no button on the hand slate and are not part of the normal procedure.
 
+**Several wards and headsets.** A spatial anchor exists only on the headset that saved it, so each headset calibrates each ward once; the server keeps one anchor per headset and ward. With **🧭 Auto ward** on (Ward Setup tab), the headset keeps the anchors of the wards it has calibrated loaded. When it has been inside another calibrated ward for 2 s, that ward becomes active and is aligned from its anchor, with no new calibration. **🔍 Find My Current Ward / Room** on the IPS Location tab checks at once. So far this has been tested in one room only: walking between two calibrated rooms needs the standalone APK.
+
 ---
 
 ### 6.5 In-Situ Patient Hologram & Bed Docking Controls
@@ -416,17 +444,29 @@ When the patient wearing the wristband is detected by the IPS engine:
    - Aim the laser pointer at the handle, pinch and hold to drag the panel vertically and horizontally.
    - Extend or pull back your left hand to adjust distance (closer or farther).
    - Release pinch: the panel stays at your chosen location.
-   - **`[🎯 Re-Attach]`** returns the panel to automatic IPS/bed following; the **headboard/bedside** button switches the bed mount; the cancel button ends a manual aim.
+   - **`[🎯 Re-Attach]`** starts aiming:
+     - Aim at a detected person: an amber column marks them and the pointer says **"🔗 LINK TO THIS PERSON"**. A pinch links the panel to that person until they are lost from view, even when the Bluetooth position disagrees ("🔗 FOLLOWING CHOSEN PERSON").
+     - Aim where nobody is detected: the pointer says **"📍 NOBODY SEEN HERE"**, and a pinch pins the panel to that spot.
+     - **`[✖ Cancel Aim]`** ends the aiming.
+   - **`[🔄 Auto]`** (shown while a person you chose or a spot you pinned is in use) goes back to automatic following.
+   - The **headboard/bedside** button switches the bed mount.
+4. **Person Linking (System tab → 🔗 Linking, on by default):**
+   - Five times per second the headset measures distances with its depth sensor (no camera image) and finds person-sized objects. One that has moved at least 0.4 m is a person candidate.
+   - A panel away from its bed follows the person candidate within **0.5 m of the wristband's Bluetooth position** ("🔗 FOLLOWING PERSON"), with the patient's name above their head. The link holds while the Bluetooth position stays within 1.5 m, and ends when it is farther for 5 s or the person leaves the view.
+   - The status line at the bottom of the panel says why, for example "linked: person 1.62 m, 0.3 m from the wristband". When two people fit equally it says "❓ UNCLEAR: CHOOSE PERSON": use Re-Attach.
+   - While linked, the dashboard's live map and the headset's Live Map show the patient where the headset sees them (violet dot, 👁), with the Bluetooth estimate as a faint dot.
+   - **🔬 Depth view** (System tab) shows what the headset sees. Each object has a vertical line and a label: grey = not a person, yellow = still, green = person candidate, 🔗 = linked patient.
 
 ---
 
 ### 6.6 Wrist Hand Slate HUD
 
-Look at your left palm/wrist to summon the 4-tab slate:
-* **🚪 Ward Setup:** ward information and the ward choice ("SWITCH HOSPITAL WARD"), door frame calibration, save / re-sync / purge of the spatial anchor, perspective, and the 3D digital twin overlay on/off.
+Look at your left palm/wrist to summon the 5-tab slate:
+* **🚪 Ward Setup:** ward information and the ward choice ("SWITCH HOSPITAL WARD"), door frame calibration, save / re-sync / purge of the spatial anchor, perspective, the 3D digital twin overlay on/off, and **🧭 Auto ward** (Section 6.4).
 * **📍 IPS Location:** "Find My Current Ward / Room" and continuous refresh (4 Hz). Shows only data of the loaded ward: its beds and anchors, and the anchor signal marked as estimated. Without a ward it says "NO WARD CONFIGURED".
 * **🛏️ Patient Vitals:** re-attach the patient hologram to gaze/aim and switch its mount between headboard and bedside.
-* **⚙️ System:** reconnect, server address presets (Wi-Fi `.1.229`, Hotspot `.137.1`, or Localhost for Quest Link), the headset ID, the active ward and the connection state.
+* **⚙️ System:** reconnect, server address presets (Wi-Fi `.1.229`, Hotspot `.137.1`, or Localhost for Quest Link), the headset ID, the active ward and the connection state, pairing. Person linking: **🔗 Linking** (on by default), **🔬 Depth view**, **🚶 Move rule** (off only to test with height alone) and **🧪 Fake band** (a test panel whose Bluetooth position wanders 2 m in front of you, shown as a cyan disc; never sent to the server).
+* **🗺️ Live Map:** top view of the ward with each patient (BLE position, or violet 👁 where a headset sees them), this headset and alerting patients in red. Tapping a patient opens their card and requests 1 Hz vitals for 60 s.
 
 ---
 
@@ -460,7 +500,8 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 [Step 5: Launch Meta Quest 3 MR Client]
   Put on Meta Quest 3 -> Start Quest Link.
   In Unity (project quest3_client), press Play on 'SampleScene'.
-  The hand slate's System tab shows the headset ID and the connection.
+  The hand slate's System tab shows the headset ID, the connection and
+  "🔗 Linking: ON".
 
 [Step 6: Calibrate Room]
   Turn left palm up -> [🚪 Ward Setup] -> check the ward -> [🚪 Start Door Frame Calibration (L->R)].
@@ -490,7 +531,14 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | One persistent connection per headset, with heartbeats. Ensure only one Unity instance is playing. |
-| Headset appears on the Devices tab as a new, unenrolled device (`QUEST3-` followed by 6 characters) | Each headset now reports its own ID, derived from the device (the Unity editor on a PC gets another ID than the Quest itself). | Enrol it once on the Devices tab. An old `QUEST3-001` entry can be deleted. |
+| Hand slate shows `Edge Server: 🔑 NOT PAIRED` | The headset has no pairing, or its pairing was revoked, or the database was recreated. | Section 6.2 step 6: create a code on the ADMIN tab and enter it on the System tab. |
+| Hand slate says "Pairing refused: The pairing code is wrong or has expired" | The code was mistyped, older than 5 minutes or already used. | Create a new code. After 5 wrong codes the headset's address is locked for 5 minutes. |
+| The dashboard always returns to the sign-in page | The session ended: 12 hours passed, you logged out elsewhere, or an admin deactivated the account or reset its password. | Sign in again; ask an admin if the account is deactivated. |
+| "Too many failed sign-ins for this account" | 5 wrong passwords in a row. | Wait 5 minutes. A forgotten password is reset by an admin (ADMIN tab), or for the last admin with `node tools/reset_password.js <username>` on the server PC. |
+| "Your account does not have permission for this" | The action needs an admin (accounts, devices, wards, calibration). | Ask an admin, or sign in with an admin account. |
+| Depth view status says "Depth NOT SUPPORTED here"; no panel is ever linked | Over Quest Link, the depth sensor's data is not passed to the PC. | Meta Quest Link app → **Settings → Developer → Spatial Data over Meta Quest Link** on, then restart Quest Link and Play. |
+| Panel stays on "📶 BLUETOOTH POSITION": "nobody within 0.5 m of the wristband" | The Bluetooth estimate is more than 0.5 m from the person (positioning accuracy, F-2), or the person has not moved since the headset came on (still, yellow in the depth view). | **🎯 Re-Attach**, aim at the patient and pinch. **🔄 Auto** returns to automatic linking. |
+| Panel follows the wrong person | Two people near the wristband's Bluetooth position. | Re-Attach and choose the right person; the choice holds until that person leaves the view. |
 | Hand slate shows "Ward: not configured" or "NO WARD CONFIGURED" | No ward has been chosen on this headset yet; no ward is assumed. | **Ward Setup** tab on the hand slate: choose the ward under "SWITCH HOSPITAL WARD". The choice is remembered. |
 | Server console shows the same warning only now and then | Repeated warnings are limited to one per 10 to 30 s. | Set `LOG_LEVEL=debug` in `edge_server/.env` for full detail, including error stacks. |
 | Virtual room overlay appears underground or tilted | Calibration point snapped to virtual floor mesh instead of physical floor. | Fixed in v2.0: Depth raycasting now queries `EnvironmentRaycastManager` to detect true physical floor height before transforming coordinates. |

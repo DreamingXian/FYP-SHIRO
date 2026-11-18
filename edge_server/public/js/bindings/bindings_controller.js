@@ -525,8 +525,8 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           patient_id: patientId,
-                          device_id: deviceId,
-                          bound_by: 'DOC-8821'
+                          device_id: deviceId
+                          // The server records the signed-in clinician as bound_by
                         })
                       });
                       const result = await res.json();
@@ -702,10 +702,10 @@
           ${statusBadge}
         </td>
         <td style="color: var(--text-secondary); font-size: 12px;">
-          <div>${escapeHtml(b.bound_at || 'Recently')}</div>
+          <div>${escapeHtml(b.bound_at || 'not recorded')}</div>
         </td>
         <td style="color: var(--text-muted); font-weight: 500; font-size: 12px;">
-          ${escapeHtml(b.bound_by || 'DOC-8821')}
+          ${escapeHtml(b.bound_by || 'not recorded')}
         </td>
         <td>
           <button class="btn btn-danger-outline btn-sm"${actionAttrs('unbindTag', [b.binding_id, b.patient_name, b.device_id])}>

@@ -4,8 +4,13 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const EXPECTED_TABLES = [
+  'audit_log',
+  'auth_sessions',
+  'clinicians',
   'devices',
   'emergency_incident_logs',
+  'headset_pairings',
+  'headset_ward_anchors',
   'patient_bindings',
   'patients',
   'ward_anchors',
@@ -25,7 +30,7 @@ describe('fresh install', () => {
   before(async () => { pool = await freshDatabase(); });
   after(async () => { await db.closePool(); });
 
-  test('creates all nine tables, including patient_bindings', async () => {
+  test('creates all fourteen tables, including patient_bindings and the account tables', async () => {
     const [rows] = await pool.query('SHOW TABLES');
     const names = rows.map(r => Object.values(r)[0]).sort();
     assert.deepEqual(names, EXPECTED_TABLES);
@@ -134,5 +139,22 @@ describe('seed data is only for an empty database', () => {
     await pool.query('DELETE FROM patients');
     await pool.query('DELETE FROM ward_rooms');
     assert.equal(await db.isDatabaseEmpty(), true);
+  });
+});
+
+describe('headset assignment columns', () => {
+  after(async () => { await db.closePool(); });
+
+  test('a database from before headset assignment gains the columns and keeps its pairings', async () => {
+    let pool = await freshDatabase();
+    await pool.query("INSERT INTO headset_pairings (device_id, token_hash, paired_by) VALUES ('QUEST3-OLD001', ?, 'CLN-001')", ['a'.repeat(64)]);
+    await pool.query('ALTER TABLE headset_pairings DROP COLUMN assigned_clinician_id, DROP COLUMN assigned_at, DROP COLUMN assigned_by');
+
+    pool = await restart();
+
+    const [cols] = await pool.query("SHOW COLUMNS FROM headset_pairings LIKE 'assigned_%'");
+    assert.deepEqual(cols.map(c => c.Field).sort(), ['assigned_at', 'assigned_by', 'assigned_clinician_id']);
+    const [[row]] = await pool.query("SELECT device_id, assigned_clinician_id FROM headset_pairings WHERE device_id = 'QUEST3-OLD001'");
+    assert.equal(row.assigned_clinician_id, null, 'existing pairings stay unassigned');
   });
 });

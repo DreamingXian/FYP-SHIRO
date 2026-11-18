@@ -4,7 +4,8 @@
 
 const bindingService = require('../services/binding_service');
 const { sendJson, sendFailure, parseJsonBody } = require('../utils/http');
-const { requireId, optionalText } = require('../utils/validate');
+const { requireId } = require('../utils/validate');
+const { actorLabel } = require('../services/auth/auth_service');
 
 /**
  * GET /api/bindings/list or /api/bindings
@@ -44,7 +45,8 @@ async function createBinding(req, res, body) {
     const payload = parseJsonBody(body);
     const patientId = requireId(payload.patient_id, 'patient_id');
     const deviceId = requireId(payload.device_id, 'device_id');
-    const boundBy = optionalText(payload.bound_by, 'bound_by', 64) || undefined;
+    // Recorded as the signed-in clinician; a name sent by the browser is not trusted
+    const boundBy = req.actor ? actorLabel(req.actor).slice(0, 64) : null;
 
     const result = await bindingService.bindPatientWristband(patientId, deviceId, boundBy);
     sendJson(res, 200, result);
