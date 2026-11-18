@@ -8,7 +8,7 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 
 const HTTP_PORT = 3993;
-const MQTT_PORT = 1883;
+const MQTT_PORT = 1890; // not 1883: that is the port of a running edge server
 const BASE = `http://127.0.0.1:${HTTP_PORT}`;
 
 function call(path, { method = 'GET', cookie, body } = {}) {
