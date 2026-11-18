@@ -378,7 +378,7 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 
 #### Method A: Instant Play via Meta Quest Link / Air Link (Fastest for Testing)
 1. Power on Meta Quest 3 and connect to your PC via USB-C cable or 5 GHz Wi-Fi (Air Link).
-2. Open the **Meta Quest Link** desktop app on your PC.
+2. Open the **Meta Quest Link** desktop app on your PC. First time only: **Settings → Developer → Spatial Data over Meta Quest Link** on. Without it the headset gets no depth data over Link, and person linking (Section 6.5) cannot see anyone.
 3. Put on the Quest 3, open Quick Settings, and launch **Quest Link**.
 4. Once inside the PC VR environment, look at your monitor and click **`▶ Play`** in the Unity Editor.
 5. Put the headset back on: You are now in color Passthrough with the live SHIRO MR system running!
@@ -424,6 +424,8 @@ To align the digital twin ward with your physical room:
 
 The alignment tool also has bed two-point and wall-anchor two-point methods (`WardAlignmentTool.cs`); they have no button on the hand slate and are not part of the normal procedure.
 
+**Several wards and headsets.** A spatial anchor exists only on the headset that saved it, so each headset calibrates each ward once; the server keeps one anchor per headset and ward. With **🧭 Auto ward** on (Ward Setup tab), the headset keeps the anchors of the wards it has calibrated loaded. When it has been inside another calibrated ward for 2 s, that ward becomes active and is aligned from its anchor, with no new calibration. **🔍 Find My Current Ward / Room** on the IPS Location tab checks at once. So far this has been tested in one room only: walking between two calibrated rooms needs the standalone APK.
+
 ---
 
 ### 6.5 In-Situ Patient Hologram & Bed Docking Controls
@@ -442,17 +444,29 @@ When the patient wearing the wristband is detected by the IPS engine:
    - Aim the laser pointer at the handle, pinch and hold to drag the panel vertically and horizontally.
    - Extend or pull back your left hand to adjust distance (closer or farther).
    - Release pinch: the panel stays at your chosen location.
-   - **`[🎯 Re-Attach]`** returns the panel to automatic IPS/bed following; the **headboard/bedside** button switches the bed mount; the cancel button ends a manual aim.
+   - **`[🎯 Re-Attach]`** starts aiming:
+     - Aim at a detected person: an amber column marks them and the pointer says **"🔗 LINK TO THIS PERSON"**. A pinch links the panel to that person until they are lost from view, even when the Bluetooth position disagrees ("🔗 FOLLOWING CHOSEN PERSON").
+     - Aim where nobody is detected: the pointer says **"📍 NOBODY SEEN HERE"**, and a pinch pins the panel to that spot.
+     - **`[✖ Cancel Aim]`** ends the aiming.
+   - **`[🔄 Auto]`** (shown while a person you chose or a spot you pinned is in use) goes back to automatic following.
+   - The **headboard/bedside** button switches the bed mount.
+4. **Person Linking (System tab → 🔗 Linking, on by default):**
+   - Five times per second the headset measures distances with its depth sensor (no camera image) and finds person-sized objects. One that has moved at least 0.4 m is a person candidate.
+   - A panel away from its bed follows the person candidate within **0.5 m of the wristband's Bluetooth position** ("🔗 FOLLOWING PERSON"), with the patient's name above their head. The link holds while the Bluetooth position stays within 1.5 m, and ends when it is farther for 5 s or the person leaves the view.
+   - The status line at the bottom of the panel says why, for example "linked: person 1.62 m, 0.3 m from the wristband". When two people fit equally it says "❓ UNCLEAR: CHOOSE PERSON": use Re-Attach.
+   - While linked, the dashboard's live map and the headset's Live Map show the patient where the headset sees them (violet dot, 👁), with the Bluetooth estimate as a faint dot.
+   - **🔬 Depth view** (System tab) shows what the headset sees. Each object has a vertical line and a label: grey = not a person, yellow = still, green = person candidate, 🔗 = linked patient.
 
 ---
 
 ### 6.6 Wrist Hand Slate HUD
 
-Look at your left palm/wrist to summon the 4-tab slate:
-* **🚪 Ward Setup:** ward information and the ward choice ("SWITCH HOSPITAL WARD"), door frame calibration, save / re-sync / purge of the spatial anchor, perspective, and the 3D digital twin overlay on/off.
+Look at your left palm/wrist to summon the 5-tab slate:
+* **🚪 Ward Setup:** ward information and the ward choice ("SWITCH HOSPITAL WARD"), door frame calibration, save / re-sync / purge of the spatial anchor, perspective, the 3D digital twin overlay on/off, and **🧭 Auto ward** (Section 6.4).
 * **📍 IPS Location:** "Find My Current Ward / Room" and continuous refresh (4 Hz). Shows only data of the loaded ward: its beds and anchors, and the anchor signal marked as estimated. Without a ward it says "NO WARD CONFIGURED".
 * **🛏️ Patient Vitals:** re-attach the patient hologram to gaze/aim and switch its mount between headboard and bedside.
-* **⚙️ System:** reconnect, server address presets (Wi-Fi `.1.229`, Hotspot `.137.1`, or Localhost for Quest Link), the headset ID, the active ward and the connection state.
+* **⚙️ System:** reconnect, server address presets (Wi-Fi `.1.229`, Hotspot `.137.1`, or Localhost for Quest Link), the headset ID, the active ward and the connection state, pairing. Person linking: **🔗 Linking** (on by default), **🔬 Depth view**, **🚶 Move rule** (off only to test with height alone) and **🧪 Fake band** (a test panel whose Bluetooth position wanders 2 m in front of you, shown as a cyan disc; never sent to the server).
+* **🗺️ Live Map:** top view of the ward with each patient (BLE position, or violet 👁 where a headset sees them), this headset and alerting patients in red. Tapping a patient opens their card and requests 1 Hz vitals for 60 s.
 
 ---
 
@@ -486,7 +500,8 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 [Step 5: Launch Meta Quest 3 MR Client]
   Put on Meta Quest 3 -> Start Quest Link.
   In Unity (project quest3_client), press Play on 'SampleScene'.
-  The hand slate's System tab shows the headset ID and the connection.
+  The hand slate's System tab shows the headset ID, the connection and
+  "🔗 Linking: ON".
 
 [Step 6: Calibrate Room]
   Turn left palm up -> [🚪 Ward Setup] -> check the ward -> [🚪 Start Door Frame Calibration (L->R)].
@@ -521,6 +536,9 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | The dashboard always returns to the sign-in page | The session ended: 12 hours passed, you logged out elsewhere, or an admin deactivated the account or reset its password. | Sign in again; ask an admin if the account is deactivated. |
 | "Too many failed sign-ins for this account" | 5 wrong passwords in a row. | Wait 5 minutes. A forgotten password is reset by an admin (ADMIN tab), or for the last admin with `node tools/reset_password.js <username>` on the server PC. |
 | "Your account does not have permission for this" | The action needs an admin (accounts, devices, wards, calibration). | Ask an admin, or sign in with an admin account. |
+| Depth view status says "Depth NOT SUPPORTED here"; no panel is ever linked | Over Quest Link, the depth sensor's data is not passed to the PC. | Meta Quest Link app → **Settings → Developer → Spatial Data over Meta Quest Link** on, then restart Quest Link and Play. |
+| Panel stays on "📶 BLUETOOTH POSITION": "nobody within 0.5 m of the wristband" | The Bluetooth estimate is more than 0.5 m from the person (positioning accuracy, F-2), or the person has not moved since the headset came on (still, yellow in the depth view). | **🎯 Re-Attach**, aim at the patient and pinch. **🔄 Auto** returns to automatic linking. |
+| Panel follows the wrong person | Two people near the wristband's Bluetooth position. | Re-Attach and choose the right person; the choice holds until that person leaves the view. |
 | Hand slate shows "Ward: not configured" or "NO WARD CONFIGURED" | No ward has been chosen on this headset yet; no ward is assumed. | **Ward Setup** tab on the hand slate: choose the ward under "SWITCH HOSPITAL WARD". The choice is remembered. |
 | Server console shows the same warning only now and then | Repeated warnings are limited to one per 10 to 30 s. | Set `LOG_LEVEL=debug` in `edge_server/.env` for full detail, including error stacks. |
 | Virtual room overlay appears underground or tilted | Calibration point snapped to virtual floor mesh instead of physical floor. | Fixed in v2.0: Depth raycasting now queries `EnvironmentRaycastManager` to detect true physical floor height before transforming coordinates. |
