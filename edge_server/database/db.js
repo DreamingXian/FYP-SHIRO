@@ -98,6 +98,8 @@ async function applySchema() {
   await migratePatientBody();
   const { migrate: migrateBindingHistory } = require('./migrate_binding_history');
   await migrateBindingHistory();
+  const { migrate: migratePatientDischargeWard } = require('./migrate_patient_discharge_ward');
+  await migratePatientDischargeWard();
 }
 
 /**

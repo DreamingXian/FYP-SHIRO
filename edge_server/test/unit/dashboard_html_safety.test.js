@@ -157,6 +157,8 @@ const SAFE_EXPRESSIONS = [
   /^(assignCell|clinicianOptions|stale)$/,
   // bindings_controller.js and patients_controller.js: binding history, fixed markup or escaped parts
   /^(deletedNote|historyItems)$/,
+  // reports/shift_report.js: report sections built in code from escaped parts
+  /^(tilesHtml|patientRowsHtml|deviceRowsHtml|vitalsNote|attnHtml|testTag)$/,
   /^getRadar(Signal|Battery)Html\(d\)$/,
   /^statusBadge\(d\.status\)$/, // health_monitor.js: fixed class name, escaped text
   /^isBound \|\| isAssignedWard \? `<option value="IN_USE" selected>In Use \(Currently Deployed\)<\/option>` : ''$/,

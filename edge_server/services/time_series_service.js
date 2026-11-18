@@ -344,11 +344,123 @@ function queryVitalsHistory(patientId, range = DEFAULT_HISTORY_RANGE, options = 
   });
 }
 
+/**
+ * Flux query: min, mean, max and number of readings of heart rate and SpO2 per
+ * patient between two times (the shift summary report). Matches on patient_id.
+ */
+function buildVitalsStatsQuery(patientIds, start, end) {
+  const ids = Array.isArray(patientIds) ? patientIds : [];
+  if (ids.length === 0) throw new Error('At least one patient ID is needed for a vitals summary.');
+  for (const id of ids) {
+    // The IDs become part of the query text: anything but a plain identifier is refused
+    if (!isId(id)) throw new Error('A valid patient ID is required for a vitals summary.');
+  }
+  if (!(start instanceof Date) || !(end instanceof Date) || !(end > start)) {
+    throw new Error('A vitals summary needs a start before its end.');
+  }
+  const keep = '|> keep(columns: ["patient_id", "_field", "_value"])';
+  return `
+      data = from(bucket: "${bucket}")
+        |> range(start: ${start.toISOString()}, stop: ${end.toISOString()})
+        |> filter(fn: (r) => r._measurement == "patient_vitals")
+        |> filter(fn: (r) => r._field == "heart_rate" or r._field == "spo2_percentage")
+        |> filter(fn: (r) => ${ids.map(id => `r.patient_id == "${id}"`).join(' or ')})
+        |> toFloat()
+        |> group(columns: ["patient_id", "_field"])
+      union(tables: [
+        data |> min() ${keep} |> set(key: "stat", value: "min"),
+        data |> max() ${keep} |> set(key: "stat", value: "max"),
+        data |> mean() ${keep} |> set(key: "stat", value: "mean"),
+        data |> count() |> toFloat() ${keep} |> set(key: "stat", value: "count")
+      ])
+        |> group()
+    `;
+}
+
+/**
+ * Parses the answer of buildVitalsStatsQuery into
+ * { 'P-001': { heart_rate: { min, mean, max, count }, spo2: { ... } }, ... }.
+ */
+function parseVitalsStatsCsv(csvData) {
+  const result = {};
+  let header = null;
+  for (const raw of String(csvData || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const parts = line.split(',');
+    if (parts.includes('patient_id') && parts.includes('stat') && parts.includes('_value')) {
+      header = { id: parts.indexOf('patient_id'), field: parts.indexOf('_field'), stat: parts.indexOf('stat'), value: parts.indexOf('_value') };
+      continue;
+    }
+    if (!header || parts.length <= Math.max(header.id, header.field, header.stat, header.value)) continue;
+    const value = parseFloat(parts[header.value]);
+    if (!Number.isFinite(value)) continue;
+    const field = parts[header.field] === 'spo2_percentage' ? 'spo2' : parts[header.field] === 'heart_rate' ? 'heart_rate' : null;
+    const stat = parts[header.stat];
+    if (!field || !['min', 'max', 'mean', 'count'].includes(stat)) continue;
+    const id = parts[header.id];
+    result[id] = result[id] || {};
+    result[id][field] = result[id][field] || {};
+    result[id][field][stat] = stat === 'count' ? Math.round(value) : value;
+  }
+  return result;
+}
+
+/**
+ * Vitals summary per patient for the shift report.
+ * Resolves { available: true, stats } or { available: false, reason }: unlike the
+ * history chart, "InfluxDB could not answer" is never shown as "no readings".
+ */
+function queryVitalsStats(patientIds, start, end) {
+  return new Promise((resolve) => {
+    if (!enabled) return resolve({ available: false, reason: 'InfluxDB is not configured (INFLUX_TOKEN)' });
+    if (!Array.isArray(patientIds) || patientIds.length === 0) return resolve({ available: true, stats: {} });
+    let flux;
+    try {
+      flux = buildVitalsStatsQuery(patientIds, start, end);
+    } catch (err) {
+      return resolve({ available: false, reason: err.message });
+    }
+    const req = http.request({
+      host: influxUrl.hostname,
+      port: influxUrl.port || 8086,
+      path: `/api/v2/query?org=${encodeURIComponent(org)}`,
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${token}`,
+        'Content-Type': 'application/vnd.flux',
+        'Accept': 'application/csv'
+      },
+      timeout: 8000
+    }, res => {
+      let csvData = '';
+      res.on('data', c => csvData += c);
+      res.on('end', () => {
+        if (res.statusCode !== 200) {
+          logger.warn('[INFLUXDB QUERY WARNING] Vitals summary: status', res.statusCode, csvData.slice(0, 300));
+          return resolve({ available: false, reason: `InfluxDB answered ${res.statusCode}` });
+        }
+        resolve({ available: true, stats: parseVitalsStatsCsv(csvData) });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('no answer within 8 s')));
+    req.on('error', err => {
+      logger.warn('[INFLUXDB QUERY ERROR] Vitals summary:', err.message);
+      resolve({ available: false, reason: 'InfluxDB is not running or cannot be reached' });
+    });
+    req.write(flux);
+    req.end();
+  });
+}
+
 module.exports = {
   logVitals,
   logTrajectory,
   logFallVector,
   queryVitalsHistory,
+  queryVitalsStats,
+  buildVitalsStatsQuery,
+  parseVitalsStatsCsv,
   flushBuffer,
   closeTimeSeries,
   isEnabled,

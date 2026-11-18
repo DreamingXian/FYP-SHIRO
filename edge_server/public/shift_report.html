@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shift Summary | SHIRO</title>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <style>
+    body { margin: 0; background: #F1F5F9; color: #0F172A; font-size: 13px; }
+    .controls { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; padding: 14px 24px; background: #FFFFFF; border-bottom: 1px solid #E2E8F0; }
+    .controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: #475569; }
+    .controls select, .controls input { font-size: 13px; padding: 5px 8px; min-width: 140px; }
+    .sheet { max-width: 1000px; margin: 20px auto; background: #FFFFFF; padding: 28px 32px; border: 1px solid #E2E8F0; border-radius: 8px; }
+    .sheet h1 { font-size: 20px; margin: 0 0 4px; }
+    .sheet h2 { font-size: 14px; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #0F172A; text-transform: uppercase; letter-spacing: 0.4px; }
+    .meta { color: #475569; font-size: 12px; line-height: 1.6; }
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .tile { border: 1px solid #CBD5E1; border-radius: 6px; padding: 8px 10px; }
+    .tile .label { font-size: 10px; color: #64748B; text-transform: uppercase; }
+    .tile .value { font-size: 18px; font-weight: 700; }
+    table.report { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.report th, table.report td { border: 1px solid #CBD5E1; padding: 5px 6px; text-align: left; vertical-align: top; }
+    table.report th { background: #F1F5F9; font-size: 11px; }
+    .attn { display: inline-block; background: #B91C1C; color: #FFFFFF; font-weight: 700; font-size: 10px; padding: 1px 5px; border-radius: 3px; margin-right: 4px; }
+    .test { display: inline-block; background: #E2E8F0; color: #334155; font-weight: 700; font-size: 10px; padding: 1px 5px; border-radius: 3px; }
+    .muted { color: #64748B; }
+    .warn { background: #FEF3C7; border: 1px solid #F59E0B; color: #78350F; padding: 8px 10px; border-radius: 6px; margin: 8px 0; }
+    .error { background: #FEF2F2; border: 1px solid #FECACA; color: #B91C1C; padding: 12px; border-radius: 6px; }
+    .signoff { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 8px; }
+    .signoff .line { border-bottom: 1px solid #0F172A; height: 26px; margin-bottom: 4px; }
+    .signoff .caption { font-size: 10px; color: #64748B; margin-bottom: 10px; }
+    .notes-lines .line { border-bottom: 1px solid #94A3B8; height: 24px; }
+    .footnotes { font-size: 10px; color: #64748B; margin-top: 18px; line-height: 1.5; }
+    @media print {
+      @page { size: A4; margin: 12mm; }
+      body { background: #FFFFFF; }
+      .controls { display: none; }
+      .sheet { margin: 0; padding: 0; border: none; max-width: none; }
+      table.report { page-break-inside: auto; }
+      table.report tr { page-break-inside: avoid; }
+      h2 { page-break-after: avoid; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="controls">
+    <label>Ward
+      <select id="report-ward" class="form-control"></select>
+    </label>
+    <label>Shift starts on
+      <input type="date" id="report-date" class="form-control">
+    </label>
+    <label>Shift
+      <select id="report-shift" class="form-control"></select>
+    </label>
+    <button type="button" class="btn btn-primary btn-sm" id="report-show">Show report</button>
+    <button type="button" class="btn btn-outline btn-sm" id="report-print">🖨 Print / Save as PDF</button>
+    <span class="muted" id="report-status" style="font-size: 12px;"></span>
+  </div>
+
+  <div class="sheet" id="report-sheet">
+    <div class="muted">Choose a ward and a shift, then "Show report".</div>
+  </div>
+
+  <script src="/js/html_safety.js"></script>
+  <script src="/js/reports/shift_report.js"></script>
+</body>
+
+</html>

@@ -492,10 +492,13 @@ async function dischargePatient(patientId, dischargedBy = null) {
     }
 
     // 2. Mark patient as DISCHARGED
+    // The ward and bed are kept as "discharged from" (the shift report lists the patient)
     await conn.query(
-      `UPDATE patients 
-       SET status = 'DISCHARGED', 
+      `UPDATE patients
+       SET status = 'DISCHARGED',
            discharge_date = NOW(),
+           discharged_from_ward_id = assigned_ward_id,
+           discharged_from_bed_id = assigned_bed_id,
            assigned_ward_id = NULL,
            assigned_bed_id = NULL
        WHERE patient_id = ?`,
