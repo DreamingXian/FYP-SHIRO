@@ -87,6 +87,7 @@ namespace ShiroMR
         private Text _dockToggleBtnText;
         private Button _cancelAimBtn;
         private Text _cancelAimBtnText;
+        private Button _autoBtn;            // ends a choice made by hand (pinned spot or chosen person)
 
         // Floor Uncertainty Footprint Circle
         private GameObject _floorRingObj;
@@ -542,7 +543,10 @@ namespace ShiroMR
             }
             else if (trackingState == PatientTrackingState.InTransit)
             {
-                if (distToBed <= 0.85f && motionState != "WALKING")
+                // A person chosen by hand is kept (the clinician sees the patient elsewhere)
+                // until that person is lost from view; then the bed rule applies again.
+                bool chosenByHand = depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
+                if (distToBed <= 0.85f && motionState != "WALKING" && !chosenByHand)
                 {
                     _bedSettleTimer += 0.20f; // Settle accumulation
                     if (_bedSettleTimer >= 1.5f)
@@ -694,7 +698,49 @@ namespace ShiroMR
                 ShiroVRPointer.Instance.SetReattachTargeting(true);
             }
 
-            SetStatusBanner("🎯 AIM AT PATIENT & PINCH / CLICK TO LOCK POSITION", 15.0f, new Color(1.0f, 0.85f, 0.2f));
+            SetStatusBanner(LinkingOn
+                ? "🎯 AIM AT THE PATIENT & PINCH: LINKS TO THE PERSON SEEN THERE"
+                : "🎯 AIM AT PATIENT & PINCH / CLICK TO LOCK POSITION", 15.0f, new Color(1.0f, 0.85f, 0.2f));
+            RefreshUiText();
+        }
+
+        private static bool LinkingOn => ShiroPatientLinking.Instance != null && ShiroPatientLinking.Instance.LinkingEnabled;
+
+        /// <summary>
+        /// Choosing a person by hand (8D-5): the clinician aimed at a detected person and pinched.
+        /// The panel follows that person until the person is lost from view (or "Auto").
+        /// </summary>
+        public void ChoosePerson(Vector3 personFloorPos, float personHeight, string reason)
+        {
+            trackingState = PatientTrackingState.InTransit;
+            _isManuallyLocked = false;
+            _bedSettleTimer = 0f;
+            if (ShiroVRPointer.Instance != null) ShiroVRPointer.Instance.SetReattachTargeting(false);
+            if (_floorRingObj != null)
+            {
+                _floorRingObj.SetActive(true);
+                _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+            }
+            SetDepthLink(ShiroMR.Linking.LinkState.LinkedManual, personFloorPos, reason, personHeight);
+            SetStatusBanner("✅ LINKED TO THE PERSON YOU CHOSE • 🔄 Auto to undo", 4.0f, new Color(0.2f, 0.95f, 0.5f));
+            RefreshUiText();
+        }
+
+        /// <summary>"🔄 Auto": ends a pinned spot or a person chosen by hand; automatic linking resumes.</summary>
+        public void ReturnToAuto()
+        {
+            _isManuallyLocked = false;
+            _hasStationaryLock = false;
+            ShiroPatientLinking.Instance?.ReleaseChoice(tagId);
+            if (depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
+                SetDepthLink(ShiroMR.Linking.LinkState.BleOnly, Vector3.zero, "back to automatic: waiting for the next update");
+            else if (trackingState == PatientTrackingState.InTransit && HasIpsPosition)
+            {
+                detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0f, _rawIpsWorldPos.z);
+                _targetPosition = detectedPersonPosition;
+            }
+            EvaluatePersonDetection();
+            SetStatusBanner("🔄 AUTOMATIC AGAIN", 2.5f, Color.white);
             RefreshUiText();
         }
 
@@ -795,8 +841,23 @@ namespace ShiroMR
             }
             else if (trackingState == PatientTrackingState.ManualAim)
             {
-                _statusBannerText.text = "🎯 Aim at patient & pinch/click to lock position";
+                _statusBannerText.text = LinkingOn
+                    ? "🎯 Aim at the patient & pinch (nobody seen there: pins the panel)"
+                    : "🎯 Aim at patient & pinch/click to lock position";
                 _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+            }
+            else if (_isManuallyLocked)
+            {
+                _statusBannerText.text = "📍 Pinned here by you • 🔄 Auto to undo";
+                _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+            }
+            else if (_linkingActive && !string.IsNullOrEmpty(depthLinkReason))
+            {
+                // Short reason of the person linking, e.g. "linked: person 1.62 m, 0.3 m from the wristband"
+                _statusBannerText.text = depthLinkReason;
+                _statusBannerText.color = _depthLinked ? new Color(0.2f, 0.95f, 0.5f)
+                    : depthLinkState == ShiroMR.Linking.LinkState.Unclear ? new Color(1.0f, 0.75f, 0.2f)
+                    : new Color(0.95f, 0.85f, 0.35f);
             }
             else
             {
@@ -935,6 +996,11 @@ namespace ShiroMR
             if (_cancelAimBtn != null)
             {
                 _cancelAimBtn.gameObject.SetActive(trackingState == PatientTrackingState.ManualAim);
+            }
+            if (_autoBtn != null)
+            {
+                bool chosenByHand = _isManuallyLocked || depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
+                _autoBtn.gameObject.SetActive(trackingState == PatientTrackingState.InTransit && chosenByHand);
             }
             if (_dockToggleBtn != null)
             {
@@ -1213,12 +1279,43 @@ namespace ShiroMR
             cTxtRect.anchorMax = Vector2.one;
             cTxtRect.sizeDelta = Vector2.zero;
 
+            // Button 4: [🔄 Auto] (same place; shown while a choice made by hand is in force)
+            GameObject autoObj = new GameObject("Btn_Auto");
+            autoObj.transform.SetParent(bgObj.transform, false);
+            Image autoImg = autoObj.AddComponent<Image>();
+            autoImg.color = new Color(0.20f, 0.45f, 0.30f, 0.90f);
+            _autoBtn = autoObj.AddComponent<Button>();
+            _autoBtn.onClick.AddListener(ReturnToAuto);
+            BoxCollider colD = autoObj.AddComponent<BoxCollider>();
+            colD.size = new Vector3(135, 32, 35);
+            RectTransform autoRect = autoObj.GetComponent<RectTransform>();
+            autoRect.anchoredPosition = new Vector2(75, -64);
+            autoRect.sizeDelta = new Vector2(135, 30);
+            autoObj.SetActive(false);
+
+            GameObject autoTxtObj = new GameObject("Txt");
+            autoTxtObj.transform.SetParent(autoObj.transform, false);
+            Text autoTxt = autoTxtObj.AddComponent<Text>();
+            autoTxt.font = defaultFont;
+            autoTxt.fontSize = 12;
+            autoTxt.fontStyle = FontStyle.Bold;
+            autoTxt.alignment = TextAnchor.MiddleCenter;
+            autoTxt.color = Color.white;
+            autoTxt.text = "🔄 Auto";
+            RectTransform aTxtRect = autoTxtObj.GetComponent<RectTransform>();
+            aTxtRect.anchorMin = Vector2.zero;
+            aTxtRect.anchorMax = Vector2.one;
+            aTxtRect.sizeDelta = Vector2.zero;
+
             // Row 7: Status Banner Text
             GameObject statusObj = new GameObject("StatusBanner");
             statusObj.transform.SetParent(bgObj.transform, false);
             _statusBannerText = statusObj.AddComponent<Text>();
             _statusBannerText.font = defaultFont;
             _statusBannerText.fontSize = 10;
+            _statusBannerText.resizeTextForBestFit = true; // a long linking reason shrinks instead of being cut
+            _statusBannerText.resizeTextMinSize = 7;
+            _statusBannerText.resizeTextMaxSize = 10;
             _statusBannerText.alignment = TextAnchor.MiddleCenter;
             _statusBannerText.color = new Color(0.3f, 0.85f, 1.0f);
             _statusBannerText.text = "🛏️ Bed Headboard Poster • Center Wall Mount (Zero Jitter)";

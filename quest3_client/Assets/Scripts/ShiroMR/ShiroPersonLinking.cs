@@ -14,6 +14,11 @@
 //   Unclear       two or more people fit about equally: no guess, the clinician
 //                 can choose
 //
+// Only a person within 0.5 m of the Bluetooth position (a circle 1 m across)
+// can start a link: in a small ward, a wider circle would link the first person
+// seen to any wristband. Once linked, the link holds while the Bluetooth
+// position stays within 1.5 m of the person (it wanders while the patient is
+// still), and ends when it stays farther away for 5 s.
 // Every candidate gets a score from four factors:
 //   - distance to the Bluetooth position (wide: Bluetooth is inaccurate),
 //   - height compared with the patient's height (neutral when not recorded,
@@ -25,6 +30,9 @@
 // another person takes over only when clearly better for 2 s; a link ends when
 // the person is lost, or the Bluetooth position stays far away for 5 s.
 // The bed rule (patient in their own bed) is applied before this, by the panel.
+//
+// PersonPicker (below) finds the person the clinician aims at, for choosing
+// a person by hand.
 // =============================================================================
 using System;
 using System.Collections.Generic;
@@ -39,8 +47,8 @@ namespace ShiroMR.Linking
     public sealed class LinkerSettings
     {
         public float BleSigma = 1.5f;          // m, spread of the Bluetooth position error
-        public float MaxDistance = 3.0f;       // m from the Bluetooth position to be considered
-        public float BreakDistance = 4.0f;     // m: a linked person this far away ...
+        public float LinkDistance = 0.5f;      // m from the Bluetooth position to start a link (1 m circle)
+        public float BreakDistance = 1.5f;     // m: a linked person this far away ...
         public float BreakAfter = 5.0f;        // s ... for this long ends the link
         public float MinScore = 0.15f;         // a weaker best candidate is not linked
         public float ClearlyAhead = 1.5f;      // best / second needed to decide
@@ -120,7 +128,7 @@ namespace ShiroMR.Linking
                 if (t.Id == LinkedTrackId) linked = t;
                 if (t.Kind != TrackKind.PersonCandidate) continue;
                 float d = hasBle ? Dist(t.X, t.Z, bleX, bleZ) : 0f;
-                if (hasBle && d > s.MaxDistance && t.Id != LinkedTrackId) continue;
+                if (hasBle && d > s.LinkDistance && t.Id != LinkedTrackId) continue;
                 var c = new LinkCandidate
                 {
                     TrackId = t.Id,
@@ -162,6 +170,9 @@ namespace ShiroMR.Linking
                     if (_farSince < 0f) _farSince = now;
                     if (now - _farSince >= s.BreakAfter)
                     {
+                        // It was a candidate only because it was linked: not one any more
+                        int was = LinkedTrackId;
+                        _candidates.RemoveAll(c => c.TrackId == was);
                         LinkedTrackId = -1;
                         State = LinkState.BleOnly;
                         _farSince = -1f;
@@ -211,13 +222,13 @@ namespace ShiroMR.Linking
             if (best != null && second != null && best.Score >= s.MinScore)
             {
                 State = LinkState.Unclear;
-                Reason = $"{_candidates.Count} people fit about equally: choose one";
+                Reason = $"{_candidates.Count} people fit about equally: 🎯 Re-Attach to choose";
             }
             else
             {
                 State = LinkState.BleOnly;
                 Reason = lostNote ?? (!hasBle ? "no wristband position yet"
-                       : _candidates.Count == 0 ? "no person seen near the wristband: Bluetooth position"
+                       : _candidates.Count == 0 ? $"nobody within {s.LinkDistance:0.0} m of the wristband: Bluetooth position"
                        : "no person fits well enough: Bluetooth position");
             }
             LinkedHeight = 0f;
@@ -276,6 +287,59 @@ namespace ShiroMR.Linking
         {
             float dx = ax - bx, dz = az - bz;
             return (float)Math.Sqrt(dx * dx + dz * dz);
+        }
+    }
+
+    /// <summary>
+    /// The detected person a pointing ray aims at, for choosing a person by hand. Each
+    /// person-sized object (a person candidate, or a still one: a patient who has not moved
+    /// since the headset came on is still a person) is a vertical line from the floor to its
+    /// height; the ray picks the one it passes closest to, within MaxMiss.
+    /// </summary>
+    public static class PersonPicker
+    {
+        public const float MaxMiss = 0.35f; // m: about a body's half-width plus the aim's wobble
+
+        /// <returns>The track id, or -1 when the ray passes no person within MaxMiss.</returns>
+        public static int Pick(IReadOnlyList<Track> tracks, float floorY,
+                               float ox, float oy, float oz, float dx, float dy, float dz,
+                               float maxMiss = MaxMiss)
+        {
+            float len = (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+            if (len < 1e-6f) return -1;
+            dx /= len; dy /= len; dz /= len;
+            float h2 = dx * dx + dz * dz;
+
+            int best = -1;
+            float bestMiss = maxMiss;
+            foreach (var t in tracks)
+            {
+                if (t.Kind == TrackKind.NotPerson) continue;
+                float miss;
+                if (h2 < 1e-4f)
+                {
+                    // Pointing straight down (or up): the horizontal distance only
+                    float ex = ox - t.X, ez = oz - t.Z;
+                    miss = (float)Math.Sqrt(ex * ex + ez * ez);
+                }
+                else
+                {
+                    // Where the ray passes closest to the person's vertical line
+                    float s = ((t.X - ox) * dx + (t.Z - oz) * dz) / h2;
+                    if (s <= 0f) continue;                      // behind the wearer
+                    float px = ox + dx * s - t.X, pz = oz + dz * s - t.Z;
+                    float y = oy + dy * s;
+                    float top = floorY + t.Height + 0.1f;      // a little above the head
+                    float above = y > top ? y - top : y < floorY ? floorY - y : 0f;
+                    miss = (float)Math.Sqrt(px * px + pz * pz + above * above);
+                }
+                if (miss < bestMiss)
+                {
+                    bestMiss = miss;
+                    best = t.Id;
+                }
+            }
+            return best;
         }
     }
 }

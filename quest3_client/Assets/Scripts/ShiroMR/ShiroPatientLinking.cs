@@ -7,7 +7,15 @@
 // detected people, the wristband's Bluetooth position, its motion state and the
 // patient's recorded height decide whether the panel follows a detected person
 // or stays at the Bluetooth position. The bed rule comes first: a panel at its
-// bed is not linked. A panel placed by hand (manual aim) is left alone.
+// bed is not linked. A panel pinned to a spot by hand is left alone.
+// Linking is on by default (it can be switched off on the System tab).
+//
+// Choosing a person by hand (8D-5): "🎯 Re-Attach" on the panel, then aim at a
+// person. The person aimed at is marked (an amber column) and the pointer says
+// "LINK TO THIS PERSON"; a pinch links the panel to that person (LinkedManual),
+// whatever the Bluetooth position says, until the person is lost from view. Aiming
+// where nobody is detected pins the panel to that spot instead, as before. "🔄 Auto"
+// on the panel ends either choice and goes back to automatic linking.
 //
 // While a real wristband is linked to a detected person (automatically or chosen by
 // hand) and the room is aligned, the person's position is sent to the edge server
@@ -48,6 +56,10 @@ namespace ShiroMR
 
         public bool LinkingEnabled { get; private set; }
         public bool FakeEnabled { get; private set; }
+        /// <summary>While choosing a person by hand: the detected person aimed at, or -1.</summary>
+        public int AimedTrackId { get; private set; } = -1;
+        /// <summary>Measured height of the person aimed at (m).</summary>
+        public float AimedHeight { get; private set; }
 
         private readonly Dictionary<string, PersonLinker> _linkers = new Dictionary<string, PersonLinker>();
         private readonly HashSet<string> _reported = new HashSet<string>(); // tags whose position the edge server has from here
@@ -59,6 +71,9 @@ namespace ShiroMR
         private float _fakeHeightM;
         private GameObject _fakeMarker;
         private TextMesh _fakeLabel;
+
+        // Choosing by hand: the column on the person aimed at
+        private GameObject _aimMarker;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -74,7 +89,7 @@ namespace ShiroMR
             if (Instance != null && Instance != this) { Destroy(gameObject); return; }
             Instance = this;
             DontDestroyOnLoad(gameObject);
-            LinkingEnabled = PlayerPrefs.GetInt(PrefLinking, 0) == 1;
+            LinkingEnabled = PlayerPrefs.GetInt(PrefLinking, 1) == 1;
         }
 
         private void OnDestroy()
@@ -132,6 +147,83 @@ namespace ShiroMR
                 _subscribed = true;
             }
             if (FakeEnabled) UpdateFake();
+            UpdateAim();
+        }
+
+        // ----- Choosing a person by hand -----
+
+        /// <summary>While a panel waits for "aim and pinch", finds and marks the person aimed at.</summary>
+        private void UpdateAim()
+        {
+            var pointer = ShiroVRPointer.Instance;
+            var probe = ShiroDepthProbe.Instance;
+            int id = -1;
+            Track aimed = null;
+            if (LinkingEnabled && pointer != null && pointer.isReattaching && probe != null && probe.IsSensing)
+            {
+                Vector3 o = pointer.PointerOrigin, d = pointer.PointerForward;
+                var tracks = probe.Detector.Tracks;
+                id = PersonPicker.Pick(tracks, probe.FloorY, o.x, o.y, o.z, d.x, d.y, d.z);
+                foreach (var t in tracks) if (t.Id == id) { aimed = t; break; }
+                if (aimed == null) id = -1;
+            }
+            AimedTrackId = id;
+            AimedHeight = aimed != null ? aimed.Height : 0f;
+
+            if (aimed == null)
+            {
+                if (_aimMarker != null && _aimMarker.activeSelf) _aimMarker.SetActive(false);
+                return;
+            }
+            EnsureAimMarker();
+            float h = Mathf.Max(0.3f, aimed.Height);
+            _aimMarker.transform.position = new Vector3(aimed.X, probe.FloorY + h * 0.5f, aimed.Z);
+            _aimMarker.transform.localScale = new Vector3(0.5f, h * 0.5f, 0.5f); // a cylinder is 2 units tall
+            if (!_aimMarker.activeSelf) _aimMarker.SetActive(true);
+        }
+
+        private void EnsureAimMarker()
+        {
+            if (_aimMarker != null) return;
+            _aimMarker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            _aimMarker.name = "ChoosePersonMarker";
+            Destroy(_aimMarker.GetComponent<Collider>()); // never blocks the pointer
+            _aimMarker.transform.SetParent(transform, true);
+            var r = _aimMarker.GetComponent<Renderer>();
+            r.material = new Material(Shader.Find("Sprites/Default")) { color = new Color(1f, 0.75f, 0.1f, 0.25f) };
+        }
+
+        /// <summary>
+        /// The pinch while choosing: links the panel to the person aimed at. False when no
+        /// person is aimed at (or linking is off); the panel is then pinned to the spot instead.
+        /// </summary>
+        public bool TryChoosePerson(PatientHologram holo)
+        {
+            if (!LinkingEnabled || holo == null || AimedTrackId < 0) return false;
+            var probe = ShiroDepthProbe.Instance;
+            if (probe == null) return false;
+            Track chosen = null;
+            foreach (var t in probe.Detector.Tracks) if (t.Id == AimedTrackId) { chosen = t; break; }
+            if (chosen == null) return false;
+
+            if (!_linkers.TryGetValue(holo.tagId, out var linker))
+            {
+                linker = new PersonLinker();
+                _linkers[holo.tagId] = linker;
+            }
+            linker.ChooseManually(chosen.Id);
+            holo.ChoosePerson(new Vector3(chosen.X, 0f, chosen.Z), chosen.Height, $"chosen by you: {chosen.Height:0.00} m");
+            AimedTrackId = -1;
+            if (_aimMarker != null) _aimMarker.SetActive(false);
+            Debug.Log($"[SHIRO LINK] {holo.tagId}: person #{chosen.Id} ({chosen.Height:0.00} m) chosen by hand");
+            return true;
+        }
+
+        /// <summary>"Auto" on the panel: a person chosen by hand is let go; automatic linking resumes.</summary>
+        public void ReleaseChoice(string tag)
+        {
+            if (tag != null && _linkers.TryGetValue(tag, out var linker) && linker.State == LinkState.LinkedManual)
+                linker.Release();
         }
 
         // ----- Linking after every depth update -----
@@ -218,6 +310,7 @@ namespace ShiroMR
             {
                 if (kv.Value.LinkedTrackId != trackId) continue;
                 string name = mr.Holograms.TryGetValue(kv.Key, out var h) && h != null ? h.fullName : kv.Key;
+                if (kv.Value.State == LinkState.LinkedManual) name += " (chosen by you)";
                 names = names == null ? $"🔗 {name}" : $"{names}, {name}";
             }
             return names;

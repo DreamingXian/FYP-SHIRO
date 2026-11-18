@@ -55,6 +55,8 @@ namespace ShiroMR
         private bool _sensingRequested;
         public bool MovementRequired => _detector.Settings.MovementRequired;
         public PersonDetector Detector => _detector;
+        /// <summary>The floor height (world y) of the last detection update.</summary>
+        public float FloorY => _floorY;
         public string StatusText { get; private set; } = "off";
 
         private readonly PersonDetector _detector = new PersonDetector();
