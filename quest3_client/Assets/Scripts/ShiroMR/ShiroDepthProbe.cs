@@ -476,7 +476,8 @@ namespace ShiroMR
                             : "not person";
                 m.label.text = t.Kind == TrackKind.NotPerson
                     ? $"{t.Height:0.00} m · {t.NotPersonReason}"
-                    : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · {MovedText(t)}{LinkedText(t.Id)}";
+                    : $"#{t.Id} {t.Height:0.00} m{(t.HeightMaybeCut ? "+" : "")}\n{kind} · {MovedText(t)}" +
+                      $"{(t.Merged ? "\nseen as one with the thing next to it: kept in place" : "")}{LinkedText(t.Id)}";
                 m.label.characterSize = t.Kind == TrackKind.NotPerson ? 0.0025f : 0.004f;
                 m.label.color = col;
                 m.label.transform.position = top + Vector3.up * 0.12f;

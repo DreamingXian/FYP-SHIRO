@@ -20,14 +20,18 @@
 // 4. A tracker follows each object. An object only continues as the same one
 //    when the new one is close AND of similar height (a hidden rack cannot be
 //    taken over by the chair next to it). A piece of a followed object (its blob
-//    split for a moment) does not become a new object. Movement is counted in
+//    split for a moment) does not become a new object. Two followed objects
+//    seen as one (the sensor fills the gap between two things of similar height
+//    side by side) keep their places while merged: the merged position is
+//    between them, which is not a move. Movement is counted in
 //    steps: the median of the last five positions must stay at least 0.3 m from
 //    a reference spot (first: the median of the first five positions) for five
 //    updates in a row (1 s at 5 Hz), seen without a gap and at a steady height.
 //    That step is added to the object's path and its new spot becomes the
 //    reference; while the object comes to rest the step still grows with it
-//    (the median lags behind). "Moved" = path of at least 0.4 m, so pacing back
-//    and forth in a small area counts too. Single jumps from noise or a
+//    (the median lags behind). "Moved" = at least 0.4 m of steps within 10 s,
+//    so pacing back and forth in a small area counts too, but two flickers
+//    minutes apart do not add up. Single jumps from noise or a
 //    momentary merge never count. A sudden height jump does not move the object.
 //    A step also needs evidence that the object really moved, from space SEEN
 //    EMPTY (the view passed through it, at the height of the object's upper
@@ -35,9 +39,16 @@
 //    a) the spot it left is seen empty now (moving away or sideways), when
 //       something solid stood there (not a surface's points spilling into the
 //       empty cell next to it), or
-//    b) the place it moved into was seen empty before it got there (moving
-//       towards the wearer or sideways: the spot it left is then hidden behind
-//       it). A still object cannot appear in space that was seen empty.
+//    b) the place it moved into was seen empty, for at least 2 s without a
+//       break, before it got there (moving towards the wearer or sideways: the
+//       spot it left is then hidden behind it). A still object cannot appear in
+//       space that was seen empty.
+//    No evidence while the object still covers its old spot (what is seen of
+//    it changed, not where it is), or while another object stands at its old
+//    spot: then the "object" was two things (a speaker next to a monitor whose
+//    dark screen the sensor sometimes misses, on the monitor's stand), and
+//    what changed is which of them is seen. Walls and large furniture are not
+//    "another object" here, so moving away from a wall still counts.
 //    When the wearer walks around a still object, its measured centre can shift
 //    with the view, but neither happens: its spot is never seen empty, and the
 //    "new" place is a part of it that was hidden or out of view before.
@@ -50,7 +61,8 @@
 // 5. A person candidate is person-sized and, unless switched off for testing,
 //    has moved. "Moved" stays while tracked and is remembered for a short time
 //    at the spot where it was lost (looked away), so a person who stands still
-//    does not become furniture. An object that never moved stays "not a
+//    does not become furniture, but only until 2 minutes after its last step
+//    (a false green cannot renew itself forever). An object that never moved stays "not a
 //    person": a cabinet missing from the ward plan is ignored. A change to or
 //    from "not a person" needs 3 updates in a row; the reason is kept.
 // 6. When the tracking space jumps (headset taken off and put on, tracking
@@ -111,7 +123,8 @@ namespace ShiroMR.Detection
         public float PersonMinHeight = 0.90f;   // m, standing or walking
         public float PersonMaxHeight = 2.10f;   // m
         public bool MovementRequired = true;    // false only for testing (height only)
-        public float MoveDistance = 0.40f;      // m of path (sum of steps) that counts as moved
+        public float MoveDistance = 0.40f;      // m of path (sum of steps) that counts as moved ...
+        public float StepWindow = 10f;          // ... from the steps of the last 10 s (flickers minutes apart do not add up)
         public float StepDistance = 0.30f;      // m from the reference spot that counts as a step
         public int MedianOf = 5;                // updates in the start and current medians
         public int MoveConfirmUpdates = 5;      // updates in a row beyond StepDistance
@@ -125,7 +138,8 @@ namespace ShiroMR.Detection
         public float StreakHeightDiff = 0.25f;  // m height change that restarts the movement count
         public float MemoryHeightDiff = 0.25f;  // m: a remembered moved object must have a similar height
         public float LostAfter = 2.0f;          // s unseen before an object is dropped
-        public float RememberMovedFor = 30f;    // s a lost moved object is remembered at its spot
+        public float RememberMovedFor = 30f;    // s a lost moved object is remembered at its spot ...
+        public float RememberAfterStep = 120f;  // ... but only until this long after its last step
         public float HeightSmoothing = 0.3f;
         public bool RequireSpaceEvidence = true; // a step needs its old spot seen empty, or its new place seen empty before
         public float SpotCheckDistance = 0.15f; // m: the object is at its spot when checking what stood there
@@ -142,6 +156,7 @@ namespace ShiroMR.Detection
         public float FreeMargin = 0.15f;        // m before a hit point where the view no longer counts as passing through
         public int EmptyAfterUpdates = 3;       // updates seen empty, with nothing in or next to it, before a place is empty space
         public float EmptyForgetAfter = 5f;     // s something stands in a place before it is no longer empty space
+        public float EmptyBeforeArrival = 2f;   // s a place must have been empty without a break before something in it proves a move (not a flickering screen)
         public int MinArrivedCells = 2;         // cells of the object's upper part that must be in empty space ...
         public int MinArrivedUpdates = 2;       // ... in this many updates
         public int KindConfirmUpdates = 3;      // updates in a row to change to or from "not a person"
@@ -203,6 +218,10 @@ namespace ShiroMR.Detection
         public string Waiting;
         /// <summary>What proved the last step (its old spot seen empty / it moved into space seen empty), or null.</summary>
         public string LastStepProof;
+        /// <summary>When the last step was confirmed (s), or -1.</summary>
+        public float LastStepAt = -1f;
+        /// <summary>Seen as one with another followed object next to it in this update: it keeps its place.</summary>
+        public bool Merged;
 
         internal readonly List<float> FirstXs = new List<float>(), FirstZs = new List<float>();
         internal readonly List<float> RecentXs = new List<float>(), RecentZs = new List<float>();
@@ -211,9 +230,11 @@ namespace ShiroMR.Detection
         internal int JumpSkips;
         internal int StreakFree, StreakOccupied;
         internal int StreakArrived;
+        internal int StreakTaken;            // updates with another object at its old spot
         internal bool RefSolid;              // something solid stood at the reference spot
         internal float StepFromX, StepFromZ; // where the last step started
         internal int SettleLeft;              // updates in which the last step can still grow
+        internal readonly List<float> StepTimes = new List<float>(), StepLengths = new List<float>(); // steps of the last StepWindow
         internal TrackKind PendingKind;
         internal int PendingCount;
         internal bool Classified;
@@ -340,6 +361,9 @@ namespace ShiroMR.Detection
         private byte[] _freeRun;             // updates seen empty in a row
         private bool[] _empty;               // counts as empty space
         private float[] _occupiedSince;      // s, when something started standing there (-1: nothing)
+        private float[] _clearSince;         // s, since when it is seen empty without a hit (-1: hit since)
+        private float[] _clearBefore;        // s it was empty without a break before something came (a flicker: a moment)
+        private float _now;
         private readonly List<int> _touched = new List<int>();
         private readonly List<int> _hits = new List<int>();
 
@@ -362,6 +386,8 @@ namespace ShiroMR.Detection
             _freeRun = new byte[n];
             _empty = new bool[n];
             _occupiedSince = new float[n];
+            _clearSince = new float[n];
+            _clearBefore = new float[n];
         }
 
         private void Place(int cx, int cz)
@@ -377,8 +403,9 @@ namespace ShiroMR.Detection
                 Array.Clear(_nearStamp, 0, _nearStamp.Length);
                 Array.Clear(_freeRun, 0, _freeRun.Length);
                 Array.Clear(_empty, 0, _empty.Length);
+                Array.Clear(_clearBefore, 0, _clearBefore.Length);
             }
-            for (int i = 0; i < _occupiedSince.Length; i++) _occupiedSince[i] = -1f;
+            for (int i = 0; i < _occupiedSince.Length; i++) { _occupiedSince[i] = -1f; _clearSince[i] = -1f; }
             _update = 0;
             _cx = cx; _cz = cz;
             _ox = cx - _size / 2; _oz = cz - _size / 2;
@@ -486,6 +513,7 @@ namespace ShiroMR.Detection
         {
             if (!_inUpdate) return;
             _inUpdate = false;
+            _now = now;
             var s = _s;
             // Passing right next to something that was hit proves nothing (its edge)
             foreach (int h in _hits)
@@ -507,12 +535,20 @@ namespace ShiroMR.Detection
                 {
                     // Something stands there; after a while it is no longer empty space
                     _freeRun[idx] = 0;
-                    if (_occupiedSince[idx] < 0f) _occupiedSince[idx] = now;
+                    if (_occupiedSince[idx] < 0f)
+                    {
+                        _occupiedSince[idx] = now;
+                        // How long it was empty before: something that came there was away for a
+                        // while; a surface the sensor misses now and then (a dark screen) only briefly
+                        _clearBefore[idx] = _clearSince[idx] >= 0f ? now - _clearSince[idx] : 0f;
+                        _clearSince[idx] = -1f;
+                    }
                     else if (_empty[idx] && now - _occupiedSince[idx] >= s.EmptyForgetAfter) _empty[idx] = false;
                     continue;
                 }
                 _occupiedSince[idx] = -1f;
                 if (_nearStamp[idx] == _update) { _freeRun[idx] = 0; continue; }
+                if (_clearSince[idx] < 0f) _clearSince[idx] = now;
                 if (_freeRun[idx] < 255) _freeRun[idx]++;
                 if (_freeRun[idx] >= s.EmptyAfterUpdates) _empty[idx] = true;
             }
@@ -533,14 +569,13 @@ namespace ShiroMR.Detection
         /// A hit in empty space only counts when the place is surrounded by empty space: next to
         /// something that stood there before, or next to a place never seen (the inside of a
         /// cabinet), it is the edge of that thing (its surface spilling into the next cell,
-        /// depth noise), not proof.
+        /// depth noise), not proof; edge counts those.
+        /// With emptyLongEnough, empty space means empty for at least EmptyBeforeArrival without a
+        /// break before something came (proof of a move: a dark screen the sensor misses for a
+        /// moment was not empty); without it, any empty space (is the object solid here?).
         /// </summary>
-        public void Arrival(List<long> cells, float low, float high, out int inEmpty, out int notEmpty)
-            => Arrival(cells, low, high, out inEmpty, out notEmpty, out _);
-
-        /// <summary>As above; edge: cells hit in empty space but not surrounded by it (a surface
-        /// spilling into the empty cell next to it).</summary>
-        public void Arrival(List<long> cells, float low, float high, out int inEmpty, out int notEmpty, out int edge)
+        public void Arrival(List<long> cells, float low, float high, bool emptyLongEnough,
+                            out int inEmpty, out int notEmpty, out int edge)
         {
             inEmpty = 0;
             notEmpty = 0;
@@ -555,8 +590,8 @@ namespace ShiroMR.Detection
                 {
                     int idx = Index(ix, iz, l);
                     if (idx < 0 || _hitStamp[idx] != _update) continue;
-                    if (!_empty[idx]) occupied = true;
-                    else if (SurroundedByEmpty(ix, iz, l)) empty = true;
+                    if (!(emptyLongEnough ? EmptyLongEnough(idx) : _empty[idx])) occupied = true;
+                    else if (SurroundedByEmpty(ix, iz, l, emptyLongEnough)) empty = true;
                     else atEdge = true;
                 }
                 if (occupied) notEmpty++;
@@ -588,16 +623,26 @@ namespace ShiroMR.Detection
         }
 
         /// <summary>All eight places around this one (same height layer) are empty space.</summary>
-        private bool SurroundedByEmpty(int ix, int iz, int layer)
+        private bool SurroundedByEmpty(int ix, int iz, int layer, bool emptyLongEnough)
         {
             for (int ox = -1; ox <= 1; ox++)
                 for (int oz = -1; oz <= 1; oz++)
                 {
                     if (ox == 0 && oz == 0) continue;
                     int idx = Index(ix + ox, iz + oz, layer);
-                    if (idx < 0 || !_empty[idx]) return false;
+                    if (idx < 0 || !(emptyLongEnough ? EmptyLongEnough(idx) : _empty[idx])) return false;
                 }
             return true;
+        }
+
+        /// <summary>Empty space that was empty for at least EmptyBeforeArrival without a break: until
+        /// now, or before something came into it.</summary>
+        private bool EmptyLongEnough(int idx)
+        {
+            if (!_empty[idx]) return false;
+            float need = _s.EmptyBeforeArrival;
+            if (_occupiedSince[idx] >= 0f) return _clearBefore[idx] >= need;
+            return _clearSince[idx] >= 0f && _now - _clearSince[idx] >= need;
         }
     }
 
@@ -605,7 +650,8 @@ namespace ShiroMR.Detection
     {
         public readonly DetectorSettings Settings;
         private readonly List<Track> _tracks = new List<Track>();
-        private readonly List<(float x, float z, float height, float until)> _movedMemory = new List<(float, float, float, float)>();
+        private readonly Dictionary<long, Blob> _blobOfCell = new Dictionary<long, Blob>(); // this update's object of each cell
+        private readonly List<(float x, float z, float height, float until, float lastStep)> _movedMemory = new List<(float, float, float, float, float)>();
         private int _nextId = 1;
         private bool _hasHead;
         private float _lastHeadX, _lastHeadZ, _lastHeadTime;
@@ -731,6 +777,7 @@ namespace ShiroMR.Detection
 
             // Connected cells (8 neighbours) form one object
             var blobs = new List<Blob>();
+            _blobOfCell.Clear();
             int label = 0;
             var stack = new Stack<long>();
             var members = new List<long>();
@@ -759,8 +806,10 @@ namespace ShiroMR.Detection
                         }
                 }
 
-                if (members.Count < s.MinBlobCells) continue;
                 var blob = MakeBlob(kept, members);
+                // Small ones are not followed, but still count as something standing there
+                foreach (long k in members) _blobOfCell[k] = blob;
+                if (members.Count < s.MinBlobCells) continue;
                 blob.CellKeys = new HashSet<long>(members);
                 blobs.Add(blob);
             }
@@ -850,11 +899,25 @@ namespace ShiroMR.Detection
                 }
             pairs.Sort((a, c) => a.d.CompareTo(c.d));
             var blobUsed = new bool[blobs.Count];
+            var matched = new List<(Track t, int b)>();
             foreach (var (_, b, t) in pairs)
             {
                 if (blobUsed[b] || t.SeenThisUpdate) continue;
                 blobUsed[b] = true;
-                Update(t, blobs[b], now);
+                t.SeenThisUpdate = true;
+                matched.Add((t, b));
+            }
+
+            // Two followed objects side by side seen as one (the sensor filled the gap between
+            // them): the upper part, which gives the position, covers both, so the position is
+            // between them. The one that got the blob keeps its place while the other is still
+            // followed; the other is not seen on its own, so it is dropped after LostAfter as
+            // usual. After that the blob's position is followed, but still covering the old spot,
+            // that change is never proven as a step
+            foreach (var (t, b) in matched)
+            {
+                if (HiddenIn(blobs[b], t) != null) HoldStill(t, now);
+                else Update(t, blobs[b], now);
             }
 
             for (int b = 0; b < blobs.Count; b++)
@@ -874,15 +937,18 @@ namespace ShiroMR.Detection
                     FirstSeen = now, LastSeen = now, SeenThisUpdate = true,
                 };
                 AddPosition(t, blob.X, blob.Z);
-                // A moved object that was lost here a moment ago (looked away): still moved
+                // A moved object that was lost here a moment ago (looked away): still moved, as
+                // long as its last step was not too long ago
                 for (int m = _movedMemory.Count - 1; m >= 0; m--)
                 {
-                    if (_movedMemory[m].until < now) { _movedMemory.RemoveAt(m); continue; }
-                    if (Dist(_movedMemory[m].x, _movedMemory[m].z, blob.X, blob.Z) <= s.MatchDistance &&
-                        Math.Abs(_movedMemory[m].height - blob.Top) <= s.MemoryHeightDiff)
+                    var mem = _movedMemory[m];
+                    if (mem.until < now || now - mem.lastStep > s.RememberAfterStep) { _movedMemory.RemoveAt(m); continue; }
+                    if (Dist(mem.x, mem.z, blob.X, blob.Z) <= s.MatchDistance &&
+                        Math.Abs(mem.height - blob.Top) <= s.MemoryHeightDiff)
                     {
                         t.HasMoved = true;
                         t.MovedBy = MovedEvidence.SeenMovingHere;
+                        t.LastStepAt = mem.lastStep;
                         _movedMemory.RemoveAt(m);
                         break;
                     }
@@ -895,12 +961,51 @@ namespace ShiroMR.Detection
                 var t = _tracks[i];
                 if (now - t.LastSeen > s.LostAfter)
                 {
-                    if (t.HasMoved) _movedMemory.Add((t.X, t.Z, t.Height, now + s.RememberMovedFor));
+                    Remember(t, now);
                     _tracks.RemoveAt(i);
                     continue;
                 }
                 SetKind(t, Classify(t));
             }
+        }
+
+        /// <summary>A moved object that is lost is remembered at its spot for a while.</summary>
+        private void Remember(Track t, float now)
+        {
+            var s = Settings;
+            if (t.HasMoved && t.LastStepAt >= 0f && now - t.LastStepAt <= s.RememberAfterStep)
+                _movedMemory.Add((t.X, t.Z, t.Height, now + s.RememberMovedFor, t.LastStepAt));
+        }
+
+        /// <summary>
+        /// Another followed object, not seen on its own in this update, inside the upper part of
+        /// this blob (which gives its position): the two are seen as one.
+        /// </summary>
+        private Track HiddenIn(Blob blob, Track t)
+        {
+            var s = Settings;
+            if (blob.TopCellKeys == null) return null;
+            foreach (var u in _tracks)
+            {
+                if (u == t || u.SeenThisUpdate || u.Height < blob.Top - s.TopBand) continue;
+                int ux = (int)Math.Floor(u.X / s.CellSize), uz = (int)Math.Floor(u.Z / s.CellSize);
+                foreach (long k in blob.TopCellKeys)
+                {
+                    Unkey(k, out int cx, out int cz);
+                    if (Math.Abs(cx - ux) <= 1 && Math.Abs(cz - uz) <= 1) return u;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>Seen as one with the object next to it: it keeps its place and counts no movement.</summary>
+        private static void HoldStill(Track t, float now)
+        {
+            t.SeenThisUpdate = true;
+            t.LastSeen = now;
+            t.MoveStreak = 0;
+            t.SettleLeft = 0;
+            t.Merged = true;
         }
 
         private bool NextToFollowed(Blob blob, List<Blob> blobs, bool[] blobUsed)
@@ -918,6 +1023,7 @@ namespace ShiroMR.Detection
             t.LastSeen = now;
             if (gap > s.MaxGapInStreak) t.MoveStreak = 0; // movement must be seen without a gap
             t.SeenThisUpdate = true;
+            t.Merged = false;
 
             // A sudden height jump is a merge with something next to it (or a split):
             // keep the object where it was, unless the new height persists
@@ -958,6 +1064,7 @@ namespace ShiroMR.Detection
                 if (nowFrom > refFrom + 0.02f && Dist(t.X, t.Z, t.RefX, t.RefZ) < s.StepDistance)
                 {
                     t.PathLength += nowFrom - refFrom;
+                    if (t.StepLengths.Count > 0) t.StepLengths[t.StepLengths.Count - 1] += nowFrom - refFrom;
                     t.RefX = t.X;
                     t.RefZ = t.Z;
                 }
@@ -968,12 +1075,15 @@ namespace ShiroMR.Detection
             float fromRef = Dist(t.X, t.Z, t.RefX, t.RefZ);
             if (fromRef >= s.StepDistance)
             {
-                if (t.MoveStreak == 0) { t.StreakHeight = t.Height; t.StreakFree = 0; t.StreakOccupied = 0; t.StreakArrived = 0; }
+                if (t.MoveStreak == 0) { t.StreakHeight = t.Height; t.StreakFree = 0; t.StreakOccupied = 0; t.StreakArrived = 0; t.StreakTaken = 0; }
                 // the same object all along: its height stays steady while it moves
                 t.MoveStreak = Math.Abs(t.Height - t.StreakHeight) <= s.StreakHeightDiff ? t.MoveStreak + 1 : 0;
-                if (t.MoveStreak > 0 && s.RequireSpaceEvidence)
+                // While the object still covers its old spot, what changed is what is seen of it
+                // (a part the sensor missed is seen again, a neighbour on the same desk), not
+                // where it is: no evidence either way
+                if (t.MoveStreak > 0 && s.RequireSpaceEvidence && !CoversOldSpot(t, blob))
                 {
-                    if (t.RefSolid) LookAtOldSpot(t, blob);
+                    LookAtOldSpot(t, blob);
                     if (CameIntoEmptySpace(blob)) t.StreakArrived++;
                 }
             }
@@ -990,14 +1100,22 @@ namespace ShiroMR.Detection
             }
 
             // Evidence, either side: a) the old spot seen empty (and hardly anything hit there),
-            // b) the object's upper part now in space that was seen empty before
-            bool leftSpotEmpty = t.StreakFree >= s.MinVacatedObservations &&
-                                 t.StreakOccupied <= s.MaxOccupiedShare * (t.StreakFree + t.StreakOccupied);
-            bool cameIntoEmpty = t.StreakArrived >= s.MinArrivedUpdates;
+            // when something solid stood there, b) the object's upper part now in space that was
+            // seen empty before, while its old spot is not still seen taken (it was hidden behind
+            // the object, or empty). Something still standing at the old spot means the "object"
+            // was two things (a speaker next to a monitor whose screen the sensor missed): what
+            // changed is which of them is seen, not where anything is (also when that spot itself
+            // looks empty: the screen is missed, its stand and the speaker are still there)
+            bool oldSpotTaken = t.StreakTaken >= s.MinVacatedObservations && t.StreakTaken > t.StreakFree;
+            bool leftSpotEmpty = t.RefSolid && t.StreakFree >= s.MinVacatedObservations &&
+                                 t.StreakOccupied <= s.MaxOccupiedShare * (t.StreakFree + t.StreakOccupied) && !oldSpotTaken;
+            bool cameIntoEmpty = t.StreakArrived >= s.MinArrivedUpdates && !oldSpotTaken;
             bool proven = !s.RequireSpaceEvidence || leftSpotEmpty || cameIntoEmpty;
             if (t.MoveStreak >= s.MoveConfirmUpdates && !proven)
             {
-                t.Waiting = $"{fromRef:0.0} m from its spot, not proven yet:\nold spot not seen empty, new place not seen empty before";
+                t.Waiting = oldSpotTaken
+                    ? $"{fromRef:0.0} m from its spot, not proven yet:\nsomething still stands at its old spot"
+                    : $"{fromRef:0.0} m from its spot, not proven yet:\nold spot not seen empty, new place not seen empty before";
             }
             if (t.MoveStreak >= s.MoveConfirmUpdates && proven)
             {
@@ -1009,23 +1127,48 @@ namespace ShiroMR.Detection
                 // The step is added to the path; the object's new spot is the next reference
                 t.PathLength += fromRef;
                 t.Steps++;
+                t.LastStepAt = now;
+                t.StepTimes.Add(now);
+                t.StepLengths.Add(fromRef);
                 t.StepFromX = t.RefX;
                 t.StepFromZ = t.RefZ;
                 t.SettleLeft = s.SettleUpdates;
-                t.RefSolid = false; // checked again at the new spot
+                t.RefSolid = SolidHere(blob); // checked at the new spot, where the object is now (also later while it stands there)
                 t.RefX = t.X;
                 t.RefZ = t.Z;
                 t.MoveStreak = 0;
                 t.StreakFree = 0;
                 t.StreakOccupied = 0;
                 t.StreakArrived = 0;
+                t.StreakTaken = 0;
             }
-            if (t.PathLength >= s.MoveDistance && t.MovedBy != MovedEvidence.Walked)
+            if (t.MovedBy != MovedEvidence.Walked && RecentPath(t, now) >= s.MoveDistance)
             {
                 t.HasMoved = true;
                 t.MovedBy = MovedEvidence.Walked;
             }
             if (t.MovedBy == MovedEvidence.Walked) t.MovedDistance = t.PathLength;
+        }
+
+        /// <summary>The steps of the last StepWindow seconds: a real walk or push makes its 0.4 m within
+        /// a few seconds; two flickers minutes apart do not add up.</summary>
+        private float RecentPath(Track t, float now)
+        {
+            while (t.StepTimes.Count > 0 && now - t.StepTimes[0] > Settings.StepWindow)
+            {
+                t.StepTimes.RemoveAt(0);
+                t.StepLengths.RemoveAt(0);
+            }
+            float sum = 0f;
+            foreach (float l in t.StepLengths) sum += l;
+            return sum;
+        }
+
+        /// <summary>The blob still covers the object's old spot (the reference).</summary>
+        private bool CoversOldSpot(Track t, Blob blob)
+        {
+            int ix = (int)Math.Floor(t.RefX / Settings.CellSize), iz = (int)Math.Floor(t.RefZ / Settings.CellSize);
+            return blob.CellKeys != null && blob.CellKeys.Contains(Key(ix, iz));
         }
 
         /// <summary>Adds a measured position; the track's position is the median of the recent ones.</summary>
@@ -1099,7 +1242,7 @@ namespace ShiroMR.Detection
         {
             var s = Settings;
             float low = Math.Max(s.PassBandLow, blob.Top - s.PassBandDepth);
-            EmptySpace.Arrival(blob.TopCellKeys, low, blob.Top, out int inEmpty, out int notEmpty);
+            EmptySpace.Arrival(blob.TopCellKeys, low, blob.Top, true, out int inEmpty, out int notEmpty, out _);
             return inEmpty >= s.MinArrivedCells && inEmpty >= notEmpty;
         }
 
@@ -1112,7 +1255,7 @@ namespace ShiroMR.Detection
         {
             var s = Settings;
             float low = Math.Max(s.PassBandLow, blob.Top - s.PassBandDepth);
-            EmptySpace.Arrival(blob.TopCellKeys, low, blob.Top, out int inEmpty, out int notEmpty, out int edge);
+            EmptySpace.Arrival(blob.TopCellKeys, low, blob.Top, false, out int inEmpty, out int notEmpty, out int edge);
             int solid = inEmpty + notEmpty;
             return solid >= 1 && solid >= edge;
         }
@@ -1120,19 +1263,38 @@ namespace ShiroMR.Detection
         /// <summary>
         /// Looks at the object's old spot in this update, at the height of its upper part (its top
         /// 0.5 m: a hollow object, a rack, has gaps lower down): seen empty, or something there.
-        /// When the object still covers its old spot (a change of view, not a move), no evidence.
+        /// Only called when the object no longer covers its old spot.
         /// </summary>
         private void LookAtOldSpot(Track t, Blob blob)
         {
             var s = Settings;
-            int ix = (int)Math.Floor(t.RefX / s.CellSize), iz = (int)Math.Floor(t.RefZ / s.CellSize);
-            if (blob.CellKeys != null && blob.CellKeys.Contains(Key(ix, iz))) return;
             float high = Math.Min(t.Height - 0.05f, s.PassBandHigh);
             float low = Math.Max(s.PassBandLow, t.Height - s.PassBandDepth);
             if (high <= low) return;
             EmptySpace.LookAt(t.RefX, t.RefZ, low, high, out bool seenEmpty, out bool hit);
             if (hit) t.StreakOccupied++;
             else if (seenEmpty) t.StreakFree++;
+            if (OtherObjectAtOldSpot(t, blob)) t.StreakTaken++;
+        }
+
+        /// <summary>
+        /// Another object of this update stands at the old spot or right next to it (within one
+        /// cell), reaching up to the object's upper part: what is seen now is something else.
+        /// Walls and large furniture are not objects here (removed as structure, or too big).
+        /// </summary>
+        private bool OtherObjectAtOldSpot(Track t, Blob blob)
+        {
+            var s = Settings;
+            int ix = (int)Math.Floor(t.RefX / s.CellSize), iz = (int)Math.Floor(t.RefZ / s.CellSize);
+            for (int ox = -1; ox <= 1; ox++)
+                for (int oz = -1; oz <= 1; oz++)
+                {
+                    if (!_blobOfCell.TryGetValue(Key(ix + ox, iz + oz), out Blob other) || other == blob) continue;
+                    if (other.Top < t.Height - s.PassBandDepth) continue;
+                    if (other.Footprint > s.MaxFootprint || Math.Max(other.SpanX, other.SpanZ) > s.MaxSpan) continue;
+                    return true;
+                }
+            return false;
         }
 
         private static float Median(List<float> values)

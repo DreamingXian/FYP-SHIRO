@@ -24,11 +24,12 @@ internal static class SceneTests
     /// Runs every scene with n different random seeds and prints how often each one passed
     /// (dotnet run -- --seeds 30). The fixed runs above only show that one seed passes.
     /// </summary>
-    public static int Stress(int n)
+    public static int Stress(int n, string filter = null)
     {
         int failedScenes = 0;
         foreach (var (name, test) in Scenes())
         {
+            if (filter != null && name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0) continue;
             int ok = 0;
             string firstFailure = null;
             for (int k = 1; k <= n; k++)
@@ -66,6 +67,12 @@ internal static class SceneTests
         run("scene: a rack pushed sideways with noisy depth becomes a person candidate", RackPushedSidewaysNoisy);
         run("scene, fed row by row as on the headset: walking around the room, nobody is a person", () => { _rowByRow = true; try { WalkAroundRoom(); } finally { _rowByRow = false; } });
         run("scene, fed row by row as on the headset: a rack pulled toward the wearer becomes a person candidate", () => { _rowByRow = true; try { RackPulledToward(); } finally { _rowByRow = false; } });
+        run("scene: two still things of similar height side by side, the gap between them filled now and then, 3 minutes: neither is a person", SideBySideMerging);
+        run("scene: a monitor whose dark screen the sensor often misses, next to a speaker, 3 minutes: not a person", ScreenFlickering);
+        run("scene: a person walking past a still rack of the same height becomes a person candidate, the rack does not", PersonWalksPastRack);
+        run("scene: a pushed rack, then looked away from and back at for 3 minutes: green until 2 minutes after its last step", PushedRackRemembered);
+        run("scene: a rack standing 14 cm in front of a wall pulled 0.5 m toward the wearer becomes a person candidate", RackFromWallTowardWearer);
+        run("scene: a person with their back to a wall walks toward the wearer (wall top out of view) and becomes a person candidate", PersonFromWallTowardWearer);
         return list;
     }
 
@@ -336,6 +343,156 @@ internal static class SceneTests
                 NobodyGreen(d, $"walking back, {t:0.0} s");
             }
         }
+    }
+
+    /// <summary>Two still things of similar height 25 cm apart (as next to the monitor on the headset).
+    /// The depth sensor sometimes fills the gap between them for a few seconds (points in between at
+    /// their edges): then they are one object whose position is between them.</summary>
+    private static void SideBySideMerging()
+    {
+        var sim = new Sim(16);
+        Room(sim);
+        var rnd = new Random(16 + 1000 * SeedOffset);
+        sim.Static.Add(new Box(-0.45f, -0.15f, 0f, 1.30f, 3.9f, 4.15f));
+        sim.Static.Add(new Box(0.10f, 0.40f, 0f, 1.25f, 3.9f, 4.15f));
+        var gap = new List<Shape> { new Box(-0.15f, 0.10f, 0.9f, 1.20f, 3.95f, 4.10f) };
+        var d = new PersonDetector();
+        bool filled = false;
+        float switchAt = 4f;
+        for (int i = 0; i < 900; i++) // 3 minutes
+        {
+            float t = i * 0.2f;
+            if (t >= switchAt) { filled = !filled; switchAt = t + 1f + 5f * (float)rnd.NextDouble(); }
+            sim.Moving = filled ? gap : new List<Shape>();
+            LookAtThingsAhead(sim, t);
+            sim.Step(d, t);
+            NobodyGreen(d, $"at {t:0.0} s (gap {(filled ? "filled" : "open")})");
+        }
+    }
+
+    /// <summary>A desk with a monitor and a speaker. The depth sensor often misses the dark, glossy
+    /// screen (only its stand is seen), for a moment or for several seconds.</summary>
+    private static void ScreenFlickering()
+    {
+        var sim = new Sim(17);
+        Room(sim);
+        var rnd = new Random(17 + 1000 * SeedOffset);
+        sim.Static.Add(new Box(-0.7f, 0.6f, 0f, 0.75f, 3.8f, 4.4f));        // desk
+        sim.Static.Add(new Box(-0.25f, -0.15f, 0.75f, 0.95f, 4.15f, 4.25f)); // monitor stand
+        sim.Static.Add(new Box(0.30f, 0.45f, 0.75f, 1.15f, 4.0f, 4.15f));    // speaker
+        var screen = new List<Shape> { new Box(-0.5f, 0.1f, 0.95f, 1.30f, 4.10f, 4.13f) };
+        var d = new PersonDetector();
+        bool seen = true;
+        float switchAt = 5f;
+        for (int i = 0; i < 900; i++) // 3 minutes
+        {
+            float t = i * 0.2f;
+            if (t >= switchAt) { seen = !seen; switchAt = t + (seen ? 1f + 6f * (float)rnd.NextDouble() : 0.4f + 5f * (float)rnd.NextDouble()); }
+            sim.Moving = seen ? screen : new List<Shape>();
+            LookAtThingsAhead(sim, t);
+            sim.Step(d, t);
+            NobodyGreen(d, $"at {t:0.0} s (screen {(seen ? "seen" : "missed")})");
+        }
+    }
+
+    /// <summary>Standing about 2 m from the things ahead, the head moving a little; every 30 s the
+    /// wearer looks away for 3 s (they are lost, and a moved one would be remembered).</summary>
+    private static void LookAtThingsAhead(Sim sim, float t)
+    {
+        bool away = t % 30f >= 27f;
+        sim.CamX = 0.3f * (float)Math.Sin(t * 2 * Math.PI / 23);
+        sim.CamZ = 2.0f;
+        sim.Yaw = away ? 2.2f : 0.25f * (float)Math.Sin(t * 2 * Math.PI / 6);
+        sim.Pitch = -0.2f + 0.08f * (float)Math.Sin(t * 2 * Math.PI / 4);
+    }
+
+    private static void PersonWalksPastRack()
+    {
+        var sim = new Sim(19);
+        Room(sim);
+        sim.Static.AddRange(FullRack(0.3f, 3.35f));
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 0.5f; sim.Yaw = 0f; sim.Pitch = -0.15f;
+        float t = 0f, px = -1.5f;
+        bool green = false;
+        for (int i = 0; i < 8; i++, t += 0.2f) { sim.Moving = Person(px, 3.0f, 1.68f); sim.Step(d, t); }
+        for (int i = 0; i < 30; i++, t += 0.2f)
+        {
+            px += 0.12f; // 0.6 m/s, passing 12 cm in front of the rack
+            sim.Moving = Person(px, 3.0f, 1.68f);
+            sim.Step(d, t);
+            if (Near(d, px, 3.0f)?.Kind == TrackKind.PersonCandidate) green = true;
+        }
+        for (int i = 0; i < 10; i++, t += 0.2f) { sim.Moving = Person(px, 3.0f, 1.68f); sim.Step(d, t); }
+        True(green, "the person walking past the rack became a person candidate " + Dump(d));
+        var rack = Near(d, 0.3f, 3.35f);
+        True(rack == null || rack.Kind != TrackKind.PersonCandidate, "the rack did not become a person candidate " + Dump(d));
+    }
+
+    private static void PushedRackRemembered()
+    {
+        var sim = new Sim(18);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 1.0f; sim.Pitch = -0.25f;
+        float t = 0f, rx = 0f;
+        void Look(int n, float yaw) { for (int i = 0; i < n; i++, t += 0.2f) { sim.Yaw = yaw; sim.Moving = Rack(rx, 2.6f); sim.Step(d, t); } }
+        Look(15, 0f);
+        for (int i = 0; i < 12; i++, t += 0.2f) { rx += 0.5f / 12; sim.Moving = Rack(rx, 2.6f); sim.Step(d, t); }
+        Look(20, 0f);
+        float pushedAt = t;
+        True(Near(d, rx, 2.6f)?.Kind == TrackKind.PersonCandidate, "green after the push " + Dump(d));
+        while (t < pushedAt + 180f)
+        {
+            Look(25, 2.5f); // looks away for 5 s
+            Look(25, 0f);   // and back for 5 s
+            bool green = Near(d, rx, 2.6f)?.Kind == TrackKind.PersonCandidate;
+            float since = t - pushedAt;
+            if (since < 100f) True(green, $"{since:0} s after the push, looked back: still green " + Dump(d));
+            if (since > 140f) True(!green, $"{since:0} s after the push, looked back: no longer green " + Dump(d));
+        }
+    }
+
+    /// <summary>The back wall is at z 5.0: a wall right next to the old spot is not "another object".</summary>
+    private static void RackFromWallTowardWearer()
+    {
+        var sim = new Sim(20);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 2.8f; sim.Yaw = 0f; sim.Pitch = -0.15f;
+        float t = 0f, rz = 4.80f;
+        for (int i = 0; i < 15; i++, t += 0.2f) { sim.Moving = FullRack(0f, rz); sim.Step(d, t); }
+        NobodyGreen(d, "before the pull");
+        for (int i = 0; i < 12; i++, t += 0.2f) { rz -= 0.5f / 12; sim.Moving = FullRack(0f, rz); sim.Step(d, t); }
+        bool green = false;
+        for (int i = 0; i < 20; i++, t += 0.2f)
+        {
+            sim.Moving = FullRack(0f, rz);
+            sim.Step(d, t);
+            if (Near(d, 0f, rz)?.Kind == TrackKind.PersonCandidate) green = true;
+        }
+        True(green, "the rack pulled away from the wall became a person candidate within 4 s " + Dump(d));
+    }
+
+    /// <summary>Looking down a little, so the wall's top is out of view: the wall is then a long
+    /// object, not structure.</summary>
+    private static void PersonFromWallTowardWearer()
+    {
+        var sim = new Sim(21);
+        Room(sim);
+        var d = new PersonDetector();
+        sim.CamX = 0f; sim.CamZ = 2.6f; sim.Yaw = 0f; sim.Pitch = -0.35f;
+        float t = 0f, pz = 4.75f;
+        bool green = false;
+        for (int i = 0; i < 8; i++, t += 0.2f) { sim.Moving = Person(0.1f, pz, 1.70f); sim.Step(d, t); }
+        for (int i = 0; i < 14; i++, t += 0.2f)
+        {
+            pz -= 0.1f; // 0.5 m/s, from 4.75 m to 3.35 m
+            sim.Moving = Person(0.1f, pz, 1.70f);
+            sim.Step(d, t);
+            if (Near(d, 0.1f, pz)?.Kind == TrackKind.PersonCandidate) green = true;
+        }
+        True(green, "the person walking away from the wall became a person candidate " + Dump(d));
     }
 
     // ----- Room and objects -----

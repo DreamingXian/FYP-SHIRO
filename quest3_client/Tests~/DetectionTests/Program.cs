@@ -15,7 +15,9 @@ internal static class Program
     private static int Main(string[] args)
     {
         // dotnet run -- --seeds 30: every ray-cast scene with 30 random seeds, pass rate per scene
-        if (args.Length == 2 && args[0] == "--seeds") return SceneTests.Stress(int.Parse(args[1])) == 0 ? 0 : 1;
+        // dotnet run -- --seeds 30 screen: only the scenes whose name contains "screen"
+        if (args.Length >= 2 && args[0] == "--seeds")
+            return SceneTests.Stress(int.Parse(args[1]), args.Length > 2 ? args[2] : null) == 0 ? 0 : 1;
 
         Run("a standing person's height is measured from the visible side (±5 cm)", PersonHeight);
         Run("floor points alone are no object", FloorOnly);
