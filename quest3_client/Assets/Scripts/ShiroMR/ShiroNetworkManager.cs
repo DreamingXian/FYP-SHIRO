@@ -199,7 +199,7 @@ namespace ShiroMR
                 {
                     PairingMessage = resp != null && !string.IsNullOrEmpty(resp.error)
                         ? $"Pairing refused: {resp.error}"
-                        : $"Edge server at {serverIp} not reachable ({req.error}). Choose the right server address below.";
+                        : $"Edge server at {serverIp} not reachable ({req.error}). Set the address with 🌐 Server address (the dashboard shows it: ADMIN → Headset Pairing).";
                     Debug.LogWarning($"[SHIRO NET] {PairingMessage}");
                     OnPairingStatusChanged?.Invoke(IsPaired, PairingMessage);
                 }

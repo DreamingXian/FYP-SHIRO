@@ -135,6 +135,19 @@ describe('clinician sign-in, roles and audit trail', () => {
     assert.equal((await openSocket({ Authorization: `Bearer ${token}` })).refused, 401);
   });
 
+  test('the admin sees the server addresses for the headset app; a clinician and a headset do not', async () => {
+    const res = await call('/api/admin/server-address', { cookie: admin });
+    assert.equal(res.status, 200);
+    const { port, addresses } = await res.json();
+    assert.equal(port, HTTP_PORT);
+    assert.ok(Array.isArray(addresses));
+    for (const a of addresses) assert.match(a.address, /^\d+\.\d+\.\d+\.\d+$/);
+    assert.equal((await call('/api/admin/server-address', { cookie: nurse })).status, 403);
+    assert.equal((await call('/api/admin/server-address')).status, 401);
+    const token = await pairHeadset(BASE, admin, 'QUEST3-D4E5F6', '02:D4:E5:F6:00:01');
+    assert.equal((await call('/api/admin/server-address', { bearer: token })).status, 403);
+  });
+
   test('signing out ends the session', async () => {
     const own = await signIn(BASE, TEST_NURSE);
     assert.equal((await call('/api/auth/logout', { method: 'POST', cookie: own })).status, 200);

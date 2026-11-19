@@ -54,6 +54,7 @@ internal static class Program
 
         SceneTests.RunAll(Run);
         LinkingTests.RunAll(Run);
+        ServerAddressTests.RunAll(Run);
 
         Console.WriteLine();
         Console.WriteLine($"{_passed} passed, {_failed} failed");

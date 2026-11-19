@@ -363,7 +363,7 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 3. First time only: **File --> Build Profiles --> Android --> Switch Platform**. The Unity title bar then ends in "Android".
 4. In the Project window, open `Assets/Scenes/SampleScene.unity`.
 5. Inspect the `SHIRO_MR_SYSTEM` GameObject in the Hierarchy:
-   * **Server IP:** Set to your laptop IP (e.g., `192.168.1.229`). It can also be changed on the hand slate's **System** tab.
+   * **Server IP:** the starting value only. On the headset it is set on the hand slate: **System → 🌐 Server address** (the dashboard shows the address: **ADMIN → Headset Pairing**), or **💻 Quest Link (127.0.0.1)** when the edge server runs on the same PC as Unity. The choice is remembered.
    * **Server Port:** `3000`.
    * **Target Ward ID:** leave empty. The ward is chosen on the hand slate (Section 6.6) and remembered on the headset; no ward is assumed.
    * **Auto Connect on Start:** Enabled.
@@ -383,12 +383,31 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 4. Once inside the PC VR environment, look at your monitor and click **`▶ Play`** in the Unity Editor.
 5. Put the headset back on: You are now in color Passthrough with the live SHIRO MR system running!
 
-#### Method B: Wireless Standalone Deployment (Untethered APK) — not yet tested
-1. In Unity, go to **File --> Build Profiles**.
-2. Select **Android** --> **Run Device: Meta Quest 3**.
-3. Click **Build and Run** to install the APK on the headset.
+#### Method B: Standalone App on the Headset (APK, no cable while in use)
 
-The standalone build is planned (README, Section 7) and has not been tested yet. Use Method A for demonstrations.
+The app **SHIRO MR** (`com.shiro.mrpatientconnect`, version 1.1.0) runs on the headset itself. The headset then reaches the edge server over the ward Wi-Fi, so it must be on the same network as the laptop. Building is done with the USB-C cable; afterwards the cable is not needed.
+
+**One-time preparation of the headset (developer mode):**
+1. In the **Meta Horizon** app on your phone: **Devices → Meta Quest 3 → Headset settings → Developer mode** on. (The Meta account must belong to a developer organisation; create one free at developers.meta.com if asked.)
+2. Restart the headset, connect it to the laptop with the USB-C cable, put it on and choose **Allow** (tick *Always allow from this computer*) for **USB debugging**.
+
+**Building and installing (each time the headset code changes):**
+1. Close any running Play session. In Unity: menu **SHIRO → Check APK build settings**. The Console must show `[SHIRO APK] Ready to build`. If it lists problems, run **SHIRO → Apply APK build settings**, then **File → Save Project**.
+2. **Meta → Tools → Project Setup Tool**: press **Fix All** for the Android tab (recommended items too), until no required item is left.
+3. **File → Build Profiles → Android**: under **Run Device** choose the Quest 3 (press **Refresh** if it is not listed). Press **Build And Run** and save the file as `quest3_client\Builds\SHIRO_MR.apk` (create the `Builds` folder in the dialog; APK files are git-ignored). The first build takes 10 to 20 minutes, later builds a few minutes. The app starts on the headset by itself.
+
+**First start of the app on the headset (once per headset):**
+1. The headset asks to allow **spatial data**: choose **Allow**. Without it depth sensing (person detection and linking, Section 6.5) stays off; the System tab then shows `🛡 Spatial data: ⚠ not allowed`. To allow it later: Quest Settings → Privacy & safety → App permissions → Spatial data → SHIRO MR on, then restart the app.
+2. Find the laptop's address on the dashboard: **ADMIN → Headset Pairing** shows *Server address for the headset* (for example `192.168.100.21`, Wi-Fi).
+3. On the hand slate: **System → 🌐 Server address** → type the address → **✓ Connect**. It is remembered.
+4. Pair the app as in Section 6.2, step 6. The app has its own headset ID (`QUEST3-…`), different from the Unity editor's, so it is paired once even if the editor already is.
+5. Choose the ward and calibrate each ward once (Section 6.4). Spatial anchors saved by the app stay on the headset, so the app finds each calibrated ward again after a restart.
+
+**Starting it later:** Library → filter **Unknown sources** → **SHIRO MR**. Building again replaces the app and keeps its pairing, address and calibration; uninstalling it removes them.
+
+**Logs while testing (cable connected):** `adb logcat -s Unity` (adb is in Unity's Android folder: `C:\Program Files\Unity\Hub\Editor\6000.3.28f1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools\adb.exe`).
+
+**Why the app can reach the edge server:** Meta's default Android network security file blocks plain HTTP. The project uses its own file, `Assets/Oculus/ShiroNetworkSecurityConfig.xml`, which allows HTTP to the edge server on the ward network (it has no TLS yet). Every request still needs the headset's pairing token.
 
 ---
 

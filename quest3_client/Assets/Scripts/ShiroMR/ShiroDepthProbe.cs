@@ -188,6 +188,13 @@ namespace ShiroMR
                 return;
             }
 
+            // As an app on the headset, depth starts only after "spatial data" is allowed
+            if (ShiroPermissions.SpatialDataState == ShiroPermissions.State.Refused || ShiroPermissions.SpatialDataState == ShiroPermissions.State.Asking)
+            {
+                SetStatus("Depth waits for the spatial data permission: hand slate → System → 🛡 Spatial data.");
+                return;
+            }
+
             // A sweep of the grid is spread over several frames (RowsPerFrame rows each),
             // so no single frame carries all the rays
             if (_sweepRow < 0)

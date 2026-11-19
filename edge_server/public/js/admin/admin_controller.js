@@ -121,6 +121,39 @@
 
   // ----- headset pairing -----
 
+  const NETWORK_KIND_TEXT = {
+    wifi: 'Wi-Fi',
+    hotspot: 'this computer\'s mobile hotspot',
+    ethernet: 'wired network',
+    other: 'network'
+  };
+
+  // The address the headset app types on its hand slate (System → 🌐 Server address)
+  async function loadServerAddress() {
+    const box = document.getElementById('admin-server-address');
+    if (!box) return;
+    try {
+      const { port, addresses } = await api('/api/admin/server-address');
+      const usable = addresses.filter(a => a.usable);
+      if (usable.length === 0) {
+        box.innerHTML = '<strong>This computer has no network address.</strong> Connect it to the ward Wi-Fi (or switch on its mobile hotspot), then press ↻ Refresh. Over the Quest Link cable the headset uses 127.0.0.1.';
+        return;
+      }
+      const [first, ...others] = usable;
+      const firstKind = NETWORK_KIND_TEXT[first.kind] || 'network';
+      const othersText = others.map(a => `${a.address} (${NETWORK_KIND_TEXT[a.kind] || 'network'}, ${a.name})`).join(' · ');
+      const othersHtml = others.length === 0 ? ''
+        : `<div style="margin-top: 4px; color: var(--text-secondary);">Other networks of this computer: <span class="mono">${escapeHtml(othersText)}</span></div>`;
+      box.innerHTML = `
+        <div>Server address for the headset: <strong class="mono" style="font-size: 16px;">${escapeHtml(first.address)}</strong>
+          <span style="color: var(--text-secondary);">(${escapeHtml(firstKind)}, ${escapeHtml(first.name)}) · port ${escapeHtml(port)}</span></div>
+        ${othersHtml}
+        <div style="margin-top: 4px; color: var(--text-muted);">On the headset: hand slate → System → 🌐 Server address. The headset must be on the same network. Over the Quest Link cable: 💻 Quest Link (127.0.0.1).</div>`;
+    } catch (err) {
+      box.textContent = `Could not read the server address: ${err.message}`;
+    }
+  }
+
   async function loadHeadsets() {
     const body = document.getElementById('admin-headsets-body');
     if (!body) return;
@@ -266,7 +299,10 @@
     wired = true;
     form.addEventListener('submit', createAccount);
     document.getElementById('admin-refresh-accounts').addEventListener('click', loadAccounts);
-    document.getElementById('admin-refresh-headsets').addEventListener('click', loadHeadsets);
+    document.getElementById('admin-refresh-headsets').addEventListener('click', () => {
+      loadHeadsets();
+      loadServerAddress();
+    });
     document.getElementById('admin-new-pairing-code').addEventListener('click', newPairingCode);
     document.getElementById('admin-audit-filter').addEventListener('submit', (event) => { event.preventDefault(); loadAudit(); });
     document.getElementById('admin-audit-clear').addEventListener('click', () => {
@@ -279,6 +315,7 @@
     wire();
     loadAccounts();
     loadHeadsets();
+    loadServerAddress();
     loadAudit();
   };
 })();

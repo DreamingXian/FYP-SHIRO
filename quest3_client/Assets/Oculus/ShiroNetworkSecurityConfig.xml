@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SHIRO MR: network security configuration of the headset app (APK).
+
+  The Meta XR SDK copies this file into the Android build instead of its own default
+  (Oculus project config, "Custom Security XML Path"; set by the Unity menu
+  SHIRO → Apply APK build settings).
+
+  Meta's default allows no plain HTTP at all, so the app could not reach the edge
+  server (http://<ward computer>:3000). The edge server runs on the ward network
+  without TLS (a certificate cannot be issued for a local IP address), and its
+  address changes with the network, so plain HTTP is allowed here for every address.
+  Every request still needs the headset's pairing token. HTTPS on the edge server
+  is future work; with it, this file can go back to cleartextTrafficPermitted="false".
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

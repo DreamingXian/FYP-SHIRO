@@ -70,6 +70,10 @@ quest3_client/[Tt]emp/
 quest3_client/[Oo]bj/
 quest3_client/[Bb]uild/
 quest3_client/[Bb]uilds/
+# Headset app packages, wherever they are saved
+*.apk
+*.aab
+*.apk.idsig
 quest3_client/[Ll]ogs/
 quest3_client/[Uu]ser[Ss]ettings/
 quest3_client/[Mm]emoryCaptures/
