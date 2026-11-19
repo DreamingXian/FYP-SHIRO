@@ -33,7 +33,8 @@
       async function loadBindingsData() {
         await Promise.all([
           fetchUnpairedCandidates(),
-          fetchActiveBindings()
+          fetchActiveBindings(),
+          fetchBindingHistory()
         ]);
       }
 
@@ -578,6 +579,101 @@
           }
         }
 
+        // ----- Binding history: every binding, current and ended -----
+        let cachedBindingHistory = [];
+        let bindingHistoryQuery = '';
+        const BINDING_HISTORY_LIMIT = 500;
+
+        async function fetchBindingHistory() {
+          try {
+            const res = await fetch(`/api/bindings/history?limit=${BINDING_HISTORY_LIMIT}`);
+            const data = await res.json();
+            if (data.success && Array.isArray(data.history)) {
+              cachedBindingHistory = data.history;
+              renderBindingHistory();
+            }
+          } catch (err) {
+            console.warn('Failed to fetch binding history:', err);
+          }
+        }
+
+        function handleBindingHistorySearch(query) {
+          bindingHistoryQuery = (query || '').toLowerCase().trim();
+          renderBindingHistory();
+        }
+
+        /** "3 d 4 h", "2 h 15 min", "40 min". */
+        function formatBindingDuration(minutes) {
+          const m = Number(minutes);
+          if (!Number.isFinite(m) || m < 0) return 'not recorded';
+          if (m < 60) return `${m} min`;
+          const h = Math.floor(m / 60);
+          if (h < 24) return `${h} h ${m % 60} min`;
+          return `${Math.floor(h / 24)} d ${h % 24} h`;
+        }
+
+        function renderBindingHistory() {
+          const tbody = document.getElementById('binding-history-body');
+          if (!tbody) return;
+          const countBadge = document.getElementById('binding-history-count');
+          if (countBadge) countBadge.innerText = `${cachedBindingHistory.length} binding${cachedBindingHistory.length === 1 ? '' : 's'}`;
+
+          const q = bindingHistoryQuery;
+          const list = !q ? cachedBindingHistory : cachedBindingHistory.filter(b =>
+            [b.patient_name, b.patient_id, b.device_id, b.mac_address, b.bound_by, b.unbound_by]
+              .some(v => v && String(v).toLowerCase().includes(q)));
+
+          const info = document.getElementById('binding-history-info');
+          if (info) {
+            info.innerText = cachedBindingHistory.length >= BINDING_HISTORY_LIMIT
+              ? `Showing the latest ${BINDING_HISTORY_LIMIT} bindings${q ? ` (${list.length} match the search)` : ''}`
+              : `${list.length} of ${cachedBindingHistory.length} binding${cachedBindingHistory.length === 1 ? '' : 's'}`;
+          }
+
+          if (list.length === 0) {
+            tbody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">
+          ${cachedBindingHistory.length === 0 ? 'No bindings yet.' : 'No binding matches the search.'}
+        </td>
+      </tr>`;
+            return;
+          }
+
+          tbody.innerHTML = list.map(b => {
+            const statusBadge = b.status === 'ACTIVE'
+              ? '<span class="badge badge-live" style="font-size: 10px;">● Active now</span>'
+              : b.status === 'DISCHARGED'
+                ? '<span class="badge badge-info" style="font-size: 10px;">Discharged</span>'
+                : '<span class="badge badge-neutral" style="font-size: 10px;">Unbound</span>';
+            const deletedNote = b.device_deleted
+              ? '<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">wristband deleted from the registry</div>'
+              : '';
+            return `
+      <tr>
+        <td>
+          <b style="color: var(--text-primary); font-size: 13px;">${escapeHtml(b.patient_name)}</b>
+          <div style="font-size: 11px; color: var(--primary); font-weight: 600;" class="mono">${escapeHtml(b.patient_id)}</div>
+        </td>
+        <td>
+          <span class="mono" style="font-size: 12px;">${escapeHtml(b.mac_address || 'not recorded')}</span>
+          <span class="badge badge-neutral" style="margin-left: 6px; font-size: 10px;">${escapeHtml(b.device_id || 'deleted')}</span>
+          ${deletedNote}
+        </td>
+        <td style="font-size: 12px;">
+          <div>${escapeHtml(b.bound_at || 'not recorded')}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(b.bound_by || 'not recorded')}</div>
+        </td>
+        <td style="font-size: 12px;">
+          <div>${escapeHtml(b.unbound_at || (b.status === 'ACTIVE' ? '—' : 'not recorded'))}</div>
+          <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(b.status === 'ACTIVE' ? '' : (b.unbound_by || 'not recorded'))}</div>
+        </td>
+        <td>${statusBadge}</td>
+        <td style="font-size: 12px; color: var(--text-secondary);">${escapeHtml(formatBindingDuration(b.duration_minutes))}${b.status === 'ACTIVE' ? ' so far' : ''}</td>
+      </tr>`;
+          }).join('');
+        }
+
         function handleBindingSearch(query) {
           bindingSearchQuery = query || '';
           currentBindingPage = 1; // Reset to page 1 upon new search
@@ -834,3 +930,6 @@
         window.handleBindingFilter = handleBindingFilter;
         window.changeBindingPage = changeBindingPage;
         window.unbindTag = unbindTag;
+        window.fetchBindingHistory = fetchBindingHistory;
+        window.handleBindingHistorySearch = handleBindingHistorySearch;
+        window.formatBindingDuration = formatBindingDuration;

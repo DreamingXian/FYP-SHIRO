@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS `patients` (
     `photo_url` VARCHAR(255) NULL,
     `admission_date` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `discharge_date` DATETIME NULL,
+    `discharged_from_ward_id` VARCHAR(32) NULL,  -- the ward and bed at discharge (the shift report
+    `discharged_from_bed_id` VARCHAR(32) NULL,   -- still lists the patient for that shift); no foreign key
     `status` ENUM('ADMITTED', 'DISCHARGED') DEFAULT 'ADMITTED',
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,

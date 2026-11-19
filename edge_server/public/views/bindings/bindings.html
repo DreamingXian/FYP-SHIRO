@@ -174,3 +174,46 @@
           </div>
         </div>
       </div>
+
+      <!-- Binding history: every binding, current and ended (thesis Table 4.8) -->
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
+          <div>
+            <div class="card-title">
+              <span>🕘 Binding History</span>
+              <span class="badge-num" id="binding-history-count">0 bindings</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Who wore which wristband, and when. Unbinding or discharging keeps the record; a wristband deleted from the registry keeps its MAC address here.
+            </div>
+          </div>
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <div class="search-input-wrap" style="min-width: 260px; max-width: 320px;">
+              <span class="search-icon">🔍</span>
+              <input type="text" class="form-control" id="binding-history-search"
+                placeholder="Search by Patient, ID, Wristband, MAC or Clinician..." oninput="handleBindingHistorySearch(this.value)">
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="fetchBindingHistory()">🔄 Refresh</button>
+          </div>
+        </div>
+        <div class="data-table-container" style="max-height: 420px; overflow-y: auto;">
+          <table class="data-table" id="binding-history-table">
+            <thead>
+              <tr>
+                <th>Patient</th>
+                <th>Wristband</th>
+                <th>Bound</th>
+                <th>Ended</th>
+                <th>How It Ended</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody id="binding-history-body">
+              <!-- Rendered dynamically via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+        <div style="padding: 12px 20px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted);" id="binding-history-info">
+          Showing the latest bindings
+        </div>
+      </div>

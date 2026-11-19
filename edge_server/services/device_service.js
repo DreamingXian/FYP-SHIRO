@@ -400,15 +400,34 @@ async function updateDevice(deviceId, updateData) {
 
 /**
  * Deletes a device from the registry and immediately purges it from IPS live maps.
+ * A wristband's binding history is kept: an active binding is ended first (UNBOUND,
+ * with the time and who deleted it), then the rows keep the copied MAC address and
+ * their device_id becomes NULL (foreign key ON DELETE SET NULL).
+ * deletedBy: the signed-in clinician (actor label), or null when unknown.
  */
-async function deleteDevice(deviceId) {
+async function deleteDevice(deviceId, deletedBy = null) {
   const pool = getPool();
-  const [existing] = await pool.query('SELECT mac_address FROM devices WHERE device_id = ? LIMIT 1', [deviceId]);
-  const mac = existing.length > 0 ? existing[0].mac_address : null;
-
-  const [result] = await pool.query('DELETE FROM devices WHERE device_id = ?', [deviceId]);
-  if (result.affectedRows === 0) {
-    throw new Error(`Device "${deviceId}" not found.`);
+  const conn = await pool.getConnection();
+  let mac = null;
+  try {
+    await conn.beginTransaction();
+    const [existing] = await conn.query('SELECT mac_address FROM devices WHERE device_id = ? LIMIT 1 FOR UPDATE', [deviceId]);
+    if (existing.length === 0) {
+      throw new Error(`Device "${deviceId}" not found.`);
+    }
+    mac = existing[0].mac_address;
+    await conn.query(
+      `UPDATE patient_bindings SET status = 'UNBOUND', unbound_at = NOW(), unbound_by = ?
+       WHERE device_id = ? AND status = 'ACTIVE'`,
+      [deletedBy || null, deviceId]
+    );
+    await conn.query('DELETE FROM devices WHERE device_id = ?', [deviceId]);
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
   }
   await syncEnrolledDevicesCache();
   try {

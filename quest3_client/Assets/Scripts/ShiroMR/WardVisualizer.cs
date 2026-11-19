@@ -15,6 +15,8 @@ namespace ShiroMR
         [Tooltip("If enabled, renders 3D digital twin overlays (beds, obstacles, walls). If disabled, keeps room pure passthrough.")]
         public bool showDigitalTwinOverlay = true;
 
+        // Objects get ShiroMaterials.Solid (URP Lit, opaque, also in the APK): the alpha
+        // values below have no effect, as over Quest Link.
         [Header("Visual Material Colors")]
         public Color bedColor = new Color(0.2f, 0.5f, 0.9f, 0.40f);      // Translucent Hospital Blue
         public Color pillowColor = new Color(0.95f, 0.95f, 0.98f, 0.85f); // White Headrest
@@ -155,7 +157,7 @@ namespace ShiroMR
             leftPost.transform.localPosition = new Vector3(-dw / 2f, doorH / 2f, 0);
             leftPost.transform.localScale = new Vector3(postThickness, doorH, postThickness);
             var rL = leftPost.GetComponent<Renderer>();
-            if (rL != null) rL.material.color = doorColor;
+            ShiroMaterials.Paint(rL, doorColor);
 
             // Right Post (local +X)
             GameObject rightPost = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -164,7 +166,7 @@ namespace ShiroMR
             rightPost.transform.localPosition = new Vector3(dw / 2f, doorH / 2f, 0);
             rightPost.transform.localScale = new Vector3(postThickness, doorH, postThickness);
             var rR = rightPost.GetComponent<Renderer>();
-            if (rR != null) rR.material.color = doorColor;
+            ShiroMaterials.Paint(rR, doorColor);
 
             // Header / Lintel
             GameObject header = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -173,7 +175,7 @@ namespace ShiroMR
             header.transform.localPosition = new Vector3(0, doorH, 0);
             header.transform.localScale = new Vector3(dw + postThickness, postThickness, postThickness);
             var rH = header.GetComponent<Renderer>();
-            if (rH != null) rH.material.color = doorColor;
+            ShiroMaterials.Paint(rH, doorColor);
 
             // Floor Threshold Mat
             GameObject mat = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -182,7 +184,7 @@ namespace ShiroMR
             mat.transform.localPosition = new Vector3(0, 0.005f, 0);
             mat.transform.localScale = new Vector3(dw, 0.01f, 0.35f);
             var rM = mat.GetComponent<Renderer>();
-            if (rM != null) rM.material.color = new Color(0.95f, 0.7f, 0.1f, 0.5f);
+            ShiroMaterials.Paint(rM, new Color(0.95f, 0.7f, 0.1f, 0.5f));
 
             // Floating Label
             GameObject labelObj = new GameObject("DoorLabel");
@@ -296,7 +298,7 @@ namespace ShiroMR
             mattress.transform.localPosition = new Vector3(0, mattressHeight / 2.0f, 0);
             mattress.transform.localScale = new Vector3(bedW, mattressHeight, bedL);
             var ren = mattress.GetComponent<Renderer>();
-            if (ren != null) ren.material.color = bedColor;
+            ShiroMaterials.Paint(ren, bedColor);
 
             // 2. Headboard at local +Z (Preserve BoxCollider)
             GameObject headboard = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -305,7 +307,7 @@ namespace ShiroMR
             headboard.transform.localPosition = new Vector3(0, 0.40f, (bedL / 2.0f) - 0.03f);
             headboard.transform.localScale = new Vector3(bedW + 0.04f, 0.65f, 0.06f);
             var hbRen = headboard.GetComponent<Renderer>();
-            if (hbRen != null) hbRen.material.color = new Color(0.2f, 0.35f, 0.5f, 0.9f);
+            ShiroMaterials.Paint(hbRen, new Color(0.2f, 0.35f, 0.5f, 0.9f));
 
             // 3. Pillow near the headboard (local +Z)
             GameObject pillow = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -315,7 +317,7 @@ namespace ShiroMR
             pillow.transform.localScale = new Vector3(bedW * 0.70f, 0.10f, 0.32f);
             Destroy(pillow.GetComponent<Collider>());
             var pRen = pillow.GetComponent<Renderer>();
-            if (pRen != null) pRen.material.color = pillowColor;
+            ShiroMaterials.Paint(pRen, pillowColor);
 
             // 4. Floating Bed Label
             GameObject labelObj = new GameObject("BedLabel");
@@ -346,7 +348,7 @@ namespace ShiroMR
             obsObj.transform.localScale = new Vector3(obs.width, h, obs.length);
 
             var ren = obsObj.GetComponent<Renderer>();
-            if (ren != null) ren.material.color = obstacleColor;
+            ShiroMaterials.Paint(ren, obstacleColor);
 
             _spawnedElements.Add(obsObj);
         }
@@ -360,7 +362,7 @@ namespace ShiroMR
             anchorObj.transform.localScale = new Vector3(0.18f, 0.18f, 0.18f); // 18cm comfortable targeting sphere
 
             var ren = anchorObj.GetComponent<Renderer>();
-            if (ren != null) ren.material.color = anchorColor;
+            ShiroMaterials.Paint(ren, anchorColor);
 
             _spawnedElements.Add(anchorObj);
         }

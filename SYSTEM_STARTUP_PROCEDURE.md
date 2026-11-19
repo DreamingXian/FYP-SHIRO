@@ -363,7 +363,7 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 3. First time only: **File --> Build Profiles --> Android --> Switch Platform**. The Unity title bar then ends in "Android".
 4. In the Project window, open `Assets/Scenes/SampleScene.unity`.
 5. Inspect the `SHIRO_MR_SYSTEM` GameObject in the Hierarchy:
-   * **Server IP:** Set to your laptop IP (e.g., `192.168.1.229`). It can also be changed on the hand slate's **System** tab.
+   * **Server IP:** the starting value only. On the headset it is set on the hand slate: **System → 🌐 Server address** (the dashboard shows the address: **ADMIN → Headset Pairing**), or **💻 Quest Link (127.0.0.1)** when the edge server runs on the same PC as Unity. The choice is remembered.
    * **Server Port:** `3000`.
    * **Target Ward ID:** leave empty. The ward is chosen on the hand slate (Section 6.6) and remembered on the headset; no ward is assumed.
    * **Auto Connect on Start:** Enabled.
@@ -383,12 +383,35 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 4. Once inside the PC VR environment, look at your monitor and click **`▶ Play`** in the Unity Editor.
 5. Put the headset back on: You are now in color Passthrough with the live SHIRO MR system running!
 
-#### Method B: Wireless Standalone Deployment (Untethered APK) — not yet tested
-1. In Unity, go to **File --> Build Profiles**.
-2. Select **Android** --> **Run Device: Meta Quest 3**.
-3. Click **Build and Run** to install the APK on the headset.
+#### Method B: Standalone App on the Headset (APK, no cable while in use)
 
-The standalone build is planned (README, Section 7) and has not been tested yet. Use Method A for demonstrations.
+The app **SHIRO MR** (`com.shiro.mrpatientconnect`, version 1.1.0) runs on the headset itself. The headset then reaches the edge server over the ward Wi-Fi, so it must be on the same network as the laptop. Building is done with the USB-C cable; afterwards the cable is not needed.
+
+**One-time preparation of the headset (developer mode):**
+1. In the **Meta Horizon** app on your phone: **Devices → Meta Quest 3 → Headset settings → Developer mode** on. (The Meta account must belong to a developer organisation; create one free at developers.meta.com if asked.)
+2. Restart the headset, connect it to the laptop with the USB-C cable, put it on and choose **Allow** (tick *Always allow from this computer*) for **USB debugging**.
+
+**Building and installing (each time the headset code changes):**
+1. Close any running Play session. In Unity: menu **SHIRO → Check APK build settings**. The Console must show `[SHIRO APK] Ready to build`. If it lists problems, run **SHIRO → Apply APK build settings**, then **File → Save Project**.
+2. **Meta → Tools → Project Setup Tool**: press **Fix All** for the Android tab (recommended items too), until no required item is left.
+3. **File → Build Profiles → Android**: under **Run Device** choose the Quest 3 (press **Refresh** if it is not listed). Press **Build And Run** and save the file as `quest3_client\Builds\SHIRO_MR.apk` (create the `Builds` folder in the dialog; APK files are git-ignored). The first build takes 10 to 20 minutes, later builds a few minutes. The app starts on the headset by itself.
+
+**First start of the app on the headset (once per headset):**
+1. The headset asks to allow **spatial data**: choose **Allow**. Without it depth sensing (person detection and linking, Section 6.5) stays off; the System tab then shows `🛡 Spatial data: ⚠ not allowed`. To allow it later: Quest Settings → Privacy & safety → App permissions → Spatial data → SHIRO MR on, then restart the app.
+2. Find the laptop's address on the dashboard: **ADMIN → Headset Pairing** shows *Server address for the headset* (for example `192.168.100.21`, Wi-Fi).
+3. On the hand slate: **System → 🌐 Server address** → type the address → **✓ Connect**. It is remembered.
+4. Pair the app as in Section 6.2, step 6. The app has its own headset ID (`QUEST3-…`), different from the Unity editor's, so it is paired once even if the editor already is.
+5. Choose the ward and calibrate each ward once (Section 6.4). Spatial anchors saved by the app stay on the headset, so the app finds each calibrated ward again after a restart.
+
+**Starting it later:** Library → filter **Unknown sources** → **SHIRO MR**. Building again replaces the app and keeps its pairing, address and calibration; uninstalling it removes them.
+
+**Walking the whole clinic:** the app hides the headset's boundary while it shows passthrough (Meta's Boundary API), so it keeps working beyond the boundary area set up on the headset; no room needs to be scanned for this. It needs **Boundary Visibility Support** in the Meta XR settings (set by **SHIRO → Apply APK build settings**) and works in the APK only. In the log, `[SHIRO MR] Boundary hidden` confirms it. Passthrough is what keeps the clinician safe here: the hand slate, patient cards and the solid ward objects cover what is behind them, so stop walking while reading them.
+
+**Quitting the app:** hand slate → **System → ✖ Quit app → ✖ Quit now** (it asks first, because alerts stop on this headset while the app is closed). The Meta menu always works too: turn your right palm towards you, pinch thumb and index finger and hold until the menu opens (or press the Meta button on the right controller), then choose **Quit**. With the cable connected: `adb shell am force-stop com.shiro.mrpatientconnect`.
+
+**Logs while testing (cable connected):** `adb logcat -s Unity` (adb is in Unity's Android folder: `C:\Program Files\Unity\Hub\Editor\6000.3.28f1\Editor\Data\PlaybackEngines\AndroidPlayer\SDK\platform-tools\adb.exe`).
+
+**Why the app can reach the edge server:** Meta's default Android network security file blocks plain HTTP. The project uses its own file, `Assets/Oculus/ShiroNetworkSecurityConfig.xml`, which allows HTTP to the edge server on the ward network (it has no TLS yet). Every request still needs the headset's pairing token.
 
 ---
 
@@ -465,7 +488,7 @@ Look at your left palm/wrist to summon the 5-tab slate:
 * **🚪 Ward Setup:** ward information and the ward choice ("SWITCH HOSPITAL WARD"), door frame calibration, save / re-sync / purge of the spatial anchor, perspective, the 3D digital twin overlay on/off, and **🧭 Auto ward** (Section 6.4).
 * **📍 IPS Location:** "Find My Current Ward / Room" and continuous refresh (4 Hz). Shows only data of the loaded ward: its beds and anchors, and the anchor signal marked as estimated. Without a ward it says "NO WARD CONFIGURED".
 * **🛏️ Patient Vitals:** re-attach the patient hologram to gaze/aim and switch its mount between headboard and bedside.
-* **⚙️ System:** reconnect, server address presets (Wi-Fi `.1.229`, Hotspot `.137.1`, or Localhost for Quest Link), the headset ID, the active ward and the connection state, pairing. Person linking: **🔗 Linking** (on by default), **🔬 Depth view**, **🚶 Move rule** (off only to test with height alone) and **🧪 Fake band** (a test panel whose Bluetooth position wanders 2 m in front of you, shown as a cyan disc; never sent to the server).
+* **⚙️ System:** reconnect, **🌐 Server address** (typed on a keypad; the dashboard shows it under ADMIN → Headset Pairing) or **💻 Quest Link** (`127.0.0.1`), the headset ID, the active ward and the connection state, pairing, **🛡 Spatial data** (the permission for depth sensing, app on the headset only) and **✖ Quit app** (asks first; over Quest Link it ends Play mode). Person linking: **🔗 Linking** (on by default), **🔬 Depth view**, **🚶 Move rule** (off only to test with height alone) and **🧪 Fake band** (a test panel whose Bluetooth position wanders 2 m in front of you, shown as a cyan disc; never sent to the server).
 * **🗺️ Live Map:** top view of the ward with each patient (BLE position, or violet 👁 where a headset sees them), this headset and alerting patients in red. Tapping a patient opens their card and requests 1 Hz vitals for 60 s.
 
 ---
@@ -523,6 +546,8 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | `[FATAL STARTUP ERROR] MQTT_ANCHOR_USER and MQTT_ANCHOR_PASSWORD must be set` | The MQTT anchor login is missing from `edge_server/.env`, or the password is shorter than 16 characters. | Section 3.2 a and b. |
 | `Access denied for user 'shiro_app'` on `npm start` | Wrong `DB_PASSWORD`, or the account was not created. | Section 3.2 c. Check the password in `.env`; in phpMyAdmin, User accounts must list `shiro_app` with host `127.0.0.1`. |
 | `Access denied for user 'shiro_app'@'127.0.0.1' to database 'shiro_db'` (the login works, the database is refused), often right after MySQL was restarted | MySQL's grant table `mysql.db` is damaged, so the GRANTs of section 3.2 c were lost when MySQL reloaded them. | In phpMyAdmin's SQL tab: `CHECK TABLE mysql.db, mysql.proxies_priv;`. If either is not `OK`, run `REPAIR TABLE mysql.db, mysql.proxies_priv;`, then run the two `GRANT` lines of section 3.2 c again and `FLUSH PRIVILEGES;`. `SHOW GRANTS FOR 'shiro_app'@'127.0.0.1';` must list `shiro_db` and `shiro_test`. |
+| Headset app (APK) shows beds, door frames or calibration markers in magenta, while their labels look normal; over Quest Link they look right | An object made by code has a material whose shader the APK left out. Unity packs a shader only when something in the build uses it; inside the editor every shader is available. | Objects made by code take their material from `ShiroMaterials` (templates in `Assets/Resources/ShiroMR`). Run **SHIRO → Check APK build settings**, then build again. |
+| Headset app (APK) stops at the edge of the boundary area (boundary wall, app paused or hidden) | The app may not hide the boundary: Boundary Visibility Support is off, so the app lacks the permission `com.oculus.permission.BOUNDARY_VISIBILITY`. | Run **SHIRO → Check APK build settings** (then **Apply** if it lists the problem) and build again. `adb logcat -s Unity` must show `[SHIRO MR] Boundary hidden`. |
 | Live map toast: "1 Hz vitals stream not started: No anchor has heard wristband …" | No anchor has received the wristband for 3.5 s. | Check that the wristband is on and near an online anchor, then select the patient again. |
 | Edge server prints `[PROTOCOL] Wristband … sends a packet version this system does not support` | Wristband and anchors run different firmware versions. | Flash the wristband and all anchors from the same commit. |
 | Live map shows **SENSOR FAULT** | The wristband reports that its accelerometer or pulse sensor does not answer. | Check the sensor wiring (SDA `D4`, SCL `D5`, 3.3 V, GND) and restart the wristband. The Serial Monitor names the failed sensor. |

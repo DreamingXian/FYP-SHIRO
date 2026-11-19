@@ -4,6 +4,8 @@
 // =============================================================================
 const authService = require('../services/auth/auth_service');
 const audit = require('../services/audit_service');
+const config = require('../config/app_config');
+const { listServerAddresses } = require('../services/network_addresses');
 const { actorOf, clientIp } = require('../services/auth/request_auth');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const { requireId, optionalInt } = require('../utils/validate');
@@ -73,6 +75,12 @@ async function handleAdminRoutes(pathname, req, res, parsedUrl, body) {
   }
 
   // Headset pairing
+  // The address a headset app types on its hand slate to reach this server (System → Server address)
+  if (pathname === '/api/admin/server-address' && req.method === 'GET') {
+    sendJson(res, 200, { success: true, port: config.HTTP_PORT, addresses: listServerAddresses() });
+    return true;
+  }
+
   if (pathname === '/api/admin/headsets' && req.method === 'GET') {
     try {
       sendJson(res, 200, { success: true, pairings: await authService.listPairings() });

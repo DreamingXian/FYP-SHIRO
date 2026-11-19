@@ -6,6 +6,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using ShiroMR.Net;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -1608,34 +1609,40 @@ namespace ShiroMR
             _sysAnchorUuid.rectTransform.anchoredPosition = new Vector2(0f, -5f);
             _sysAnchorUuid.rectTransform.sizeDelta = new Vector2(1000f, 45f);
 
-            // Row 1: Reconnect & Quick IP Preset Buttons
+            // Row 1: reconnect, the edge server address (typed; shown on the dashboard), Quest Link
             Button reconnectBtn = CreateButton(p.transform, "ReconnectBtn", "🔄 Reconnect", new Vector2(240f, 55f), new Color(0.12f, 0.35f, 0.50f), () =>
             {
                 if (ShiroNetworkManager.Instance != null) ShiroNetworkManager.Instance.Connect();
             });
             reconnectBtn.transform.localPosition = new Vector3(-350f, -85f, 0);
 
-            Button wifiIpBtn = CreateButton(p.transform, "WifiIpBtn", "📶 Wi-Fi (.1.229)", new Vector2(310f, 55f), new Color(0.10f, 0.42f, 0.35f), () =>
-            {
-                if (ShiroNetworkManager.Instance != null) ShiroNetworkManager.Instance.SetServerIp("192.168.1.229");
-            });
-            wifiIpBtn.transform.localPosition = new Vector3(-55f, -85f, 0);
+            Button addressBtn = CreateButton(p.transform, "ServerAddressBtn", "🌐 Server address", new Vector2(310f, 55f), new Color(0.10f, 0.42f, 0.35f), OpenAddressPad);
+            addressBtn.transform.localPosition = new Vector3(-55f, -85f, 0);
 
-            Button hotspotIpBtn = CreateButton(p.transform, "HotspotIpBtn", "📱 Hotspot (.137.1)", new Vector2(310f, 55f), new Color(0.35f, 0.25f, 0.55f), () =>
-            {
-                if (ShiroNetworkManager.Instance != null) ShiroNetworkManager.Instance.SetServerIp("192.168.137.1");
-            });
-            hotspotIpBtn.transform.localPosition = new Vector3(280f, -85f, 0);
+            Button localIpBtn = CreateButton(p.transform, "LocalIpBtn", "💻 Quest Link (127.0.0.1)", new Vector2(310f, 55f), new Color(0.20f, 0.25f, 0.32f), () => UseServerAddress("127.0.0.1"));
+            localIpBtn.transform.localPosition = new Vector3(280f, -85f, 0);
 
-            // Row 2: Localhost option for Quest Link PC testing, and pairing
-            Button localIpBtn = CreateButton(p.transform, "LocalIpBtn", "💻 Localhost (127.0.0.1 for PC Link)", new Vector2(480f, 45f), new Color(0.20f, 0.25f, 0.32f), () =>
-            {
-                if (ShiroNetworkManager.Instance != null) ShiroNetworkManager.Instance.SetServerIp("127.0.0.1");
-            });
-            localIpBtn.transform.localPosition = new Vector3(-250f, -150f, 0);
+            // Row 2: pairing, the spatial data permission (app on the headset), quitting the app
+            Button pairBtn = CreateButton(p.transform, "PairBtn", "🔑 Pair headset (code)", new Vector2(300f, 45f), new Color(0.55f, 0.40f, 0.08f), OpenPairingPad);
+            pairBtn.transform.localPosition = new Vector3(-370f, -150f, 0);
 
-            Button pairBtn = CreateButton(p.transform, "PairBtn", "🔑 Pair headset (code)", new Vector2(420f, 45f), new Color(0.55f, 0.40f, 0.08f), OpenPairingPad);
-            pairBtn.transform.localPosition = new Vector3(250f, -150f, 0);
+            Button permissionBtn = CreateButton(p.transform, "SpatialDataBtn", ShiroPermissions.Label(), new Vector2(420f, 45f), new Color(0.22f, 0.25f, 0.40f), () =>
+            {
+                if (ShiroPermissions.SpatialDataState == ShiroPermissions.State.Refused && _sysServerStatus != null)
+                {
+                    _sysServerStatus.text = $"Spatial data: if no question appears, {ShiroPermissions.HowToAllow}";
+                    _sysServerStatus.color = new Color(1f, 0.75f, 0.2f);
+                }
+                ShiroPermissions.Ask();
+            });
+            permissionBtn.transform.localPosition = new Vector3(0f, -150f, 0);
+            _permissionBtnText = permissionBtn.GetComponentInChildren<Text>();
+
+            // The APK has no other way out than the Meta menu. Quitting stops alerts on this
+            // headset, so it asks first, and "Quit now" sits elsewhere: a finger resting on
+            // this button (it repeats every 0.35 s) cannot confirm by itself.
+            Button quitBtn = CreateButton(p.transform, "QuitAppBtn", "✖ Quit app", new Vector2(300f, 45f), new Color(0.45f, 0.15f, 0.18f), OpenQuitConfirm);
+            quitBtn.transform.localPosition = new Vector3(370f, -150f, 0);
 
             // Row 3: person detection and linking (8D): depth view, movement rule, linking, fake wristband
             Button depthBtn = CreateButton(p.transform, "DepthBtn", "🔬 Depth view: OFF", new Vector2(255f, 45f), new Color(0.22f, 0.18f, 0.40f), () =>
@@ -1675,7 +1682,169 @@ namespace ShiroMR
             _fakeBtnText = fakeBtn.GetComponentInChildren<Text>();
 
             BuildPairingPad(p.transform);
+            BuildAddressPad(p.transform);
+            BuildQuitConfirm(p.transform);
             RefreshPairingStatus();
+        }
+
+        // ----- Quit the app (System → ✖ Quit app) -----
+
+        private GameObject _quitPanel;
+
+        private void BuildQuitConfirm(Transform parent)
+        {
+            _quitPanel = CreatePanel(parent, "QuitConfirm", new Vector2(860f, 260f), new Color(0.10f, 0.03f, 0.04f, 0.97f));
+            _quitPanel.transform.localPosition = new Vector3(0f, 60f, 0f);
+
+            string question = Application.isEditor
+                ? "Stop the app? Over Quest Link this ends Play mode in Unity."
+                : "Quit SHIRO MR? Alerts and vital signs stop on this headset until you open the app again.";
+            Text q = CreateText(_quitPanel.transform, "QuitQuestion", question, 24, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            q.rectTransform.anchoredPosition = new Vector2(0f, 60f);
+            q.rectTransform.sizeDelta = new Vector2(800f, 90f);
+
+            // Both buttons are well away from every System tab button underneath.
+            Button quitNow = CreateButton(_quitPanel.transform, "QuitNow", "✖ Quit now", new Vector2(340f, 60f), new Color(0.70f, 0.12f, 0.15f), QuitApp);
+            quitNow.transform.localPosition = new Vector3(-200f, -40f, 0f);
+
+            Button cancel = CreateButton(_quitPanel.transform, "QuitCancel", "Cancel", new Vector2(340f, 60f), new Color(0.25f, 0.25f, 0.30f), () => _quitPanel.SetActive(false));
+            cancel.transform.localPosition = new Vector3(200f, -40f, 0f);
+
+            _quitPanel.SetActive(false);
+        }
+
+        private void OpenQuitConfirm()
+        {
+            if (_quitPanel == null) return;
+            if (_addressPanel != null) _addressPanel.SetActive(false);
+            if (_pairPanel != null) _pairPanel.SetActive(false);
+            _quitPanel.SetActive(true);
+        }
+
+        private void QuitApp()
+        {
+            Debug.Log("[SHIRO APP] Quit from the hand slate (System → Quit app).");
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
+        }
+
+        // ----- Edge server address: typed on a keypad (shown on the dashboard, ADMIN → Headset Pairing) -----
+
+        private GameObject _addressPanel;
+        private Text _addressText;
+        private Text _addressHintText;
+        private Text _permissionBtnText;
+        private string _addressTyped = "";
+
+        private void BuildAddressPad(Transform parent)
+        {
+            _addressPanel = CreatePanel(parent, "AddressPad", new Vector2(1080f, 480f), new Color(0.03f, 0.06f, 0.10f, 0.97f));
+            _addressPanel.transform.localPosition = Vector3.zero;
+
+            Text title = CreateText(_addressPanel.transform, "AddressTitle", "🌐 EDGE SERVER ADDRESS", 28, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.3f, 0.9f, 0.75f));
+            title.rectTransform.anchoredPosition = new Vector2(0f, 200f);
+            title.rectTransform.sizeDelta = new Vector2(1000f, 45f);
+
+            _addressText = CreateText(_addressPanel.transform, "AddressTyped", "", 46, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            _addressText.rectTransform.anchoredPosition = new Vector2(-170f, 140f);
+            _addressText.rectTransform.sizeDelta = new Vector2(500f, 70f);
+
+            string[] keys = { "1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0", ServerAddress.Backspace };
+            for (int i = 0; i < keys.Length; i++)
+            {
+                string key = keys[i];
+                float x = -300f + (i % 3) * 130f;
+                float y = 65f - (i / 3) * 65f;
+                Button k = CreateButton(_addressPanel.transform, $"AddrKey_{i}", key, new Vector2(115f, 55f), new Color(0.12f, 0.20f, 0.30f), () => PressAddressKey(key));
+                k.transform.localPosition = new Vector3(x, y, 0);
+            }
+
+            Button use = CreateButton(_addressPanel.transform, "AddressUse", "✓ Connect", new Vector2(380f, 55f), new Color(0.10f, 0.50f, 0.30f), () =>
+            {
+                string problem = ServerAddress.Problem(_addressTyped);
+                if (problem != null)
+                {
+                    SetAddressHint(problem, true);
+                    return;
+                }
+                UseServerAddress(_addressTyped);
+                _addressPanel.SetActive(false);
+            });
+            use.transform.localPosition = new Vector3(300f, 65f, 0);
+
+            Button clear = CreateButton(_addressPanel.transform, "AddressClear", "C  Clear", new Vector2(380f, 55f), new Color(0.25f, 0.25f, 0.30f), () => PressAddressKey(ServerAddress.Clear));
+            clear.transform.localPosition = new Vector3(300f, 0f, 0);
+
+            Button link = CreateButton(_addressPanel.transform, "AddressLink", "💻 Quest Link (127.0.0.1)", new Vector2(380f, 55f), new Color(0.20f, 0.25f, 0.32f), () =>
+            {
+                UseServerAddress("127.0.0.1");
+                _addressPanel.SetActive(false);
+            });
+            link.transform.localPosition = new Vector3(300f, -65f, 0);
+
+            Button close = CreateButton(_addressPanel.transform, "AddressClose", "✖ Close", new Vector2(380f, 55f), new Color(0.30f, 0.20f, 0.22f), () => _addressPanel.SetActive(false));
+            close.transform.localPosition = new Vector3(300f, -130f, 0);
+
+            _addressHintText = CreateText(_addressPanel.transform, "AddressHint", "", 21, FontStyle.Normal, TextAnchor.UpperCenter, new Color(0.85f, 0.9f, 1f));
+            _addressHintText.rectTransform.anchoredPosition = new Vector2(0f, -200f);
+            _addressHintText.rectTransform.sizeDelta = new Vector2(1020f, 70f);
+
+            _addressPanel.SetActive(false);
+        }
+
+        private void OpenAddressPad()
+        {
+            if (_addressPanel == null) return;
+            if (_pairPanel != null) _pairPanel.SetActive(false);
+            if (_quitPanel != null) _quitPanel.SetActive(false);
+            var net = ShiroNetworkManager.Instance;
+            _addressTyped = net != null && !ServerAddress.IsThisDevice(net.serverIp) ? net.serverIp : "";
+            UpdateAddressText();
+            SetAddressHint(DefaultAddressHint(), false);
+            _addressPanel.SetActive(true);
+        }
+
+        private void PressAddressKey(string key)
+        {
+            _addressTyped = ServerAddress.Press(_addressTyped, key);
+            UpdateAddressText();
+            SetAddressHint(DefaultAddressHint(), false);
+        }
+
+        private void UpdateAddressText()
+        {
+            if (_addressText != null) _addressText.text = _addressTyped.Length > 0 ? _addressTyped : "_ . _ . _ . _";
+        }
+
+        private string DefaultAddressHint()
+        {
+            int port = ShiroNetworkManager.Instance != null ? ShiroNetworkManager.Instance.serverPort : 3000;
+            return $"The address is on the dashboard: ADMIN → Headset Pairing (port {port}).\nThe headset and the server computer must be on the same Wi-Fi.";
+        }
+
+        private void SetAddressHint(string text, bool problem)
+        {
+            if (_addressHintText == null) return;
+            _addressHintText.text = text;
+            _addressHintText.color = problem ? new Color(1f, 0.7f, 0.35f) : new Color(0.85f, 0.9f, 1f);
+        }
+
+        /// <summary>Switches to an edge server address and shows that it is connecting.</summary>
+        private void UseServerAddress(string address)
+        {
+            var net = ShiroNetworkManager.Instance;
+            if (net == null) return;
+            net.SetServerIp(address);
+            if (_sysServerStatus != null && !net.IsConnected)
+            {
+                _sysServerStatus.text = ServerAddress.IsThisDevice(address) && Application.platform == RuntimePlatform.Android
+                    ? $"Edge Server: ⏳ connecting to {address}:{net.serverPort} – on the headset this is the headset itself, not the server computer"
+                    : $"Edge Server: ⏳ connecting to {address}:{net.serverPort}…";
+                _sysServerStatus.color = new Color(0.95f, 0.85f, 0.35f);
+            }
         }
 
         // ----- Pairing: 6-digit code from the dashboard (ADMIN → Headset Pairing) -----
@@ -1736,6 +1905,8 @@ namespace ShiroMR
         private void OpenPairingPad()
         {
             if (_pairPanel == null) return;
+            if (_addressPanel != null) _addressPanel.SetActive(false);
+            if (_quitPanel != null) _quitPanel.SetActive(false);
             _pairDigits = "";
             UpdatePairCode();
             _pairPanel.SetActive(true);
@@ -2085,6 +2256,8 @@ namespace ShiroMR
             var link = ShiroPatientLinking.Instance;
             if (_linkBtnText != null) _linkBtnText.text = link != null && link.LinkingEnabled ? "🔗 Linking: ON" : "🔗 Linking: OFF";
             if (_fakeBtnText != null) _fakeBtnText.text = link != null && link.FakeEnabled ? "🧪 Fake band: ON" : "🧪 Fake band: OFF";
+            ShiroPermissions.Recheck();
+            if (_permissionBtnText != null) _permissionBtnText.text = ShiroPermissions.Label();
         }
 
         private void UpdateAlertBlink()

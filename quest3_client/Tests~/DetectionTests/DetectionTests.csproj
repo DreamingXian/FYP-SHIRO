@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    Automated tests of the headset's person detection (feature 8D), outside Unity.
+    Automated tests of the headset's person detection (feature 8D) and server address entry (9D), outside Unity.
     The folder name ends with "~", so Unity does not import it.
     Run (from the repository root): dotnet run with the project quest3_client/Tests~/DetectionTests
   -->
@@ -14,5 +14,6 @@
   <ItemGroup>
     <Compile Include="../../Assets/Scripts/ShiroMR/ShiroPersonDetection.cs" Link="ShiroPersonDetection.cs" />
     <Compile Include="../../Assets/Scripts/ShiroMR/ShiroPersonLinking.cs" Link="ShiroPersonLinking.cs" />
+    <Compile Include="../../Assets/Scripts/ShiroMR/ShiroServerAddress.cs" Link="ShiroServerAddress.cs" />
   </ItemGroup>
 </Project>

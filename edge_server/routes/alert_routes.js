@@ -10,6 +10,12 @@ const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/ht
 const { requireId, requireOneOf, optionalNumber, optionalInt, optionalText } = require('../utils/validate');
 const { actorLabel } = require('../services/auth/auth_service');
 const { HISTORY_RANGES, CATEGORIES: INCIDENT_CATEGORIES } = require('../services/alerts/incident_history');
+const { incidentsToCsv, csvFileName } = require('../services/alerts/incident_csv');
+const audit = require('../services/audit_service');
+const { clientIp } = require('../services/auth/request_auth');
+
+// Most incidents one CSV export holds (newest first); the response headers say how many matched
+const CSV_EXPORT_LIMIT = 10000;
 const INCIDENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,49}$/;
 
 // Test inputs of the Live Lab test bench. They are not measurements: every
@@ -69,6 +75,43 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
       });
     } catch (err) {
       sendFailure(res, err, 'getIncidentHistory');
+    }
+    return true;
+  }
+
+  // 2b. GET /api/alerts/history.csv - The same incident history as a CSV file (thesis 4.7.2)
+  //     Same filters as above; at most CSV_EXPORT_LIMIT incidents, newest first.
+  //     Signed-in clinicians only (not in the permission table), and every export is audited.
+  if (pathname === '/api/alerts/history.csv' && req.method === 'GET') {
+    try {
+      const q = parsedUrl.searchParams;
+      const patientId = q.get('patient_id') ? requireId(q.get('patient_id'), 'patient_id') : null;
+      const range = q.get('range') ? requireOneOf(q.get('range'), Object.keys(HISTORY_RANGES), 'range') : 'all';
+      const category = q.get('category') ? requireOneOf(q.get('category'), INCIDENT_CATEGORIES, 'category') : null;
+      const simulated = q.get('simulated') ? requireOneOf(q.get('simulated'), ['include', 'exclude'], 'simulated') : 'include';
+      const { history, summary } = await alertService.getIncidentHistory({
+        limit: CSV_EXPORT_LIMIT, patientId, range, category, includeSimulated: simulated === 'include'
+      });
+
+      const fileName = csvFileName({ patientId, range, category });
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'X-Shiro-Total-Count': String(summary.total),
+        'X-Shiro-Exported-Count': String(history.length)
+      });
+      res.end(incidentsToCsv(history));
+
+      audit.record({
+        actor: req.actor || null,
+        action: 'INCIDENTS_EXPORT',
+        targetType: patientId ? 'PATIENT' : 'INCIDENT_LOG',
+        targetId: patientId || 'all',
+        details: { range, category, simulated, rows: history.length },
+        ip: clientIp(req)
+      });
+    } catch (err) {
+      sendFailure(res, err, 'exportIncidentHistory');
     }
     return true;
   }
