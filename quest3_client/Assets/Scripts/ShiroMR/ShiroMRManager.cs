@@ -69,14 +69,19 @@ namespace ShiroMR
             }
             Instance = this;
 
-            // Mixed Reality Optimization: Suppress Guardian boundary so the user can navigate the ward freely
+            // Hide the boundary so the clinician can walk the whole clinic, not only the boundary
+            // area (Meta's Boundary API, "contextual boundaryless"). The headset allows it only
+            // while passthrough is shown (always, in this app) and only when the app has the
+            // boundary visibility permission: Quest Features → Boundary Visibility Support, set
+            // by SHIRO → Apply APK build settings. Over Quest Link the app's Android manifest,
+            // and with it the permission, does not apply.
             try
             {
                 if (OVRManager.instance != null)
                 {
                     OVRManager.instance.shouldBoundaryVisibilityBeSuppressed = true;
                 }
-                OVRPlugin.SetBoundaryVisible(false);
+                OVRManager.BoundaryVisibilityChanged += LogBoundaryVisibility;
             }
             catch (Exception swallowed) { ShiroLog.Caught("ShiroMRManager.Awake", swallowed); }
 
@@ -169,8 +174,16 @@ namespace ShiroMR
 #endif
         }
 
+        private static void LogBoundaryVisibility(OVRPlugin.BoundaryVisibility visibility)
+        {
+            Debug.Log(visibility == OVRPlugin.BoundaryVisibility.Suppressed
+                ? "[SHIRO MR] Boundary hidden: the app works beyond the boundary area."
+                : $"[SHIRO MR] Boundary shown ({visibility}): the app stops at the edge of the boundary area.");
+        }
+
         private void OnDestroy()
         {
+            OVRManager.BoundaryVisibilityChanged -= LogBoundaryVisibility;
             if (networkManager != null)
             {
                 networkManager.OnWardInitialized -= HandleWardInitialized;

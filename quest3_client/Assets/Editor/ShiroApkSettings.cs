@@ -4,7 +4,8 @@
 // Sets what the headset app needs to run on its own (APK, phase 9D), the same way
 // for every build: name, package, version, Android settings, and the network
 // security file that lets the app reach the edge server over plain HTTP on the
-// ward network (Assets/Oculus/ShiroNetworkSecurityConfig.xml).
+// ward network (Assets/Oculus/ShiroNetworkSecurityConfig.xml), and boundary
+// visibility support, so the app can hide the boundary while passthrough is on.
 // Quest Link testing in the editor is not affected by any of these.
 // =============================================================================
 using System.Collections.Generic;
@@ -45,6 +46,11 @@ namespace ShiroMR.EditorTools
             }
             config.enableNSCConfig = true;
             config.securityXmlPath = NetworkSecurityFile;
+            // Lets the app hide the boundary while passthrough is on (ShiroMRManager asks for it),
+            // so the clinician can walk the whole clinic, not only the boundary area.
+            if (config.insightPassthroughSupport == OVRProjectConfig.FeatureSupport.None)
+                config.insightPassthroughSupport = OVRProjectConfig.FeatureSupport.Supported;
+            config.boundaryVisibilitySupport = OVRProjectConfig.FeatureSupport.Supported;
             OVRProjectConfig.CommitProjectConfig(config);
 
             AssetDatabase.SaveAssets();
@@ -75,6 +81,9 @@ namespace ShiroMR.EditorTools
                     $"the network security file is not {NetworkSecurityFile}: Meta's default blocks plain HTTP, the app could not reach the edge server");
                 Expect(config.sceneSupport != OVRProjectConfig.FeatureSupport.None, "Scene support is off: the spatial data permission would be missing from the app");
                 Expect(config.anchorSupport == OVRProjectConfig.AnchorSupport.Enabled, "spatial anchor support is off: ward alignment could not be saved");
+                Expect(config.insightPassthroughSupport != OVRProjectConfig.FeatureSupport.None, "passthrough support is off");
+                Expect(config.boundaryVisibilitySupport != OVRProjectConfig.FeatureSupport.None,
+                    "boundary visibility support is off: the app could not hide the boundary, so it would stop at the edge of the boundary area");
             }
             Expect(File.Exists(NetworkSecurityFile), $"{NetworkSecurityFile} is missing");
 
