@@ -140,13 +140,18 @@
         return;
       }
       const [first, ...others] = usable;
-      const firstKind = NETWORK_KIND_TEXT[first.kind] || 'network';
-      const othersText = others.map(a => `${a.address} (${NETWORK_KIND_TEXT[a.kind] || 'network'}, ${a.name})`).join(' · ');
+      // "Wi-Fi", not "Wi-Fi, Wi-Fi" when the adapter is named after its kind
+      const describe = (a) => {
+        const kind = NETWORK_KIND_TEXT[a.kind] || 'network';
+        return kind.toLowerCase() === a.name.toLowerCase() ? kind : `${kind}, ${a.name}`;
+      };
+      const firstKind = describe(first);
+      const othersText = others.map(a => `${a.address} (${describe(a)})`).join(' · ');
       const othersHtml = others.length === 0 ? ''
         : `<div style="margin-top: 4px; color: var(--text-secondary);">Other networks of this computer: <span class="mono">${escapeHtml(othersText)}</span></div>`;
       box.innerHTML = `
         <div>Server address for the headset: <strong class="mono" style="font-size: 16px;">${escapeHtml(first.address)}</strong>
-          <span style="color: var(--text-secondary);">(${escapeHtml(firstKind)}, ${escapeHtml(first.name)}) · port ${escapeHtml(port)}</span></div>
+          <span style="color: var(--text-secondary);">(${escapeHtml(firstKind)}) · port ${escapeHtml(port)}</span></div>
         ${othersHtml}
         <div style="margin-top: 4px; color: var(--text-muted);">On the headset: hand slate → System → 🌐 Server address. The headset must be on the same network. Over the Quest Link cable: 💻 Quest Link (127.0.0.1).</div>`;
     } catch (err) {
