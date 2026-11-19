@@ -317,7 +317,7 @@ Code/
   * Patient profile and 24-hour history in the headset.
   * ✅ Binding history instead of deleting binding rows.
   * ✅ Shift summary report for handover (printable, Save as PDF).
-  * Standalone Android APK build for the Quest 3.
+  * ✅ Standalone Android APK for the Quest 3: runs without the PC, works beyond the headset's boundary area, **Quit app** on the hand slate ([docs/test_records/headset-apk-9d.md](docs/test_records/headset-apk-9d.md)). Open: no click sound on buttons (UI/UX).
   * Clearer panels and hand slate (UI/UX).
 * [ ] **Evaluation:**
   * Position accuracy measured at fixed points in the ward, and improved (the regression run of 16 Nov 2026 found it low in a small room), together with the wristband's motion state (walking shown as hand movement).
