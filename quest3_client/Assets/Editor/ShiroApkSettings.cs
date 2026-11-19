@@ -78,6 +78,11 @@ namespace ShiroMR.EditorTools
             }
             Expect(File.Exists(NetworkSecurityFile), $"{NetworkSecurityFile} is missing");
 
+            // Objects made by code take their material from these (ShiroMaterials); without
+            // them the APK leaves the URP shaders out and beds and door frames show magenta.
+            ExpectTemplate(problems, ShiroMR.ShiroMaterials.SolidResource, ShiroMR.ShiroMaterials.SolidShaderName);
+            ExpectTemplate(problems, ShiroMR.ShiroMaterials.OverlayResource, ShiroMR.ShiroMaterials.OverlayShaderName);
+
             if (problems.Count == 0)
             {
                 Debug.Log($"[SHIRO APK] Ready to build: {ProductName} {Version} ({PackageName}), IL2CPP ARM64, plain HTTP to the edge server allowed.");
@@ -85,6 +90,14 @@ namespace ShiroMR.EditorTools
             }
             Debug.LogWarning("[SHIRO APK] Not ready to build:\n- " + string.Join("\n- ", problems) + "\nRun SHIRO → Apply APK build settings.");
             return false;
+        }
+
+        private static void ExpectTemplate(List<string> problems, string resource, string shaderName)
+        {
+            string path = $"Assets/Resources/{resource}.mat";
+            var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m == null) problems.Add($"{path} is missing: objects made by code would show magenta in the APK");
+            else if (m.shader == null || m.shader.name != shaderName) problems.Add($"{path} does not use {shaderName}");
         }
     }
 }

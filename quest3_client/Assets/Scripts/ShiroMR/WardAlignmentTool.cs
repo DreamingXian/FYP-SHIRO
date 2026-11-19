@@ -1175,7 +1175,7 @@ namespace ShiroMR
             _point1Marker.transform.localScale = new Vector3(0.10f, 0.10f, 0.10f);
             Destroy(_point1Marker.GetComponent<Collider>());
             var r1 = _point1Marker.GetComponent<Renderer>();
-            if (r1 != null) r1.material.color = new Color(0.1f, 0.95f, 0.4f);
+            ShiroMaterials.Paint(r1, new Color(0.1f, 0.95f, 0.4f)); // not the default material: magenta in the APK
             _point1Marker.SetActive(false);
 
             // Point 2: Footboard (Cyan Blue)
@@ -1184,7 +1184,7 @@ namespace ShiroMR
             _point2Marker.transform.localScale = new Vector3(0.10f, 0.10f, 0.10f);
             Destroy(_point2Marker.GetComponent<Collider>());
             var r2 = _point2Marker.GetComponent<Renderer>();
-            if (r2 != null) r2.material.color = new Color(0.2f, 0.8f, 1.0f);
+            ShiroMaterials.Paint(r2, new Color(0.2f, 0.8f, 1.0f));
             _point2Marker.SetActive(false);
 
             // Alignment Axis Line

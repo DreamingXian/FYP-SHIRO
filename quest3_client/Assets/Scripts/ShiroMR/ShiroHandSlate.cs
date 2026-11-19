@@ -1622,9 +1622,9 @@ namespace ShiroMR
             Button localIpBtn = CreateButton(p.transform, "LocalIpBtn", "💻 Quest Link (127.0.0.1)", new Vector2(310f, 55f), new Color(0.20f, 0.25f, 0.32f), () => UseServerAddress("127.0.0.1"));
             localIpBtn.transform.localPosition = new Vector3(280f, -85f, 0);
 
-            // Row 2: pairing, and the spatial data permission (app on the headset)
-            Button pairBtn = CreateButton(p.transform, "PairBtn", "🔑 Pair headset (code)", new Vector2(480f, 45f), new Color(0.55f, 0.40f, 0.08f), OpenPairingPad);
-            pairBtn.transform.localPosition = new Vector3(-250f, -150f, 0);
+            // Row 2: pairing, the spatial data permission (app on the headset), quitting the app
+            Button pairBtn = CreateButton(p.transform, "PairBtn", "🔑 Pair headset (code)", new Vector2(300f, 45f), new Color(0.55f, 0.40f, 0.08f), OpenPairingPad);
+            pairBtn.transform.localPosition = new Vector3(-370f, -150f, 0);
 
             Button permissionBtn = CreateButton(p.transform, "SpatialDataBtn", ShiroPermissions.Label(), new Vector2(420f, 45f), new Color(0.22f, 0.25f, 0.40f), () =>
             {
@@ -1635,8 +1635,14 @@ namespace ShiroMR
                 }
                 ShiroPermissions.Ask();
             });
-            permissionBtn.transform.localPosition = new Vector3(250f, -150f, 0);
+            permissionBtn.transform.localPosition = new Vector3(0f, -150f, 0);
             _permissionBtnText = permissionBtn.GetComponentInChildren<Text>();
+
+            // The APK has no other way out than the Meta menu. Quitting stops alerts on this
+            // headset, so it asks first, and "Quit now" sits elsewhere: a finger resting on
+            // this button (it repeats every 0.35 s) cannot confirm by itself.
+            Button quitBtn = CreateButton(p.transform, "QuitAppBtn", "✖ Quit app", new Vector2(300f, 45f), new Color(0.45f, 0.15f, 0.18f), OpenQuitConfirm);
+            quitBtn.transform.localPosition = new Vector3(370f, -150f, 0);
 
             // Row 3: person detection and linking (8D): depth view, movement rule, linking, fake wristband
             Button depthBtn = CreateButton(p.transform, "DepthBtn", "🔬 Depth view: OFF", new Vector2(255f, 45f), new Color(0.22f, 0.18f, 0.40f), () =>
@@ -1677,7 +1683,52 @@ namespace ShiroMR
 
             BuildPairingPad(p.transform);
             BuildAddressPad(p.transform);
+            BuildQuitConfirm(p.transform);
             RefreshPairingStatus();
+        }
+
+        // ----- Quit the app (System → ✖ Quit app) -----
+
+        private GameObject _quitPanel;
+
+        private void BuildQuitConfirm(Transform parent)
+        {
+            _quitPanel = CreatePanel(parent, "QuitConfirm", new Vector2(860f, 260f), new Color(0.10f, 0.03f, 0.04f, 0.97f));
+            _quitPanel.transform.localPosition = new Vector3(0f, 60f, 0f);
+
+            string question = Application.isEditor
+                ? "Stop the app? Over Quest Link this ends Play mode in Unity."
+                : "Quit SHIRO MR? Alerts and vital signs stop on this headset until you open the app again.";
+            Text q = CreateText(_quitPanel.transform, "QuitQuestion", question, 24, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            q.rectTransform.anchoredPosition = new Vector2(0f, 60f);
+            q.rectTransform.sizeDelta = new Vector2(800f, 90f);
+
+            // Both buttons are well away from every System tab button underneath.
+            Button quitNow = CreateButton(_quitPanel.transform, "QuitNow", "✖ Quit now", new Vector2(340f, 60f), new Color(0.70f, 0.12f, 0.15f), QuitApp);
+            quitNow.transform.localPosition = new Vector3(-200f, -40f, 0f);
+
+            Button cancel = CreateButton(_quitPanel.transform, "QuitCancel", "Cancel", new Vector2(340f, 60f), new Color(0.25f, 0.25f, 0.30f), () => _quitPanel.SetActive(false));
+            cancel.transform.localPosition = new Vector3(200f, -40f, 0f);
+
+            _quitPanel.SetActive(false);
+        }
+
+        private void OpenQuitConfirm()
+        {
+            if (_quitPanel == null) return;
+            if (_addressPanel != null) _addressPanel.SetActive(false);
+            if (_pairPanel != null) _pairPanel.SetActive(false);
+            _quitPanel.SetActive(true);
+        }
+
+        private void QuitApp()
+        {
+            Debug.Log("[SHIRO APP] Quit from the hand slate (System → Quit app).");
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
         }
 
         // ----- Edge server address: typed on a keypad (shown on the dashboard, ADMIN → Headset Pairing) -----
@@ -1748,6 +1799,7 @@ namespace ShiroMR
         {
             if (_addressPanel == null) return;
             if (_pairPanel != null) _pairPanel.SetActive(false);
+            if (_quitPanel != null) _quitPanel.SetActive(false);
             var net = ShiroNetworkManager.Instance;
             _addressTyped = net != null && !ServerAddress.IsThisDevice(net.serverIp) ? net.serverIp : "";
             UpdateAddressText();
@@ -1854,6 +1906,7 @@ namespace ShiroMR
         {
             if (_pairPanel == null) return;
             if (_addressPanel != null) _addressPanel.SetActive(false);
+            if (_quitPanel != null) _quitPanel.SetActive(false);
             _pairDigits = "";
             UpdatePairCode();
             _pairPanel.SetActive(true);

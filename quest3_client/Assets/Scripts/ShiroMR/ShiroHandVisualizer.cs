@@ -135,9 +135,9 @@ namespace ShiroMR
 
         private void BuildMaterials()
         {
-            Shader overlayShader = Shader.Find("Universal Render Pipeline/Unlit") ??
-                                   Shader.Find("Sprites/Default") ??
-                                   Shader.Find("Unlit/Color");
+            // URP Unlit via ShiroMaterials: Shader.Find alone finds it only inside the
+            // Unity editor; the APK fell back to Sprites/Default and looked different.
+            Shader overlayShader = ShiroMaterials.OverlayShader;
 
             _rightOutlineMat = CreateOverlayMaterial(overlayShader, rightOutlineColor);
             _leftOutlineMat = CreateOverlayMaterial(overlayShader, leftOutlineColor);
