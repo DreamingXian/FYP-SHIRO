@@ -17,6 +17,7 @@ const EXPECTED_TABLES = [
   'ward_beds',
   'ward_boundary_points',
   'ward_obstacles',
+  'ward_room_sensors',
   'ward_rooms'
 ];
 
@@ -30,7 +31,7 @@ describe('fresh install', () => {
   before(async () => { pool = await freshDatabase(); });
   after(async () => { await db.closePool(); });
 
-  test('creates all fourteen tables, including patient_bindings and the account tables', async () => {
+  test('creates all fifteen tables, including patient_bindings, the account tables and the LiDAR placements', async () => {
     const [rows] = await pool.query('SHOW TABLES');
     const names = rows.map(r => Object.values(r)[0]).sort();
     assert.deepEqual(names, EXPECTED_TABLES);

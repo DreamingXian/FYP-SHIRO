@@ -149,8 +149,9 @@ const SAFE_EXPRESSIONS = [
   /^idx \+ 1$/, /^currentBindingPage [-+] 1$/, /^w - padRight$/, /^h - 4$/, /^padLeft - 6$/, /^\(y \+ 3\.5\)\.toFixed\(1\)$/,
   /\.length$/, /^w\.(beds|anchors|obstacles) \? w\.\1\.length : 0$/, /^validPoints\.length > 50 \? 2 : 3\.5$/,
   /^[\w.]+ \? '[^'`$]*' : '[^'`$]*'$/, /^[\w.]+ === '[A-Z]+' \? '[^']*' : '[^']*'$/,
-  /^(a|activePat)\.(clearBeds|totalBeds|compositeScore|areaRatio|grid3Pct|jointBedClear|jointBedPct)$/, // geometry results
-  /^(textColor|barColor|batColor|deltaColor|dotColor|strokeColor|normalBgColor|badgeClass|icon|typePill|typeBadge|statusBadge|availBadge|riskBadge|powerDisplay|avatarHtml|photoImg|bedInfo|secondaryActionBtn|liveMapBtn|nodeDisplay|boundText|losText|statusBadgeHtml|optionsHtml|wardOptions|bedsList|anchorsList|obstaclesList|patternOptionsHtml|anchorCardsHtml|hrSvg|spo2Svg|gridLines|inUseDetail|inUseNote|genderLabel|isBest|pathD|startTimeStr|endTimeStr|timeStr|rotLabel|uuidShort|hVal|xVal|yVal|zVal|wVal|lVal|avgHR|minHR|maxHR|avgSpO2|minSpO2|maxSpO2|unit)$/,
+  /^(textColor|barColor|batColor|deltaColor|dotColor|strokeColor|normalBgColor|badgeClass|icon|typePill|typeBadge|statusBadge|availBadge|riskBadge|powerDisplay|avatarHtml|photoImg|bedInfo|secondaryActionBtn|liveMapBtn|nodeDisplay|statusBadgeHtml|optionsHtml|wardOptions|bedsList|anchorsList|obstaclesList|hrSvg|spo2Svg|gridLines|inUseDetail|inUseNote|genderLabel|pathD|startTimeStr|endTimeStr|timeStr|rotLabel|uuidShort|hVal|xVal|yVal|zVal|wVal|lVal|avgHR|minHR|maxHR|avgSpO2|minSpO2|maxSpO2|unit)$/,
+  // ward_config/placement_planner.js: dialog parts built in code from escaped parts
+  /^(countOptionsHtml|heightOptionsHtml|tableRowsHtml|roomOnlyHtml|currentHtml|suggestedHtml|boardNote|movedNote|bandsHtml|planRowsHtml|lidarRowHtml)$/,
   // incident_history.js: markup built in code from escaped parts
   /^(patientCell|summaryHtml|incidentRowsHtml|pillsHtml|idTag)$/,
   // admin_controller.js: headset assignment cell and its options, other server addresses; from escaped parts

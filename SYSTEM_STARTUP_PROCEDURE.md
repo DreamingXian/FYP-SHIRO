@@ -204,7 +204,7 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
    **Stopping the server:** press **Ctrl+C** once in its terminal. It disconnects the anchors and dashboards, writes the device status and InfluxDB points still in memory, closes the database and ends with `[SHUTDOWN] Done.` Closing the terminal window instead skips these steps; at most the last 5 seconds of "last seen" and battery values are then lost.
 
 3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The dashboard offers:
-   * **Ward Configuration Editor:** Room dimensions, obstacle cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor placement suggestions with line-of-sight checks.
+   * **Ward Configuration Editor:** Room dimensions, obstacle cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), the LiDAR room sensor, and **📐 Plan Anchors & LiDAR**: where to mount each anchor and the LiDAR, which way each faces, and a printable installation sheet (Section 4.5).
    * **Live Ward Map:** 2D real-time bird's-eye canvas with a scaled patient marker, movement trail, bed docking detection, and landmark calibration of each anchor ($A$ and $n$ parameters).
    * **Device Provisioning Radar:** Lists nearby anchors, wristbands and headsets that are not yet enrolled, with one-click enrollment.
    * **Patient Admissions Directory:** Patient profiles, fall risk scores, bed allocation, wristband binding and discharge.
@@ -400,7 +400,52 @@ Slamtec advises 2 minutes of warm-up before measuring. Keep the C1 below 40 °C 
 * The laser slice is about 3 cm above the C1's base. Mount it **level** with the base at about **0.92 m**, so the slice is at about 0.95 m: above beds, chair seats and tables, at the torso of a person standing or sitting.
 * Use a small shelf or bracket, a tripod with a small board, or furniture of the right height. The 4 screw holes underneath take **M2.5 screws at most 4 mm deep**; longer screws damage it. Do not screw a tripod's 1/4-inch screw into it.
 * Keep the S3 and the module **below** the C1's base, so nothing blocks the laser window. Keep glass and mirrors out of the slice where possible.
-* WARD-005 (simulated from the ward layout, 20 Nov 2026): against the south wall, centre 0.80 m from the west wall and 0.18 m out from the wall. It sees 99.5 % of the floor a person can stand on, including the whole door area. Any spot along the south wall 0.5–1.1 m from the west wall scores at least 98.8 %. Base square to the wall, the ▲ on top pointing north (into the room), cable towards the wall.
+* WARD-005: against the south wall, 0.18 m out from it, between the west wall and the head of the bed. The placement planner (4.5) suggests the centre 0.98 m from the south-west corner (99.3 % of the floor a person can stand on); a hand simulation on 20 Nov gave 0.80 m (99.5 %). Anything 0.5–1.1 m from the west wall is fine. Base square to the wall, the ▲ on top pointing north (into the room), cable towards the wall.
+* Tested on 21 Nov 2026 (firmware 1.0.1): on USB and on its own (S3's 5V pin on the module, no laptop), 10.0 turns/s, about 510 points per turn, 5,093 samples/s, no restarts. 4.62 V at the C1's plug while it spins, still below the 4.8 V minimum: rewire with the pin headers and thicker wires when mounting it for good.
+
+### 4.5 Planning where the anchors and the LiDAR go (Phase 10)
+
+Ward editor → open the ward → Panel 3 → **📐 Plan Anchors & LiDAR**. The server plans for the layout in the editor, saved or not. Nothing is stored until you press **Apply to Ward** and then **Save Changes**.
+
+**Settings**
+* **Anchors:** how many (3–12). The default is 6, or more if the ward already has more.
+* **Height:** Auto is 2.40 m, or 15 cm below a lower ceiling (WARD-005: 2.30 m). Never above 3.0 m.
+* **Keep … where they are:** plans only the new anchors around the ones already mounted. It is ticked when the ward has anchors bound to boards.
+* **Place the LiDAR.**
+
+**What it shows**
+* A floor plan coloured by the expected error, with **Suggested** and **Current** views. Anchors are shown blue (keep), amber (move) and green (new), with an arrow the way the board faces. The LiDAR is a purple square with its ▲ direction. Crosses mark floor the LiDAR cannot see; dashed lines are walking routes from a bed to the door.
+* Current against suggested: expected error (average and 95 % of the floor), floor with a clear line to 3 or more anchors, and floor the LiDAR sees. "No anchors" is the error when only the room is known.
+* One line per device: the wall, the distance from a named corner, the height, and the direction the board faces in words and degrees (0° north, 90° east).
+* **🖨️ Print installation sheet:** the plan, the list with a box to tick per device, and mounting notes. Allow pop-ups for the dashboard.
+
+**How it decides**
+* **Anchor spots:** every 10 cm along the walls and along the outer faces of tall partitions, pillars and bathrooms. Not within 30 cm of a corner, not within 20 cm of the door, and not behind furniture that reaches the mounting height.
+* **Scoring a set of anchors:** the expected position error at wrist height (0.85 m) over a 20 cm floor grid. It uses the lowest error any method can reach from Bluetooth signal strength: the Cramér–Rao bound (Patwari et al., IEEE Trans. Signal Processing, 2003), with a signal spread of 6 dB and a path-loss exponent of 3.2, and the room itself as prior knowledge.
+  * An anchor whose line to a point is blocked by tall furniture adds nothing at that point.
+  * Door and bed areas count twice.
+* **Search:** anchors are added one at a time where they lower the error most, then moved one at a time until no move helps. Anchors stay at least 0.8 m apart.
+* **LiDAR spots:** 0.18 m out from the walls, not on furniture and not in the door area. The spot that sees the most floor in the 0.95 m slice wins.
+  * Furniture taller than the slice blocks it, and so do tables, because things put on them reach the slice.
+  * A spot within 0.5 m of a walking route loses 5 points: it would be knocked over.
+* **What the numbers mean:** the expected error is a lower limit, for comparing layouts. Real readings are worse. In WARD-005 the same three anchors were expected at 0.96 m and measured 1.29 m (`docs/test_records/ips-accuracy-10.md`).
+
+**After the plan**
+1. **Apply to Ward:** the spots fill Panels 3 and 3b.
+2. Print the installation sheet and mount the devices as listed.
+3. Bind each new board in Panel 3 and the LiDAR node in Panel 3b, then **Save Changes**.
+4. Live Map → **🎯 Calibrate Anchors** (new and moved anchors need it).
+
+**WARD-005, 21 Nov 2026** (6 anchors, A, B and C kept):
+
+| Device | Where |
+| :--- | :--- |
+| Anchor D | South wall, 0.80 m from the south-west corner, board centre 2.30 m high |
+| Anchor E | North wall, 0.90 m from the north-west corner, 2.30 m high |
+| Anchor F | East wall, 1.49 m from the north-east corner, 2.30 m high |
+| LiDAR | South wall, 0.98 m from the south-west corner, 0.18 m out from the wall |
+
+Expected error drops from 0.96 m to 0.81 m, and the floor with a clear line to 3 or more anchors goes from 96 % to 100 %.
 
 ---
 

@@ -65,6 +65,18 @@ Mean error by facing (standing): north 1.24 m, east 1.27 m, south 1.33 m, west 1
 4. **Zones:** the system never placed the tester at the door or on the bed (0 % zone correct for P7 and both bed spots). The 80.6 % overall figure only reflects that the position shown was always in the general ROOM zone, where 7 of the 10 spots happen to be.
 5. **The position shown held still within each run.** The wristband reported STATIONARY in 97–100 % of the readings of each run, and the server's motion lock then holds the position. That is correct for someone standing still. It also meant the position shown hardly changed between spots.
 
+### Two references for the same room
+
+| Reference | Mean error | Median | 95 % | Within 1.0 m | Within 1.5 m |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| Baseline system (measured above) | 1.29 m | 1.35 m | 1.93 m | 35.5 % | 58.1 % |
+| A fixed guess: always the centre of the room (1.15, 1.70 m), scored on the same runs | 0.94 m | 0.85 m | 1.51 m | 74.2 % | 87.1 % |
+| Lower bound for these three anchors from the placement planner (expected error over the floor, `services/ips/placement.js`) | 0.96 m | 0.95 m | 1.02 m | – | – |
+
+- The baseline was worse than always showing the centre of this small room: it carried less information than none.
+- The planner's lower bound is what Bluetooth signal strength from these three anchors could reach at best (signal spread 6 dB). The measured 1.29 m is above it, as a real system's error must be.
+- Even at the bound, three anchors barely improve on knowing only the room (1.18 m expected error for the room alone). In a room 2.29 m wide, signal strength cannot place a patient much better than that.
+
 ### Against the requirement
 
 The accuracy requirement (NFR-ACC-01) asks for a position within 1.0–1.5 m. The baseline has a mean error of 1.29 m, but only 58.1 % of readings were within 1.5 m (95 %: 1.93 m). It never recognised the door or the bed. In practice the baseline cannot tell where in WARD-005 the patient is. This is the reason for the LiDAR room sensor in Phase 10.

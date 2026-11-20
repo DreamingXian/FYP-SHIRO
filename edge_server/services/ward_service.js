@@ -109,6 +109,12 @@ async function getWardConfig(wardId) {
     [wardId]
   );
 
+  // 5. Room sensors (LiDAR, Phase 10)
+  const [roomSensors] = await pool.query(
+    'SELECT sensor_id, device_id, x, y, base_height, heading_deg, wall_location FROM ward_room_sensors WHERE ward_id = ? ORDER BY sensor_id ASC',
+    [wardId]
+  );
+
   // Assemble clean response
   return {
     ward_id: room.ward_id,
@@ -157,8 +163,47 @@ async function getWardConfig(wardId) {
       calibrated_a: a.calibrated_a !== null && a.calibrated_a !== undefined ? parseFloat(a.calibrated_a) : null,
       calibrated_n: a.calibrated_n !== null && a.calibrated_n !== undefined ? parseFloat(a.calibrated_n) : null,
       last_calibrated_at: a.last_calibrated_at || null
-    }))
+    })),
+    room_sensors: roomSensors.map(roomSensorFromRow)
   };
+}
+
+function roomSensorFromRow(r) {
+  return {
+    sensor_id: r.sensor_id,
+    device_id: r.device_id || null,
+    x: parseFloat(r.x),
+    y: parseFloat(r.y),
+    base_height: parseFloat(r.base_height),
+    heading_deg: parseFloat(r.heading_deg),
+    wall_location: r.wall_location || ''
+  };
+}
+
+/**
+ * Replaces a ward's room sensors and binds their devices to the ward. A save
+ * without a room_sensors list (an older client or JSON file) keeps the stored ones.
+ */
+async function replaceRoomSensors(conn, wardId, list) {
+  let sensors = list;
+  if (!Array.isArray(sensors)) {
+    const [rows] = await conn.query('SELECT sensor_id, device_id, x, y, base_height, heading_deg, wall_location FROM ward_room_sensors WHERE ward_id = ?', [wardId]);
+    sensors = rows.map(roomSensorFromRow);
+  }
+  await conn.query('DELETE FROM ward_room_sensors WHERE ward_id = ?', [wardId]);
+  for (let i = 0; i < sensors.length; i++) {
+    const s = sensors[i];
+    const sensorId = s.sensor_id || `LiDAR ${i + 1}`;
+    const devId = typeof s.device_id === 'string' && s.device_id.trim() !== '' ? s.device_id.trim() : null;
+    if (devId) {
+      await conn.query("UPDATE devices SET assigned_ward_id = ?, availability_status = 'IN_USE' WHERE device_id = ?", [wardId, devId]);
+    }
+    const heading = ((Number(s.heading_deg) || 0) % 360 + 360) % 360;
+    await conn.query(
+      'INSERT INTO ward_room_sensors (sensor_id, ward_id, device_id, x, y, base_height, heading_deg, wall_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [sensorId, wardId, devId, Number(s.x) || 0, Number(s.y) || 0, Number.isFinite(Number(s.base_height)) ? Number(s.base_height) : 0.92, heading, s.wall_location || '']
+    );
+  }
 }
 
 /**
@@ -285,6 +330,9 @@ async function saveWardConfig(data) {
       }
     }
 
+    // 5. Replace room sensors (LiDAR); their devices were unbound with the anchors above
+    await replaceRoomSensors(conn, wardId, data.room_sensors);
+
     await conn.commit();
     // Refresh IPS engine anchor coordinates cache
     ipsService.reloadWardAnchorsCache().catch(err => {
@@ -311,6 +359,7 @@ async function getAllWards() {
       (SELECT COUNT(*) FROM ward_beds b WHERE b.ward_id = r.ward_id) AS bed_count,
       (SELECT COUNT(*) FROM ward_anchors a WHERE a.ward_id = r.ward_id) AS anchor_count,
       (SELECT COUNT(*) FROM ward_anchors a WHERE a.ward_id = r.ward_id AND a.device_id IS NOT NULL AND a.device_id != '') AS assigned_anchor_count,
+      (SELECT COUNT(*) FROM ward_room_sensors s WHERE s.ward_id = r.ward_id) AS room_sensor_count,
       (SELECT COUNT(*) FROM ward_obstacles o WHERE o.ward_id = r.ward_id) AS obstacle_count
     FROM ward_rooms r
     ORDER BY r.ward_id ASC;
@@ -331,6 +380,7 @@ async function getAllWards() {
     bed_count: parseInt(r.bed_count, 10) || 0,
     anchor_count: parseInt(r.anchor_count, 10) || 0,
     assigned_anchor_count: parseInt(r.assigned_anchor_count, 10) || 0,
+    room_sensor_count: parseInt(r.room_sensor_count, 10) || 0,
     obstacle_count: parseInt(r.obstacle_count, 10) || 0
   }));
 }
