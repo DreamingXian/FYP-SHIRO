@@ -500,6 +500,27 @@ Ward editor → the ward → Panel 3b. Under each LiDAR with a node assigned are
 
 **WARD-005:** learn the empty room and align once, before the "6 anchors" position-test session, so that the LiDAR turns recorded with each run (9.2) come with a correct position and empty room.
 
+### 4.7 Patient positions from the LiDAR (Phase 10, step 5b)
+
+Once a LiDAR is placed, aligned and has its empty room, the server finds the people it sees and links each to a wristband nearby (by position; `docs/protocol.md`, section 5). Nothing has to be switched on.
+
+On the **Live Map**:
+* **📡 before the patient's name**, violet dot: the position comes from the LiDAR (about ±0.1 m). The text under the map says "📡 seen by the LiDAR" and how far the Bluetooth estimate is from it; the faint teal circle is that estimate.
+* **🛏**: the patient was last seen at the bed and the LiDAR no longer sees them, normally because they lay down (a lying person is below the scan slice). The position stays there until they get up or Bluetooth clearly shows they left.
+* **⏸**: the LiDAR lost the patient away from a bed (someone in front of them, or they went down). The last position is held for 10 s, then Bluetooth.
+* **Grey dot, "person (no wristband)"**: someone the LiDAR sees who is not linked to a wristband: a visitor, staff, or a patient whose Bluetooth position is still more than 2 m away.
+* No symbol (teal dot, 🔒 when still): Bluetooth only.
+
+How linking behaves:
+* A patient who walks in is linked within about 1–2 s, when they are the only person near their wristband's Bluetooth position (within 2 m) or clearly the nearest one.
+* While the LiDAR follows them, the link stays, even when Bluetooth is far off.
+* Several people close together near one wristband: no link until one is clearly nearer. They show as grey dots, and the patient's dot stays on Bluetooth.
+* Known limit: a person who appears right at the bed while the patient is held there (lying down) is taken for the patient getting up.
+
+Things that stop the LiDAR positions (the map falls back to Bluetooth): the empty room being learned, the "may have been moved" warning (4.6), the node not sending turns. Things that put grey dots where nobody is: furniture moved since the empty room was learned (learn it again).
+
+**Replaying recorded runs:** `node tools/replay_lidar_runs.js <session-id>` (in `edge_server`) runs the LiDAR turns recorded with a position-test session through the same code and prints the errors at the marked spots, next to what the maps showed then. `--csv <file>` writes every reading.
+
 ---
 
 ## 5. Anchor Power Supply Deployment Plan (Central 12V DC Bus)
@@ -728,6 +749,9 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Edge server prints `[PROTOCOL] Wristband … sends a packet version this system does not support` | Wristband and anchors run different firmware versions. | Flash the wristband and all anchors from the same commit. |
 | Live map shows **SENSOR FAULT** | The wristband reports that its accelerometer or pulse sensor does not answer. | Check the sensor wiring (SDA `D4`, SCL `D5`, 3.3 V, GND) and restart the wristband. The Serial Monitor names the failed sensor. |
 | Live map shows **NO SIGNAL** | No packet from the wristband for 5 seconds. | Check that the wristband is powered and in range of at least one online anchor. |
+| Live Map: the patient stays on Bluetooth (no 📡) and a grey "person (no wristband)" dot is where they stand | The wristband's Bluetooth position is more than 2 m from them, or another person is about as near. | Wait a few seconds; it links when they are the only person within 2 m or clearly the nearest. Check the anchors (🎯 Calibrate Anchors) if Bluetooth is far off everywhere. |
+| Live Map: grey dots where nobody is, always at the same place | Something was put in the room after the empty room was learned (a chair, a bag, a stand). | Remove it, or learn the empty room again with the room as it will stay (4.6). |
+| Live Map: 📡 positions stop while the LiDAR is scanning | The LiDAR is flagged as probably moved, or its empty room is being learned. | See the warning in Panel 3b (4.6): put the LiDAR back, align it, learn the empty room again. |
 | Live Lab simulation button answers "Simulation is disabled" | `ENABLE_SIMULATION=false` in `edge_server/.env`. | Set it to `true` and restart the server. Simulated incidents are always marked as simulated. |
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |

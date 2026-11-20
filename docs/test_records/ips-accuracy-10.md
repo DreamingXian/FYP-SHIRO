@@ -160,7 +160,7 @@ Mean error by facing (standing): north 0.98 m, east 1.04 m, south 0.98 m, west 0
 
 ### What the LiDAR saw in the same runs (offline check, preliminary)
 
-The LiDAR's turns were recorded with every run (6,208 turns while recording). This check is **not** the system's output: the person finder that turns scans into positions is still to be built (Phase 10, step 5b). In each turn:
+The LiDAR's turns were recorded with every run (6,208 turns while recording). This check is **not** the system's output: it was made before the person finder existed (the system's own result on the same turns is the replay in the next section). In each turn:
 - returns more than 10 cm closer than the learned empty room, inside the room, were grouped into clusters;
 - the cluster nearest the taped spot was taken, moved 0.10 m further from the LiDAR (it sees the front of the body);
 - its distance to the spot was measured.
@@ -187,14 +187,55 @@ The LiDAR's turns were recorded with every run (6,208 turns while recording). Th
 
 With six anchors, 81.6 % of readings were within 1.5 m (mean 1.00 m), so Bluetooth now meets the 1.0–1.5 m band of NFR-ACC-01 most of the time. It does so no better than a fixed guess at the room centre (0.94 m), though: in WARD-005 the band is met because the room is small, not because the patient is located. The offline LiDAR check points to about 0.1 m for a standing or sitting patient, once the LiDAR's person is linked to the wristband.
 
+## Replay: the same runs through the LiDAR positioning (step 5b, 21 November 2026)
+
+The LiDAR positioning (find the people in each turn, follow them, link one to the wristband by position; `docs/protocol.md`, section 5) was run on the recorded turns and Bluetooth positions of all 31 runs, with `node tools/replay_lidar_runs.js PT-20261121-055850`. It uses the same code as the server. At each of the 2,417 readings the position scored is the one the maps would have shown: the LiDAR's when the wristband was linked (or held), else the Bluetooth position the test recorded.
+
+The limits of the person finder were chosen on these runs, so this is a check of the method, not an independent test. The live test (step 6) is the independent one.
+
+| Readings | Count | Mean | Median | 95 % | Within 0.25 m | Within 0.5 m | Within 1.0 m | Within 1.5 m | Zone correct |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Shown then (Bluetooth, six anchors) | 2,417 | 1.00 m | 0.95 m | 1.58 m | 0 % | 3.9 % | 57.5 % | 81.6 % | 20.1 % |
+| **Replay, all** | 2,417 | **0.13 m** | **0.08 m** | **0.28 m** | 94.4 % | 97.4 % | 97.4 % | 97.4 % | 94.2 % |
+| Replay, standing | 2,183 | 0.13 m | 0.08 m | 0.28 m | 93.8 % | 97.1 % | 97.1 % | 97.1 % | 93.6 % |
+| Replay, sitting | 156 | 0.10 m | 0.08 m | 0.14 m | 100 % | 100 % | 100 % | 100 % | 100 % |
+| Replay, lying (held position) | 78 | 0.03 m | 0.03 m | 0.03 m | 100 % | 100 % | 100 % | 100 % | 100 % |
+| Replay, LiDAR readings only | 2,354 | 0.09 m | 0.08 m | 0.17 m | 96.9 % | 100 % | 100 % | 100 % | – |
+
+Sources in the replay: LiDAR 94.2 %, LiDAR held 3.2 % (the lying run), Bluetooth 2.6 %.
+
+| Spot | Readings | Mean | 95 % | From the LiDAR | Zone correct | Shown then (mean) |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| P1 (0.7, 0.4) standing | 310 | 0.12 m | 0.17 m | 100 % | 100 % | 1.50 m |
+| P2 (0.7, 1.0) standing | 312 | 0.11 m | 0.15 m | 100 % | 100 % | 0.88 m |
+| P3 (0.7, 1.6) standing | 312 | 0.08 m | 0.11 m | 100 % | 100 % | 0.54 m |
+| P4 (0.6, 2.35) standing | 313 | 0.16 m | 0.30 m | 100 % | 100 % | 0.90 m |
+| P5 (1.2, 2.35) standing | 312 | 0.05 m | 0.09 m | 100 % | 76.6 % | 0.64 m |
+| P6 (1.9, 2.35) standing | 312 | 0.07 m | 0.09 m | 100 % | 99.0 % | 0.94 m |
+| P7 (1.9, 3.0) standing (door) | 312 | 0.35 m | 1.56 m | 79.8 % | 79.8 % | 1.56 m |
+| Bed edge (1.35, 1.0) sitting | 78 | 0.07 m | 0.08 m | 100 % | 100 % | 1.13 m |
+| Bed (1.74, 1.0) lying | 78 | 0.03 m | 0.03 m | 100 % (held) | 100 % | 1.06 m |
+| Table (0.8, 2.45) sitting | 78 | 0.13 m | 0.14 m | 100 % | 100 % | 1.08 m |
+
+Findings:
+1. **Every LiDAR reading was the tester.** No LiDAR reading was more than 0.31 m from the spot, so the wristband was never linked to the wrong person or to the chair. The chair (the object of the offline check) was left out by the size limit of 9 returns: the tester was found as a person in 99.7 % of standing turns, the chair in 2 of 5,607, never often enough to be followed (3 of 5 turns). With a limit of 6 returns it counted as a person in 55 % of turns.
+2. **30 of 31 runs linked during the countdown,** about 1–2 s after the replay started. Each run is replayed on its own, from the start of its countdown; live, the link made at the first spot carries over to the next ones, because the LiDAR follows the tester between spots.
+3. **Run 26 (P7, facing east) linked only after 16 s.** The Bluetooth position was 2.3 m from the tester for most of the run (at the west wall while the tester stood at the door), beyond the 2 m within which a person is linked. The Bluetooth readings of that run are the 2.6 %. Live, the earlier link would have carried over.
+4. **Lying: the held position.** When the tester lay down, the LiDAR lost them at the bed and kept their last position. It was 3 cm from the lying spot here, because the tester was last seen sitting up there. In general the held position is where the patient was last seen at the bed, which can be up to a body length from where they lie; it stays in the bed zone.
+5. **Zone misses at P5 are at the zone's edge.** P5 is 5 cm outside the bed zone (the bed plus 0.3 m); a LiDAR error of 5 cm puts some readings inside it. The zone result there says more about the 0.3 m margin than about the position.
+6. **The body's centre:** the LiDAR sees the front of the body at hip height; the position is the middle of the returns moved 0.10 m away from the LiDAR. P4 (0.16 m) and P1 (0.12 m) are the spots farthest from the LiDAR.
+
+The replay readings are in [data/ips-6anchors-2026-11-21_lidar-replay.csv](data/ips-6anchors-2026-11-21_lidar-replay.csv) (one row per reading: source, position, error and zone of the replay, and what the maps showed then).
+
 ## After: LiDAR and Bluetooth
 
-To be added after the LiDAR positioning is built (Phase 10, steps 5b and 6): the same spots, facings and postures, with six anchors and the LiDAR. Each reading also records the Bluetooth-only position, so that test will also give the Bluetooth-only accuracy with six anchors next to the combined result.
+To be added after the live test with the LiDAR positioning (Phase 10, step 6): the same spots, facings and postures, with six anchors and the LiDAR. Each reading also records the Bluetooth-only position, so that test will also give the Bluetooth-only accuracy with six anchors next to the combined result.
 
 ## Raw data
 
 - [data/ips-baseline-2026-11-20_summary.csv](data/ips-baseline-2026-11-20_summary.csv): one row per run plus the session totals (the "ALL", "STANDING" and "SITTING+LYING" rows).
 - [data/ips-baseline-2026-11-20_samples.csv](data/ips-baseline-2026-11-20_samples.csv): every reading (time, position shown, error, zone, Bluetooth-only and raw positions, motion state, each anchor's RSSI and distance).
 - [data/ips-6anchors-2026-11-21_summary.csv](data/ips-6anchors-2026-11-21_summary.csv) and [data/ips-6anchors-2026-11-21_samples.csv](data/ips-6anchors-2026-11-21_samples.csv): the same for the six-anchor session, with the LiDAR turns recorded per run.
+- [data/ips-6anchors-2026-11-21_lidar-replay.csv](data/ips-6anchors-2026-11-21_lidar-replay.csv): the replay of that session through the LiDAR positioning (written by `tools/replay_lidar_runs.js --csv`).
 
 All four files were downloaded from the Position test panel. The sessions themselves are `PT-20261120-223212.json` and `PT-20261121-055850.json` in `edge_server/data/position_tests/` on the edge server, together with the LiDAR turns of each run of the second (`PT-20261121-055850-run<n>.lidar.json.gz`, git-ignored).

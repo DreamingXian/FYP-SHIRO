@@ -14,6 +14,7 @@ const deviceService = require('./services/device_service');
 const bindingCache = require('./services/binding_cache');
 const timeSeriesService = require('./services/time_series_service');
 const roomSensorManager = require('./services/room_sensor/room_sensor_manager');
+const roomPeopleService = require('./services/room_sensor/people_service');
 
 // A shutdown that has not finished after this long ends the process anyway
 const SHUTDOWN_TIMEOUT_MS = 8000;
@@ -38,6 +39,8 @@ async function bootstrap() {
   await bindingCache.refresh();
   // LiDAR room sensors: where each stands, its empty room, the moved check (Phase 10)
   await roomSensorManager.instance().start();
+  // ... and the people they see, linked to wristbands: patient positions (Phase 10, step 5b)
+  roomPeopleService.instance().start();
 
   // Background work: device freshness, tag offline detection, batched presence writes
   deviceService.startFreshnessWatchdog();
@@ -116,6 +119,7 @@ async function shutdown(reason, exitCode = 0) {
 
   deviceService.stopFreshnessWatchdog();
   ipsService.stopOfflineWatchdog();
+  roomPeopleService.instance().stop();
   roomSensorManager.instance().stop();
 
   // 1. No new work: anchors, dashboards and headsets are disconnected

@@ -172,14 +172,16 @@ const toCsv = (header, rows) => BOM + [header.map(csvCell).join(','), ...rows.ma
 
 function samplesCsv(session) {
   const header = ['Session', 'Session name', 'Ward', 'Run', 'Spot', 'Posture', 'Facing', 'True x (m)', 'True y (m)', 'True zone',
-    'Time (s)', 'Status', 'Available', 'Source', 'x (m)', 'y (m)', 'Error (m)', 'Zone', 'Zone correct',
+    'Time (s)', 'Status', 'Available', 'Source', 'LiDAR held', 'x (m)', 'y (m)', 'Error (m)', 'Zone', 'Zone correct',
     'Bluetooth x (m)', 'Bluetooth y (m)', 'Bluetooth error (m)', 'Bluetooth zone correct',
     'Raw x (m)', 'Raw y (m)', 'Raw error (m)', 'Confidence', 'Motion state', 'Anchors heard', 'Anchors (id: filtered RSSI / raw RSSI dBm / distance m)'];
   const rows = [];
   for (const run of session.runs) {
     for (const s of run.samples) {
       rows.push([session.id, session.name, session.ward_id, run.number, run.spot, run.posture, run.facing || '', run.true_x, run.true_y, run.true_zone,
-        round(s.t_ms / 1000, 2), s.status, s.available ? 'yes' : 'no', s.source, s.x, s.y, s.error_m, s.zone, s.zone_ok ? 'yes' : 'no',
+        round(s.t_ms / 1000, 2), s.status, s.available ? 'yes' : 'no', s.source,
+        s.lidar_held === true ? 'yes' : s.lidar_held === false ? 'no' : '',
+        s.x, s.y, s.error_m, s.zone, s.zone_ok ? 'yes' : 'no',
         s.ble_x, s.ble_y, s.ble_error_m, s.ble_error_m === null ? '' : (s.ble_zone_ok ? 'yes' : 'no'),
         s.raw_x, s.raw_y, s.raw_error_m, s.confidence, s.motion_state, s.anchors.length,
         s.anchors.map(a => `${a.anchor_id}: ${a.rssi} / ${a.raw_rssi} / ${a.distance}`).join('; ')]);
@@ -245,7 +247,8 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
       x: null, y: null, error_m: null, zone: null, zone_ok: false,
       ble_x: null, ble_y: null, ble_error_m: null, ble_zone_ok: false,
       raw_x: null, raw_y: null, raw_error_m: null,
-      confidence: null, motion_state: null, ward_id: null, age_ms: null, anchors: []
+      confidence: null, motion_state: null, ward_id: null, age_ms: null, anchors: [],
+      lidar_held: null
     };
     const pos = getPosition(run.tag_id);
     if (pos) {
@@ -275,6 +278,7 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
       }
       sample.confidence = pos.confidence || null;
       sample.motion_state = pos.motion_state || null;
+      if (sample.source === 'LIDAR') sample.lidar_held = !!pos.lidar_held;
       sample.anchors = (getAnchorReadings(run.tag_id) || []).map(a => ({
         anchor_id: a.anchor_id, rssi: a.rssi, raw_rssi: a.raw_rssi, distance: a.distance, age_ms: a.age_ms
       }));

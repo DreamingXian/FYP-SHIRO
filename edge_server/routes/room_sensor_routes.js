@@ -6,6 +6,8 @@
 //   GET  /api/room-sensors/scan           ?ward_id=&device_id=  the newest turn, the
 //                                         directions new in the room, the empty room,
 //                                         the moved check and learning (ward editor)
+//   GET  /api/room-sensors/people         ?ward_id=  the people the ward's LiDARs follow
+//                                         now, each with the wristband linked to it or null
 //   POST /api/room-sensors/learn          { ward_id, device_id, countdown_s?, duration_s? }
 //                                         learn the empty room (ADMIN)
 //   POST /api/room-sensors/learn/cancel   { device_id }  (ADMIN)
@@ -16,6 +18,7 @@
 // =============================================================================
 const roomSensorService = require('../services/room_sensor/room_sensor_service');
 const roomSensorManager = require('../services/room_sensor/room_sensor_manager');
+const peopleService = require('../services/room_sensor/people_service');
 const { alignScan } = require('../services/room_sensor/alignment');
 const { checkWardPayload } = require('../controllers/ward_controller');
 const { actorLabel } = require('../services/auth/auth_service');
@@ -41,6 +44,12 @@ async function handleRoomSensorRoutes(pathname, req, res, parsedUrl, body) {
         const wardId = requireId(q.get('ward_id'), 'ward_id');
         const deviceId = requireId(q.get('device_id'), 'device_id');
         sendJson(res, 200, { success: true, ...manager.getScanView(wardId, deviceId) });
+        return true;
+      }
+
+      case 'GET /api/room-sensors/people': {
+        const wardId = requireId(parsedUrl.searchParams.get('ward_id'), 'ward_id');
+        sendJson(res, 200, { success: true, ...peopleService.instance().peopleOfWard(wardId) });
         return true;
       }
 

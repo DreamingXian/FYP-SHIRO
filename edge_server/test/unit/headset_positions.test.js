@@ -80,5 +80,16 @@ describe('the position the maps get', () => {
 
   test('otherwise: the Bluetooth position', () => {
     assert.deepEqual(hp.positionFields(ble, null), { source: 'BLE', has_ble: true, ble_x: 3.4, ble_y: 2.6, x: 3.4, y: 2.6 });
+    assert.deepEqual(hp.positionFields(ble, null, null), { source: 'BLE', has_ble: true, ble_x: 3.4, ble_y: 2.6, x: 3.4, y: 2.6 });
+  });
+
+  test('a LiDAR position comes after the headset and before Bluetooth', () => {
+    const lidar = { x: 1.234, y: 0.987, wardId: 'WARD-005', key: 'lidar-001#3', held: true, inBed: true };
+    assert.deepEqual(hp.positionFields(ble, null, lidar), {
+      source: 'LIDAR', has_ble: true, ble_x: 3.4, ble_y: 2.6,
+      x: 1.23, y: 0.99, ward_id: 'WARD-005', lidar_person: 'lidar-001#3', lidar_held: true, lidar_in_bed: true
+    });
+    assert.equal(hp.positionFields(ble, AT, lidar).source, 'HEADSET', 'the headset comes first');
+    assert.equal(hp.positionFields(ble, AT, lidar).x, 2.0);
   });
 });

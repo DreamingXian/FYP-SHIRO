@@ -200,6 +200,7 @@ function reloadRoomSensors() {
   require('./room_sensor/room_sensor_manager').instance().reload().catch(err => {
     logger.warn('[WARD SERVICE] Error refreshing the LiDAR placements:', err.message);
   });
+  require('./room_sensor/people_service').instance().reload();
 }
 
 async function replaceRoomSensors(conn, wardId, list) {

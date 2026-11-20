@@ -35,13 +35,13 @@ describe('LiDAR tools in the ward editor', () => {
   });
   const scanView = async () => (await call(`/api/room-sensors/scan?ward_id=${WARD}&device_id=lidar-001`)).json();
 
-  /** Sends simulated turns of the ward at 10 a second for ms milliseconds. */
-  async function sendTurns(ms) {
+  /** Sends simulated turns of the ward at 10 a second for ms milliseconds, with people [{x, y, r}] in it. */
+  async function sendTurns(ms, people = []) {
     const node = await connectMqtt(MQTT_PORT, `SHIRO_Lidar_${LIDAR_MAC.replace(/:/g, '')}`);
     const random = rng(17);
     try {
       for (let t = 0, sequence = 0; t < ms; t += 100, sequence++) {
-        node.publish(encodeScanFrame({ sequence, turnMs: 100, samples: 500 }, simulateTurn(layout, REAL, { random })), SCAN_TOPIC);
+        node.publish(encodeScanFrame({ sequence, turnMs: 100, samples: 500 }, simulateTurn(layout, REAL, { random, people })), SCAN_TOPIC);
         await sleep(100);
       }
     } finally {
@@ -139,6 +139,22 @@ describe('LiDAR tools in the ward editor', () => {
     assert.match((await unknown.json()).error, /Nothing to align with/);
     const noLayout = await call('/api/room-sensors/align', { method: 'POST', body: { sensor: { device_id: 'lidar-001', x: 1, y: 1, heading_deg: 0 } } });
     assert.equal(noLayout.status, 400);
+  });
+
+  test('with the empty room learned, a person walking in is followed (no wristband: shown without one)', async () => {
+    const empty = await (await call(`/api/room-sensors/people?ward_id=${WARD}`, { cookie: nurse })).json();
+    assert.equal(empty.success, true);
+    assert.deepEqual(empty.people, []);
+
+    const spot = { x: Math.min(1.5, Number(layout.length_x) - 0.5), y: REAL.y + 0.3 };
+    await sendTurns(2000, [{ ...spot, r: 0.17 }]);
+    const seen = await (await call(`/api/room-sensors/people?ward_id=${WARD}`, { cookie: nurse })).json();
+    assert.equal(seen.people.length, 1, JSON.stringify(seen));
+    assert.ok(Math.hypot(seen.people[0].x - spot.x, seen.people[0].y - spot.y) < 0.1, JSON.stringify(seen.people[0]));
+    assert.equal(seen.people[0].tag_id, null);
+
+    const signedOut = await call(`/api/room-sensors/people?ward_id=${WARD}`, { cookie: null });
+    assert.equal(signedOut.status, 401);
   });
 
   test('after a restart the empty room is read back from the database', async () => {

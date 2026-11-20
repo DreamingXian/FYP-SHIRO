@@ -234,6 +234,30 @@ WebSocket messages to the dashboards:
 
 **Recorded with the position test:** when the ward has a placed LiDAR, every turn from the start of a run's countdown to its end is saved in `edge_server/data/position_tests/<session>-run<n>.lidar.json.gz`, with where the LiDAR stands, its empty room and the wristband's positions four times a second (`services/ips/lidar_record.js` describes the file). Removing a run removes its file.
 
+### Patient positions from the LiDAR (Phase 10, step 5b)
+
+Every turn of a LiDAR that is placed, has its empty room learned, is not being relearned and is not suspected of having moved goes through three steps (`services/room_sensor/`, run for each ward by `people_service.js`):
+
+1. **People in the turn** (`people.js`). The returns new in the room and inside it (5 cm from the walls) are grouped: neighbouring returns with a gap of at most 3 directions and 0.2 m form a piece, and pieces whose nearest returns are within 0.35 m are joined while the group stays at most 0.9 m wide (a body often shows as torso and arm). A group is a person with at least 9 returns (fewer beyond 3 m: 9 × 3 m / range, at least 4) and at least 0.12 m wide. Its position is the middle of its returns moved 0.10 m farther from the LiDAR, because the LiDAR sees the near side of the body. The slice is about 0.95 m above the floor: a standing or sitting person is seen, a person lying in bed or on the floor is not.
+2. **Following** (`people_tracker.js`, one per LiDAR). Each turn's people are matched to those followed, nearest first, within 0.6 m. A person counts once seen in 3 of the last 5 turns and is let go after 1.5 s unseen.
+3. **Linking to wristbands** (`lidar_linker.js`, one per ward), by position only; the wristband's motion state is not used. The Bluetooth position used is the unsmoothed estimate of each reading (before the motion lock), averaged over the last 5 s, at least 3 readings. A wristband is linked to a person within 2 m of it when that person is the only one, or at most 0.6 of the next distance, for 1 s; one person per wristband. The link holds while the LiDAR follows the person, and ends when the Bluetooth position stays more than 2.5 m away for 5 s. When the LiDAR loses the linked person, the last position is **held**: near a bed (0.5 m around it) as long as the Bluetooth position does not leave (lying in bed), elsewhere for 10 s. A person who appears within 0.8 m of a held position after the patient was last seen is the patient again; someone already in the room is not. A held position also ends when the Bluetooth position stays more than 2 m away for 5 s.
+
+The position of a linked or held patient is the map position, with **source `LIDAR`**, as long as it is renewed (every turn; stale after 1 s). A headset that sees the patient still comes first (`HEADSET`), Bluetooth last (`BLE`). `IPS_POSITION_UPDATE` and `GET` positions then carry, besides `ble_x`/`ble_y`:
+
+| Field | Meaning |
+| :--- | :--- |
+| `source` | `LIDAR` |
+| `lidar_person` | The person followed, `<device_id>#<number>` |
+| `lidar_held` | true: the LiDAR lost the patient and the last position is held |
+| `lidar_in_bed` | true: held at a bed (probably lying down) |
+
+| Address or message | Who | What |
+| :--- | :--- | :--- |
+| `GET /api/room-sensors/people?ward_id=` | clinician | The people the ward's LiDARs follow now: `at`, `people: [{ key, x, y, tag_id }]`, `tag_id` the linked wristband or null |
+| WebSocket `ROOM_PEOPLE` | dashboards | The same, at most 5 a second per ward, and at once when the number of people changes. The Live Map draws people without a wristband as grey dots. |
+
+The position test records the source of each reading and, for `LIDAR`, whether it was held (`LiDAR held` in the CSV). `tools/replay_lidar_runs.js <session>` runs the recorded runs of a session through the same code and scores the result against the marked spots.
+
 ## 6. Changing the protocol
 
 1. Change `shiro_packet.h` in the wristband folder and copy it over the anchor's copy. For an incompatible change, raise `PACKET_VERSION`.

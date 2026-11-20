@@ -11,6 +11,7 @@ const calibrationService = require('./calibration_service');
 const timeSeriesService = require('./time_series_service');
 const bindingCache = require('./binding_cache');
 const headsetPositions = require('./ips/headset_positions');
+const lidarPositions = require('./ips/lidar_positions');
 const { HttpError } = require('../utils/http');
 const { getMedian, solveWeightedTrilateration, refinePositionWithinRoom, computeWeightedCentroid } = require('./ips/geometry');
 
@@ -602,8 +603,8 @@ function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, time
       })),
       calibration: getCalibration(),
       timestamp: now,
-      // A headset that sees the patient gives the map position (x, y); ble_x / ble_y stay Bluetooth
-      ...headsetPositions.positionFields({ x: smoothX, y: smoothY }, headsetPositions.fresh(canonicalTagId, now))
+      // A headset or the LiDAR that sees the patient gives the map position (x, y); ble_x / ble_y stay Bluetooth
+      ...headsetPositions.positionFields({ x: smoothX, y: smoothY }, headsetPositions.fresh(canonicalTagId, now), lidarPositions.fresh(canonicalTagId, now))
     });
 
     // Log spatial trajectory to InfluxDB (Table 4.10)
@@ -636,11 +637,14 @@ function runOfflineCheck() {
   }
   // A headset that stopped sending (looked away, lost the person): back to Bluetooth
   for (const tagId of headsetPositions.takeStale(now)) broadcastCurrentPosition(tagId, now);
+  // A LiDAR that stopped sending turns: back to Bluetooth
+  for (const tagId of lidarPositions.takeStale(now)) broadcastCurrentPosition(tagId, now);
 }
 
 /**
  * Broadcasts a tag's position as it is now: the headset's while fresh, else the
- * last Bluetooth position (with its status, ONLINE or OFFLINE).
+ * LiDAR's while fresh, else the last Bluetooth position (with its status, ONLINE
+ * or OFFLINE).
  */
 function broadcastCurrentPosition(tagId, now = Date.now()) {
   const pos = tagSmoothedPositions.get(tagId);
@@ -658,7 +662,7 @@ function broadcastCurrentPosition(tagId, now = Date.now()) {
     // Offline: no anchor hears it. Otherwise left out, so the map keeps the anchors last heard
     anchors_used: pos.status === 'OFFLINE' ? [] : undefined,
     timestamp: pos.status === 'OFFLINE' ? pos.last_seen : now,
-    ...headsetPositions.positionFields(pos, headsetPositions.fresh(tagId, now))
+    ...headsetPositions.positionFields(pos, headsetPositions.fresh(tagId, now), lidarPositions.fresh(tagId, now))
   });
 }
 
@@ -709,6 +713,54 @@ function headsetDisconnected(headsetId, now = Date.now()) {
 }
 
 /**
+ * The LiDAR follows the patient of this wristband (room_sensor/people_service.js):
+ * their position in ward coordinates, renewed with every turn. While fresh it is
+ * the patient's position on the maps and for alerts, unless a headset sees them.
+ * held: the LiDAR lost them and keeps their last position (inBed: lying in bed).
+ * Only for a wristband tracked here and a position inside its ward.
+ * Returns true when the position is used.
+ */
+function applyLidarPosition(tagId, { x, y, wardId, key = null, held = false, inBed = false }, now = Date.now()) {
+  const tag = trackedTagKey(tagId);
+  if (!tag) return false;
+  const dim = wardDimensionsMap.get(wardId);
+  if (!dim || !headsetPositions.insideWard(x, y, dim)) {
+    endLidarPosition(tag, now);
+    return false;
+  }
+  if (lidarPositions.set(tag, { x, y, wardId, key, held, inBed }, now)) {
+    const what = !held ? `follows the patient of ${tag} (${key})`
+      : inBed ? `holds the patient of ${tag} in bed` : `lost the patient of ${tag}, last position held`;
+    logger.info(`[IPS ENGINE] LiDAR ${what}: map position from the LiDAR.`);
+  }
+  if (lidarPositions.broadcastDue(tag, now, MIN_BROADCAST_INTERVAL_MS)) broadcastCurrentPosition(tag, now);
+  return true;
+}
+
+/** The LiDAR no longer has the patient of this wristband: back to Bluetooth at once. */
+function endLidarPosition(tagId, now = Date.now()) {
+  const tag = trackedTagKey(tagId);
+  if (!tag || !lidarPositions.end(tag)) return;
+  logger.info(`[IPS ENGINE] LiDAR no longer has the patient of ${tag}: Bluetooth position.`);
+  broadcastCurrentPosition(tag, now);
+}
+
+/**
+ * The unsmoothed Bluetooth positions of the wristbands heard in a ward, for the
+ * LiDAR linker: the estimate of each reading, before the motion lock and the
+ * smoothing (the linker averages them itself and does not use the motion state).
+ */
+function getWardBluetoothPositions(wardId) {
+  const out = [];
+  for (const [tagId, pos] of tagSmoothedPositions.entries()) {
+    if (pos.ward_id !== wardId || (pos.status !== 'ONLINE' && pos.status !== 'CHARGING')) continue;
+    if (!Number.isFinite(pos.raw_x) || !Number.isFinite(pos.raw_y)) continue;
+    out.push({ tagId, x: pos.raw_x, y: pos.raw_y, at: pos.last_seen });
+  }
+  return out;
+}
+
+/**
  * Starts the 2-second offline watchdog. Called once from server.js at start-up,
  * so that loading this module has no side effects.
  */
@@ -725,15 +777,16 @@ function stopOfflineWatchdog() {
   }
 }
 
-/** A tag's cached position with the headset's position applied while it is fresh. */
+/** A tag's cached position with the headset's or the LiDAR's position applied while fresh. */
 function withHeadsetPosition(tagId, pos, now = Date.now()) {
   const seen = headsetPositions.fresh(tagId, now);
-  return { ...pos, ...headsetPositions.positionFields(pos, seen) };
+  return { ...pos, ...headsetPositions.positionFields(pos, seen, lidarPositions.fresh(tagId, now)) };
 }
 
 /**
  * Retrieve the latest known position for a specific tag: where a headset sees the
- * patient while it does, else the Bluetooth position (ble_x / ble_y always).
+ * patient while it does, else where the LiDAR does, else the Bluetooth position
+ * (ble_x / ble_y always).
  */
 function getTagPosition(tagId) {
   const pos = tagSmoothedPositions.get(tagId);
@@ -797,6 +850,7 @@ function purgeTag(tagId, mac = null) {
     tagSmoothedPositions.delete(k);
     tagKinematics.delete(k);
     headsetPositions.end(k);
+    lidarPositions.end(k);
 
     for (const wardMap of tagReadings.values()) {
       wardMap.delete(k);
@@ -831,6 +885,9 @@ module.exports = {
   applyHeadsetPosition,
   endHeadsetPosition,
   headsetDisconnected,
+  applyLidarPosition,
+  endLidarPosition,
+  getWardBluetoothPositions,
   purgeTag,
   startOfflineWatchdog,
   stopOfflineWatchdog

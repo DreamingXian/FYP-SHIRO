@@ -153,6 +153,28 @@ describe('the moved check and the ward editor view', () => {
     assert.equal(t.manager.getScanView('WARD-005', 'lidar-001').moved.suspected, false, 'back in place');
   });
 
+  test('people are looked for only with an empty room, not while learning it and not while probably moved', async () => {
+    const none = await setup();
+    assert.equal(none.manager.peopleSetup('lidar-001'), null, 'no empty room');
+    assert.equal(none.manager.peopleSetup('lidar-999'), null, 'not placed');
+
+    const t = await setup({ backgrounds: stored });
+    const ready = t.manager.peopleSetup('lidar-001');
+    assert.equal(ready.ward_id, 'WARD-005');
+    assert.deepEqual(ready.pose, { x: 2.11, y: 2.08, heading_deg: 270 });
+    assert.equal(ready.model, model);
+    assert.equal(ready.learned_at, 1_700_000_000_000);
+
+    const turned = simulateTurns(WARD_005, { ...POSE, heading_deg: 255 }, 20, { seed: 9 });
+    await t.advance(6000, (ms) => turned[(ms / 100) % 20]);
+    assert.equal(t.manager.peopleSetup('lidar-001'), null, 'probably moved');
+    await t.advance(8000, emptyTurn);
+    assert.notEqual(t.manager.peopleSetup('lidar-001'), null, 'back in place');
+
+    t.manager.startLearning({ wardId: 'WARD-005', deviceId: 'lidar-001', countdownS: 1, durationS: 5 });
+    assert.equal(t.manager.peopleSetup('lidar-001'), null, 'while the empty room is learned again');
+  });
+
   test('without an empty room: no new-in-room directions, no moved check; the live median is used to align', async () => {
     const t = await setup();
     assert.equal(t.manager.scanForAlignment('WARD-005', 'lidar-001'), null, 'nothing heard yet');

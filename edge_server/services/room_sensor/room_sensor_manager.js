@@ -12,7 +12,7 @@
 //     for the live scan in the ward editor.
 //   - A clean scan for lining the LiDAR up with the walls: the empty room when
 //     learned, else the median of the last 30 turns.
-// Positions of people (step 5b) build on this.
+// Positions of people (step 5b, people_service.js) build on this: peopleSetup().
 // =============================================================================
 const logger = require('../../utils/logger');
 const { HttpError } = require('../../utils/http');
@@ -248,6 +248,28 @@ function createRoomSensorManager({
           const bg = backgrounds.get(key(wardId, p.device_id));
           return { ...p, background: bg ? { ...summaryOf(bg), model: bg.model } : null };
         });
+    },
+
+    /**
+     * What finding people in this node's turns needs: its ward, pose and empty
+     * room. null while it cannot be used: not placed, no empty room learned, the
+     * empty room being learned, or probably moved.
+     */
+    peopleSetup(deviceId) {
+      const p = placements.get(deviceId);
+      if (!p) return null;
+      const bg = backgrounds.get(key(p.ward_id, deviceId));
+      if (!bg) return null;
+      const session = learning.get(deviceId);
+      if (session && (session.state === 'COUNTDOWN' || session.state === 'RECORDING' || session.state === 'SAVING')) return null;
+      const s = live.get(deviceId);
+      if (s && s.moved.suspected) return null;
+      return {
+        ward_id: p.ward_id,
+        pose: { x: Number(p.x), y: Number(p.y), heading_deg: Number(p.heading_deg) },
+        model: bg.model,
+        learned_at: bg.learned_at
+      };
     },
 
     /** The empty room of a node in a ward: summary and model, or null. */

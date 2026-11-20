@@ -26,6 +26,10 @@
   const liveVitals = new Map();
   // A wristband that has sent nothing for this long is shown as "NO SIGNAL"
   const NO_SIGNAL_AFTER_MS = 5000;
+  // People the ward's LiDARs follow (WebSocket ROOM_PEOPLE): [{ key, x, y, tag_id }].
+  // Those without a wristband are drawn as grey dots; older than this, not drawn.
+  let roomPeople = { at: 0, people: [] };
+  const ROOM_PEOPLE_FRESH_MS = 2000;
 
   let canvas = null;
   let ctx = null;
@@ -57,6 +61,7 @@
 
       activeWard = data.ward;
       trackedSubjects = Array.isArray(data.tracked_subjects) ? data.tracked_subjects : [];
+      roomPeople = { at: 0, people: [] };
 
       // Switch view panels
       const dirView = document.getElementById('ward-directory-view');
@@ -400,6 +405,15 @@
             const off = Math.hypot(pos.bleX - pos.x, pos.bleY - pos.y);
             where += ` · Bluetooth estimate ${off.toFixed(1)} m away`;
           }
+        } else if (!isOffline && pos.source === 'LIDAR') {
+          // Followed by the LiDAR, or held where it last saw the patient
+          where += pos.lidarHeld
+            ? (pos.lidarInBed ? ' · 🛏 LiDAR: last seen at the bed, probably lying down' : ' · ⏸ LiDAR: not seen just now, last position held')
+            : ' · 📡 seen by the LiDAR (about ±0.1 m)';
+          if (pos.bleX !== undefined && pos.bleY !== undefined) {
+            const off = Math.hypot(pos.bleX - pos.x, pos.bleY - pos.y);
+            where += ` · Bluetooth estimate ${off.toFixed(1)} m away`;
+          }
         } else if (!isOffline) {
           where += ' · Bluetooth estimate (about ±1 m)';
         }
@@ -699,7 +713,8 @@
       activeWard.anchors.forEach(a => drawAnchor(ctx, t, a));
     }
 
-    // 7. Draw Tracked Wristband Dots
+    // 7. People the LiDAR sees who wear no wristband (grey), then the wristbands
+    drawRoomPeople(ctx, t);
     drawWristbandDots(ctx, t);
 
     // 8. Draw Calibration Reference Reticle (when calibration modal is active)
@@ -1059,6 +1074,35 @@
     ctx.restore();
   }
 
+  /**
+   * People the LiDAR follows who are not linked to a wristband: visitors, staff,
+   * or a patient whose wristband could not be matched yet. Grey, no name.
+   */
+  function drawRoomPeople(ctx, t) {
+    if (!roomPeople.people.length || Date.now() - roomPeople.at > ROOM_PEOPLE_FRESH_MS) return;
+    const r = Math.max(10, (0.4 / 2) * t.scale);
+    for (const person of roomPeople.people) {
+      if (person.tag_id) continue;   // drawn as the patient's dot
+      const p = metricToCanvas(person.x, person.y, t);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(100, 116, 139, 0.45)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(71, 85, 105, 0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      if (layers.labels) {
+        ctx.font = '10px sans-serif';
+        ctx.fillStyle = 'rgba(51, 65, 85, 0.95)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('person (no wristband)', p.x, p.y + r + 3);
+      }
+      ctx.restore();
+    }
+  }
+
   function drawWristbandDots(ctx, t) {
     const now = Date.now();
 
@@ -1088,9 +1132,11 @@
       const humanRadiusPx = Math.max(14, (0.45 / 2) * t.scale);
       // Seen by a headset: the dot is where its depth sensor sees the patient
       const seenByHeadset = pos.source === 'HEADSET' && !isOffline;
+      // Seen by the LiDAR (or held where it last saw them): the dot is the LiDAR's position
+      const seenByLidar = pos.source === 'LIDAR' && !isOffline;
 
-      // 1b. The Bluetooth estimate, faint, with a line to where the headset sees the patient
-      if (seenByHeadset && pos.bleX !== undefined && pos.bleY !== undefined) {
+      // 1b. The Bluetooth estimate, faint, with a line to where the headset or LiDAR sees the patient
+      if ((seenByHeadset || seenByLidar) && pos.bleX !== undefined && pos.bleY !== undefined) {
         const b = metricToCanvas(pos.bleX, pos.bleY, t);
         ctx.beginPath();
         ctx.moveTo(b.x, b.y);
@@ -1142,7 +1188,7 @@
       // 4. Core Human Scale Circle (~45cm true scale)
       ctx.beginPath();
       ctx.arc(p.x, p.y, humanRadiusPx, 0, Math.PI * 2);
-      ctx.fillStyle = isOffline ? '#64748B' : (isSelected ? '#0284C7' : (seenByHeadset ? '#4F46E5' : '#0D9488'));
+      ctx.fillStyle = isOffline ? '#64748B' : (isSelected ? '#0284C7' : (seenByHeadset ? '#4F46E5' : (seenByLidar ? '#7C3AED' : '#0D9488')));
       ctx.fill();
       ctx.strokeStyle = isOffline ? '#CBD5E1' : '#FFFFFF';
       ctx.lineWidth = 2.5;
@@ -1167,12 +1213,15 @@
           nameText = `🚶 ${baseName}`;
         } else if (pos.motion_state === 'HAND_MOVEMENT') {
           nameText = `👋 ${baseName}`;
+        } else if (seenByHeadset || seenByLidar) {
+          nameText = baseName;   // settling and the lock (🔒) belong to the Bluetooth position only
         } else if (pos.motion_state === 'SETTLING') {
           nameText = `🎯 ${baseName} (Settling)`;
         } else {
           nameText = `${baseName} 🔒`;
         }
         if (seenByHeadset) nameText = `👁 ${nameText}`;
+        else if (seenByLidar) nameText = `${pos.lidarHeld ? (pos.lidarInBed ? '🛏' : '⏸') : '📡'} ${nameText}`;
 
         ctx.font = 'bold 11px sans-serif';
         const textW = ctx.measureText(nameText).width;
@@ -2008,12 +2057,15 @@
       }
 
       // Where the patient is: seen by a headset (source HEADSET: its depth sensor, about as
-      // accurate as the room alignment) or the Bluetooth estimate (often 1-3 m off).
+      // accurate as the room alignment), by the LiDAR (source LIDAR: about 0.1 m; held when
+      // it lost them, for example lying in bed) or the Bluetooth estimate (often 1-3 m off).
       // The Bluetooth position is kept as well, to show how far off it is.
       const seen = {
-        source: msg.source === 'HEADSET' ? 'HEADSET' : 'BLE',
+        source: msg.source === 'HEADSET' || msg.source === 'LIDAR' ? msg.source : 'BLE',
         seenBy: msg.seen_by || null,
         seenManual: !!msg.seen_manual,
+        lidarHeld: !!msg.lidar_held,
+        lidarInBed: !!msg.lidar_in_bed,
         bleX: msg.has_ble ? msg.ble_x : undefined,
         bleY: msg.has_ble ? msg.ble_y : undefined
       };
@@ -2054,6 +2106,12 @@
       if (tagId === selectedTagId) {
         updateTelemetryCard();
       }
+    });
+
+    // 2b. The people the ward's LiDARs follow, with the wristband each is linked to
+    window.wsClient.on('ROOM_PEOPLE', (msg) => {
+      if (!isLiveMapActive || !activeWard || msg.ward_id !== activeWard.ward_id) return;
+      roomPeople = { at: Date.now(), people: Array.isArray(msg.people) ? msg.people : [] };
     });
 
     // 3. Physiological Telemetry from Wristband (BPM, SpO2, Battery)

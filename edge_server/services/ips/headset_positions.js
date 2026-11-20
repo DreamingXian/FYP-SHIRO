@@ -89,12 +89,13 @@ function insideWard(x, y, dim, margin = OUTSIDE_MARGIN_M) {
 
 /**
  * The fields of a position message: the headset's position while fresh (source
- * HEADSET), else the Bluetooth position (source BLE). The Bluetooth position is
- * always included as ble_x / ble_y when known (has_ble).
+ * HEADSET), else the LiDAR's while fresh (source LIDAR, lidar_positions.js),
+ * else the Bluetooth position (source BLE). The Bluetooth position is always
+ * included as ble_x / ble_y when known (has_ble).
  */
-function positionFields(ble, headset) {
+function positionFields(ble, headset, lidar = null) {
   const fields = {
-    source: headset ? 'HEADSET' : 'BLE',
+    source: headset ? 'HEADSET' : lidar ? 'LIDAR' : 'BLE',
     has_ble: !!ble,
     ble_x: ble ? ble.x : 0,
     ble_y: ble ? ble.y : 0
@@ -105,6 +106,13 @@ function positionFields(ble, headset) {
     fields.ward_id = headset.wardId;
     fields.seen_by = headset.headsetId;
     fields.seen_manual = !!headset.manual;
+  } else if (lidar) {
+    fields.x = Math.round(lidar.x * 100) / 100;
+    fields.y = Math.round(lidar.y * 100) / 100;
+    fields.ward_id = lidar.wardId;
+    fields.lidar_person = lidar.key;
+    fields.lidar_held = !!lidar.held;
+    fields.lidar_in_bed = !!lidar.inBed;
   } else if (ble) {
     fields.x = ble.x;
     fields.y = ble.y;
