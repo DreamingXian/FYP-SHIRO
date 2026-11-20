@@ -14,7 +14,8 @@ const bindingCache = require('./binding_cache');
 const { normalizeTelemetry } = require('./telemetry/normalize');
 const { checkAnchorMessage, checkDiscoveryMessage, MAX_PAYLOAD_BYTES } = require('./telemetry/anchor_message');
 const tagHearing = require('./telemetry/tag_hearing');
-const { createAccessControl, anchorMacFromClientId } = require('./mqtt_access');
+const { createAccessControl, anchorMacFromClientId, lidarMacFromClientId } = require('./mqtt_access');
+const roomSensorService = require('./room_sensor/room_sensor_service');
 
 const DISCOVERY_TOPIC = 'shiro/discovery';
 
@@ -59,8 +60,8 @@ function getAnchorFilter(anchorId) {
 }
 
 /**
- * Starts the broker. Only clients with the anchor login may connect, and they
- * may use the anchor topics only (services/mqtt_access.js).
+ * Starts the broker. Only clients with the anchor login may connect: anchors,
+ * and LiDAR nodes on their own topics (services/mqtt_access.js).
  * @param {number} port
  * @param {{username: string, password: string}} credentials  from readAnchorCredentials()
  */
@@ -80,10 +81,15 @@ async function startMqttBroker(port, credentials) {
     });
   });
 
-  // Client lifecycle events. Only logged-in anchors get here.
+  // Client lifecycle events. Only logged-in anchors and LiDAR nodes get here.
   aedesInstance.on('client', (client) => {
     logger.info(`[MQTT CLIENT CONNECTED] ID: ${client.id}`);
     const ip = client.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
+    const lidarMac = lidarMacFromClientId(client.id);
+    if (lidarMac) {
+      roomSensorService.noteConnected({ mac: lidarMac, ip, clientId: client.id });
+      return;
+    }
     const mac = anchorMacFromClientId(client.id);
     if (mac) {
       const enrolled = deviceService.findEnrolledDeviceByMac(mac);
@@ -116,6 +122,16 @@ async function startMqttBroker(port, credentials) {
     if (!client) return; // Ignore internal broker messages
 
     const topic = packet.topic;
+
+    // A LiDAR node (Phase 10): its own topics, binary scans, its own size limits
+    const lidarMac = lidarMacFromClientId(client.id);
+    if (lidarMac) {
+      const ip = client.conn?.remoteAddress ? client.conn.remoteAddress.replace(/^.*:/, '') : null;
+      const result = roomSensorService.handleMessage({ mac: lidarMac, topic, payload: packet.payload, ip, clientId: client.id });
+      if (!result.ok) warnRefusedMessage(client, topic, result.reason);
+      return;
+    }
+
     if (packet.payload.length > MAX_PAYLOAD_BYTES) {
       warnRefusedMessage(client, topic, `payload larger than ${MAX_PAYLOAD_BYTES} bytes`);
       return;

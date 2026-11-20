@@ -2,12 +2,13 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  readAnchorCredentials, createAccessControl, anchorMacFromClientId, mayPublish, maySubscribe,
-  secretEquals, MAX_FAILURES_PER_WINDOW, LOCKOUT_MS
+  readAnchorCredentials, createAccessControl, anchorMacFromClientId, lidarMacFromClientId, nodeKindOf,
+  mayPublish, maySubscribe, secretEquals, MAX_FAILURES_PER_WINDOW, LOCKOUT_MS
 } = require('../../services/mqtt_access');
 
 const LOGIN = { username: 'shiro-anchor', password: 'a-long-test-password-123' };
 const ANCHOR_ID = 'SHIRO_Anchor_A0B1C2D3E4F5';
+const LIDAR_ID = 'SHIRO_Lidar_10B2C3D4E5F6';
 
 function fakeClient(id = ANCHOR_ID, address = '::ffff:192.168.1.50') {
   return { id, conn: { remoteAddress: address } };
@@ -151,5 +152,49 @@ describe('publish and subscribe checks', () => {
     assert.equal(granted, sub);
     access.authorizeSubscribe(fakeClient(), { topic: '#', qos: 0 }, (err, s) => { granted = s; });
     assert.equal(granted, null);
+  });
+});
+
+describe('LiDAR room sensor nodes (Phase 10)', () => {
+  test('the MAC address is read from a LiDAR ID; anchor and LiDAR IDs are told apart', () => {
+    assert.equal(lidarMacFromClientId('SHIRO_Lidar_10b2c3d4e5f6'), '10:B2:C3:D4:E5:F6');
+    assert.equal(lidarMacFromClientId(ANCHOR_ID), null);
+    assert.equal(anchorMacFromClientId(LIDAR_ID), null);
+    assert.equal(nodeKindOf(ANCHOR_ID), 'ANCHOR');
+    assert.equal(nodeKindOf(LIDAR_ID), 'ROOM_SENSOR');
+    for (const id of ['SHIRO_Lidar_', 'SHIRO_Lidar_10B2C3D4E5', 'SHIRO_LIDAR_10B2C3D4E5F6', 'xSHIRO_Lidar_10B2C3D4E5F6', 'mqtt-explorer', null]) {
+      assert.equal(nodeKindOf(id), null, String(id));
+    }
+  });
+
+  test('a LiDAR node logs in with the same login; with a wrong one it is refused', () => {
+    const access = createAccessControl(LOGIN, { warn: () => {} });
+    assert.deepEqual(login(access, fakeClient(LIDAR_ID), LOGIN.username, LOGIN.password), { ok: true, code: 0 });
+    assert.deepEqual(login(access, fakeClient(LIDAR_ID), LOGIN.username, 'wrong'), { ok: false, code: 4 });
+  });
+
+  test('each kind of node may publish to its own topics only', () => {
+    assert.equal(mayPublish('shiro/ward-A1/lidar/scan', 'ROOM_SENSOR'), true);
+    assert.equal(mayPublish('shiro/ward-A1/lidar/status', 'ROOM_SENSOR'), true);
+    for (const topic of ['shiro/ward-A1/anchor/telemetry', 'shiro/discovery', 'shiro/ward-A1/lidar/other', 'shiro/ward-A1/lidar/scan/x', 'shiro/control/mode']) {
+      assert.equal(mayPublish(topic, 'ROOM_SENSOR'), false, topic);
+    }
+    // Anchors may not send LiDAR scans; an unknown kind may publish nothing
+    assert.equal(mayPublish('shiro/ward-A1/lidar/scan'), false);
+    assert.equal(mayPublish('shiro/ward-A1/lidar/scan', 'ANCHOR'), false);
+    assert.equal(mayPublish('shiro/ward-A1/anchor/telemetry', 'OTHER'), false);
+  });
+
+  test('the publish check uses the kind in the client ID', () => {
+    const access = createAccessControl(LOGIN, { warn: () => {} });
+    const result = (client, topic) => {
+      let error = 'not called';
+      access.authorizePublish(client, { topic }, (err) => { error = err; });
+      return error === null ? 'allowed' : 'refused';
+    };
+    assert.equal(result(fakeClient(LIDAR_ID), 'shiro/ward-A1/lidar/scan'), 'allowed');
+    assert.equal(result(fakeClient(LIDAR_ID), 'shiro/ward-A1/anchor/telemetry'), 'refused');
+    assert.equal(result(fakeClient(ANCHOR_ID), 'shiro/ward-A1/lidar/scan'), 'refused');
+    assert.equal(result(fakeClient('mqtt-explorer'), 'shiro/ward-A1/anchor/telemetry'), 'refused');
   });
 });

@@ -15,6 +15,8 @@ const { handleAuthRoutes } = require('./auth_routes');
 const { handleAdminRoutes } = require('./admin_routes');
 const { handleHeadsetRoutes } = require('./headset_routes');
 const { handleReportRoutes } = require('./report_routes');
+const { handleRoomSensorRoutes } = require('./room_sensor_routes');
+const { handleIpsRoutes } = require('./ips_routes');
 const { HttpError, JSON_BODY_LIMIT, PHOTO_BODY_LIMIT, sendError, sendFailure, readBody, isCrossSiteRequest } = require('../utils/http');
 const { requiredAccess, decide } = require('../services/auth/permissions');
 const { actorOf, clientIp } = require('../services/auth/request_auth');
@@ -45,7 +47,9 @@ const API_ROUTERS = [
   ['/api/auth', handleAuthRoutes],
   ['/api/admin', handleAdminRoutes],
   ['/api/headset', handleHeadsetRoutes],
-  ['/api/reports', handleReportRoutes]
+  ['/api/reports', handleReportRoutes],
+  ['/api/room-sensors', handleRoomSensorRoutes],
+  ['/api/ips', handleIpsRoutes]
 ];
 
 /**

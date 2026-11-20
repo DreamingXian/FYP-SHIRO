@@ -741,6 +741,32 @@ function getTagPosition(tagId) {
 }
 
 /**
+ * The anchors that heard a wristband within the stale time, with the RSSI they
+ * reported (raw and filtered) and the distance worked out from it. For the
+ * position test, which records them with every reading.
+ */
+function getTagAnchorReadings(tagId, now = Date.now()) {
+  const key = trackedTagKey(tagId) || tagId;
+  const readings = [];
+  for (const wardMap of tagReadings.values()) {
+    const anchorMap = wardMap.get(key);
+    if (!anchorMap) continue;
+    for (const r of anchorMap.values()) {
+      if (now - r.timestamp > STALE_TIMEOUT_MS) continue;
+      readings.push({
+        anchor_id: r.anchor_id,
+        device_id: r.device_id,
+        raw_rssi: r.rawRssi,
+        rssi: r.filteredRssi,
+        distance: Number.isFinite(r.distance) ? Math.round(r.distance * 100) / 100 : null,
+        age_ms: now - r.timestamp
+      });
+    }
+  }
+  return readings;
+}
+
+/**
  * Retrieve all currently localized tags inside a specific ward
  */
 function getWardTagPositions(wardId) {
@@ -800,6 +826,7 @@ module.exports = {
   recordKinematics,
   solveWeightedTrilateration,
   getTagPosition,
+  getTagAnchorReadings,
   getWardTagPositions,
   applyHeadsetPosition,
   endHeadsetPosition,

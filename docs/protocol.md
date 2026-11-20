@@ -117,12 +117,13 @@ An anchor tracks up to 16 wristbands and frees the slot of a wristband that has 
 
 ### Broker access
 
-The broker accepts a connection only with the anchor login (`MQTT_ANCHOR_USER` and `MQTT_ANCHOR_PASSWORD` in `edge_server/.env`, the same values as `SHIRO_MQTT_USER` and `SHIRO_MQTT_PASSWORD` in the anchor's `secrets.h`) and the client ID `SHIRO_Anchor_` followed by the anchor's Wi-Fi MAC address without colons (`SHIRO_Anchor_A4CF1201F82C`). Rules, in `edge_server/services/mqtt_access.js`:
+The broker accepts a connection only with the anchor login (`MQTT_ANCHOR_USER` and `MQTT_ANCHOR_PASSWORD` in `edge_server/.env`, the same values as `SHIRO_MQTT_USER` and `SHIRO_MQTT_PASSWORD` in the anchor's `secrets.h`) and a node client ID: `SHIRO_Anchor_` followed by the anchor's Wi-Fi MAC address without colons (`SHIRO_Anchor_A4CF1201F82C`), or `SHIRO_Lidar_` and the MAC address for a LiDAR node (section 5). Rules, in `edge_server/services/mqtt_access.js`:
 
 | | Allowed | Otherwise |
 | :--- | :--- | :--- |
-| Connect | Anchor login and anchor client ID | Refused: return code 4 (bad username or password) or 2 (identifier rejected) |
-| Publish | `shiro/<ward>/anchor/telemetry`, `shiro/discovery` | The connection is closed |
+| Connect | Anchor login and an anchor or LiDAR client ID | Refused: return code 4 (bad username or password) or 2 (identifier rejected) |
+| Publish (anchor) | `shiro/<ward>/anchor/telemetry`, `shiro/discovery` | The connection is closed |
+| Publish (LiDAR node) | `shiro/<ward>/lidar/scan`, `shiro/<ward>/lidar/status` | The connection is closed |
 | Subscribe | Topics under `shiro/control/` | That subscription is refused (`0x80`); the connection stays open |
 | Repeated failures | | 10 failed logins from one address within a minute lock that address out for 60 seconds (return code 5) |
 
@@ -173,7 +174,42 @@ Alarm rules use the normalised values and the limits in `edge_server/config/clin
 - **Wristband heart rate:** estimated once per second from the last 8 seconds of the pulse signal (`pulse_estimator.h`). A value is reported only when the signal is clearly periodic and three estimates in a row agree; it is the median of the last five. It is withdrawn (`0`) after 4 seconds without a new confirmation. With movement, a loose strap or a weak pulse the wristband therefore reports no heart rate instead of a wrong one. The first value of a measurement takes about 13 seconds. A passive measurement (every 3 minutes) runs until it has delivered a heart rate for 10 seconds, at most 90 seconds, and ends after 5 seconds when the sensor sees no skin.
 - **Wristband SpO2:** reported together with a heart rate, from the red and infrared pulse amplitudes of the same 8 seconds. The conversion line is not calibrated for this hardware.
 
-## 5. Changing the protocol
+## 5. LiDAR room sensor node (Phase 10)
+
+A LiDAR node (`firmware/shiro_lidar_node/`, an ESP32-S3 with a SLAMTEC RPLIDAR C1) sends what the LiDAR measures, so the server can find the people in the room. It sends distances only, never an image.
+
+### Scan message: `shiro/<ward>/lidar/scan`, binary, version 1
+
+One message per LiDAR turn, about 10 per second, 1452 bytes. The node reduces the turn's samples (about 500, at uneven angles) to 720 fixed directions, every 0.5 degree, and keeps the **nearest** distance measured in each direction. Nearest, because a person in front of a wall must win over the wall. All numbers are little-endian:
+
+| Offset | Size | Field |
+| ---: | ---: | :--- |
+| 0 | 2 | `'S' 'L'` |
+| 2 | 1 | Version, 1 |
+| 3 | 1 | Flags, 0 (reserved) |
+| 4 | 2 | Sequence number of the turn, wraps at 65535 |
+| 6 | 2 | Time the turn took, ms (about 100 at 10 Hz) |
+| 8 | 2 | Samples in the turn, with or without a distance |
+| 10 | 2 | Samples with a distance |
+| 12 | 720 × 2 | Distance in mm per direction, 0 = nothing measured. Direction `i` covers `[i × 0.5°, i × 0.5° + 0.5°)`, clockwise seen from above, 0° at the triangle on top of the LiDAR. |
+
+The layout is defined once for the firmware (`scan_frame.h`) and once for the server (`services/room_sensor/scan_frame.js`). Both are tested against the same bytes. The server refuses a message of another size, without `SL`, or of another version. A gap in the sequence numbers counts as lost turns.
+
+### Status message: `shiro/<ward>/lidar/status`, JSON, every 2 seconds
+
+```json
+{ "lidar_mac": "10:B2:C3:D4:E5:F6", "state": "SCANNING", "node_fw": "1.0.0", "model": 65, "lidar_fw": "1.01", "lidar_hw": 18,
+  "serial": "…32 hex digits…", "health": "OK", "health_code": 0, "turns_per_s": 10.0, "points_per_turn": 500, "valid_per_turn": 480,
+  "turn_ms": 100, "sent": 120, "send_failed": 0, "overwritten": 0, "bad_bytes": 0, "restarts": 0, "wifi_rssi": -55, "uptime_s": 30 }
+```
+
+- `state`: `STARTING`, `SCANNING`, `NO_ANSWER` (the LiDAR does not answer: wiring or power) or `FAULT`.
+- `health`: the LiDAR's own report, `OK`, `WARNING` or `ERROR`. The C1 switches its laser off for a fault, for example a supply below 4.8 V.
+- `lidar_mac` must be the MAC address of the sender's client ID. Unknown fields are ignored, and implausible values are stored as null.
+
+The server shows the node on the Devices page (device type `ROOM_SENSOR`, IDs `lidar-001`, …) and on `GET /api/room-sensors/status`.
+
+## 6. Changing the protocol
 
 1. Change `shiro_packet.h` in the wristband folder and copy it over the anchor's copy. For an incompatible change, raise `PACKET_VERSION`.
 2. Update this document and the reference packet.

@@ -472,6 +472,9 @@ async function getNextDeviceId(deviceType) {
   } else if (deviceType === 'HEADSET') {
     prefix = 'QUEST3-';
     padLen = 3;
+  } else if (deviceType === 'ROOM_SENSOR') {
+    prefix = 'lidar-';
+    padLen = 3;
   }
 
   const [rows] = await pool.query('SELECT device_id FROM devices WHERE device_type = ?', [deviceType]);

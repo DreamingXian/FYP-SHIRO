@@ -125,6 +125,7 @@
    */
   function closeWardLiveMap() {
     isLiveMapActive = false;
+    if (window.positionTestPanel) window.positionTestPanel.close();
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
       animationFrameId = null;
@@ -552,6 +553,13 @@
     // Get transform
     const t = getCanvasTransform(canvas.width, canvas.height, activeWard.length_x, activeWard.width_y);
 
+    // Position test: while "Pick on map" is on, a click sets the spot of the next run
+    if (window.positionTestPanel) {
+      const mx = (clickX - t.offsetX) / t.scale;
+      const my = (t.cHeight - clickY - t.offsetY) / t.scale;
+      if (window.positionTestPanel.onMapClick(mx, my)) return;
+    }
+
     // If Calibration Modal is open and Custom Point is chosen, click sets calibration target
     if (isCalibrationOpen && isCustomLandmarkSelected) {
       const mx = Math.max(0.15, Math.min(activeWard.length_x - 0.15, (clickX - t.offsetX) / t.scale));
@@ -697,6 +705,11 @@
     // 8. Draw Calibration Reference Reticle (when calibration modal is active)
     if (isCalibrationOpen && calibrationTarget) {
       drawCalibrationTarget(ctx, t, calibrationTarget);
+    }
+
+    // 9. Position test: the session's spots, the next spot and the error line during a run
+    if (window.positionTestPanel) {
+      window.positionTestPanel.draw(ctx, t, metricToCanvas);
     }
   }
 
@@ -2147,6 +2160,14 @@
   // Global exposure
   window.openWardLiveMap = openWardLiveMap;
   window.closeWardLiveMap = closeWardLiveMap;
+
+  // Read-only view of the live map for the position test panel (position_test_panel.js)
+  window.liveMapState = {
+    ward: () => activeWard,
+    tags: () => [...liveTagPositions.keys()],
+    tagPosition: (tagId) => liveTagPositions.get(tagId) || null,
+    selectedTag: () => selectedTagId
+  };
   window.openCalibrationModal = openCalibrationModal;
   window.closeCalibrationModal = closeCalibrationModal;
   window.onCalibrationLandmarkChanged = onCalibrationLandmarkChanged;

@@ -62,7 +62,8 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
 | Role | Microcontroller / Board | Sensors / Modules | Description |
 | :--- | :--- | :--- | :--- |
 | **Patient Wristband Tag** | Seeed Studio XIAO ESP32-C6 | HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) + 100k/100k Battery Divider | Wearable node measuring heart rate, SpO2 (indicative), battery % and motion, with on-board fall detection. Broadcasts BLE advertising packets every 62.5–100 ms. |
-| **Stationary Wall Anchors (Dual-Role)** | ESP32-WROOM-32E | On-board Wi-Fi + BLE Scanner | Wall-mounted nodes that measure BLE RSSI and decode the wristband telemetry, publishing both to MQTT over Wi-Fi. |
+| **Stationary Wall Anchors (Dual-Role)** | ESP32-WROOM-32E; also ESP32-S3 and Seeed XIAO ESP32-C3 (same firmware) | On-board Wi-Fi + BLE Scanner | Wall-mounted nodes that measure BLE RSSI and decode the wristband telemetry, publishing both to MQTT over Wi-Fi. Not enough WROOM-32E boards were available, so other ESP32 boards fill the extra anchor positions; each anchor's calibration absorbs their different antennas. |
+| **LiDAR Room Sensor (Phase 10)** | ESP32-S3 (N16R8) | SLAMTEC RPLIDAR C1 (360° laser range scanner, 10 turns/s) | Sends each LiDAR turn (720 directions, distances only, no image) to the edge server over Wi-Fi/MQTT, so the server can find where people are in the room (`firmware/shiro_lidar_node`). |
 | **Central Edge Server** | Local PC / Laptop | 2.4 GHz Wi-Fi / Ethernet | Hosts the embedded MQTT broker, REST API, WebSocket server, positioning engine, MariaDB/MySQL and InfluxDB. |
 | **Mixed Reality Headset** | Meta Quest 3 | Color Passthrough + Depth Sensor | Spatial client rendering the 3D ward digital twin, in-situ patient vitals panels and the hand slate. |
 
@@ -102,6 +103,8 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
   * Motion state machine (`STATIONARY`, `HAND_MOVEMENT`, `WALKING`, `SETTLING`) that combines the wristband's motion with the RF track; after walking stops, the position settles on the median of a 1.8 s window.
   * Landmark calibration of each anchor's path-loss parameters ($A$ and $n$) on the dashboard, with a live preview and reset to defaults.
   * Anchor placement suggestions on the ward editor, with line-of-sight checks against beds and walls.
+  * **Position test (Live Map → 📏 Position test):** measures the positioning error at marked spots. The tester stands on a spot, the server records the wristband's position 4 times a second for 20 s (shown position and its source, Bluetooth-only position, raw solver position, zone, motion state, every anchor's RSSI), and reports the mean, median, 95 % and largest error and the share in the correct zone (bed, door, rest of the room). Sessions are kept in `edge_server/data/position_tests/` and download as CSV. Steps: `SYSTEM_STARTUP_PROCEDURE.md`, section 9.
+  * **LiDAR room sensors (Phase 10, in progress):** the node is accepted on its own MQTT topics (`docs/protocol.md`, section 5), enrolled as a `ROOM_SENSOR` and shown on the Devices page with its turns per second and the LiDAR's health. Finding people in the scans and linking them to wristbands follows.
 * **Web Management Portal:**
   * **Ward Configuration Editor:** Room dimensions, ensuite cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), and anchor placement, stored in MySQL.
   * **2D Live Ward Map:** Scaled patient marker, movement trail, bed docking status, and wristband unbinding. A patient whom a headset has linked to a person it sees is drawn where the headset sees them (violet dot, 👁, "seen by headset …"), with the Bluetooth estimate as a faint dot and its distance on the card; after 1.5 s without news from the headset the marker goes back to Bluetooth.
@@ -250,8 +253,11 @@ Code/
 │   │   ├── shiro_packet.h          # Telemetry packet v2 (identical copy in shiro_anchor_node)
 │   │   └── vitals_filter.h         # Accepted vitals range and beat smoothing
 │   ├── tests/                      # PC tests for the firmware logic (run_host_tests.bat)
-│   └── shiro_anchor_node/          # ESP32 dual-role anchor & vitals gateway
-│       └── secrets.example.h       # Template for git-ignored secrets.h (Wi-Fi / MQTT settings)
+│   ├── shiro_anchor_node/          # ESP32 dual-role anchor & vitals gateway (WROOM-32E, S3 or XIAO C3)
+│   │   └── secrets.example.h       # Template for git-ignored secrets.h (Wi-Fi / MQTT settings)
+│   └── shiro_lidar_node/           # ESP32-S3 + RPLIDAR C1 room sensor (Phase 10)
+│       ├── rplidar_protocol.h      # RPLIDAR requests, answers and scan samples (host-tested)
+│       └── scan_frame.h            # One LiDAR turn as a 1452-byte MQTT message (host-tested)
 ├── edge_server/                    # Central Node.js edge server & web portal
 │   ├── server.js                   # Server entrypoint (HTTP, WebSocket, MQTT, clean shutdown)
 │   ├── package.json                # Server dependencies & scripts

@@ -267,7 +267,7 @@ function connectMqtt(port, clientId, login = TEST_MQTT_LOGIN) {
           closed,
           publish: (payload, topic = ANCHOR_TOPIC) => socket.write(mqttPacket(0x30, Buffer.concat([
             mqttString(topic),
-            Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload))
+            Buffer.isBuffer(payload) ? payload : Buffer.from(typeof payload === 'string' ? payload : JSON.stringify(payload))
           ]))),
           subscribe: (topic) => new Promise((resolveSub) => {
             const id = nextPacketId++;

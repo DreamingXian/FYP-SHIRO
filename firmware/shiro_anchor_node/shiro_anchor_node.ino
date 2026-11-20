@@ -1,7 +1,8 @@
 /*
  * =========================================================================================
  *   SHIRO Anchor Node - Combined RSSI Localization & Vitals Gateway (V4 - Protocol 2)
- *   Hardware: ESP32-WROOM-32E (or generic ESP32)
+ *   Hardware: ESP32-WROOM-32E (or generic ESP32); also ESP32-S3 and Seeed XIAO ESP32-C3
+ *             (with its FPC antenna attached), unchanged. Partition scheme "Huge APP" on all.
  *   Function: Continuously scans for SHIRO-WRISTBAND BLE broadcasts, records raw RSSI
  *             for IPS multilateration, unpacks physiological/kinematic telemetry,
  *             and streams unified telemetry packets to the Edge Server over Wi-Fi/MQTT.

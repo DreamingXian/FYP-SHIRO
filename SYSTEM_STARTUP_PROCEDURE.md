@@ -291,9 +291,9 @@ A `[FAIL]` line for a sensor means that sensor is reported as faulty in every pa
 
 ---
 
-### 4.3 Board 2: Dual-Role Stationary Wall Anchors (ESP32-WROOM-32E)
+### 4.3 Board 2: Dual-Role Stationary Wall Anchors (ESP32-WROOM-32E, ESP32-S3 or XIAO ESP32-C3)
 
-* **Physical Hardware:** ESP32-WROOM-32E Development Boards (3+ units for 2D trilateration)
+* **Physical Hardware:** ESP32-WROOM-32E Development Boards (3+ units for 2D trilateration). ESP32-S3 and Seeed XIAO ESP32-C3 boards run the same firmware unchanged (see "Other anchor boards" below).
 * **Dual Role:** Continuously scans BLE advertising beacons from wristbands, measures raw RSSI for IPS multilateration, unpacks embedded vitals (BPM, SpO2, battery, motion, fall alerts), and streams unified JSON packets to MQTT over Wi-Fi.
 * **Firmware Location:** `firmware/shiro_anchor_node/shiro_anchor_node.ino`
 
@@ -328,6 +328,75 @@ If `secrets.h` is missing, or lacks `SHIRO_MQTT_USER` or `SHIRO_MQTT_PASSWORD`, 
 5. Select **Tools --> Port** (physical USB serial port, e.g., `COM10+`).
 6. Click **Upload** (`Ctrl + U`). *(If `Connecting........_____`, press and hold the physical **BOOT** button for 1 second).*
 
+#### Other anchor boards (Phase 10)
+There were not enough ESP32-WROOM-32E boards for six anchors, so ESP32-S3 and XIAO ESP32-C3 boards are used as well. The firmware is the same; only the Arduino IDE settings differ. All three compile with the Huge APP partition (checked 20 Nov 2026: S3 36 %, C3 40 % of 3 MB; the C3's default partition would be 97 % full).
+
+| Board | Tools → Board | Partition Scheme | Notes |
+| :--- | :--- | :--- | :--- |
+| ESP32-WROOM-32E | ESP32 Dev Module | Huge APP | As above |
+| ESP32-S3 (N16R8) | ESP32S3 Dev Module | Huge APP | Flash Size 16MB, PSRAM Disabled, USB CDC On Boot Disabled; upload through the USB-C port marked **COM** |
+| Seeed XIAO ESP32-C3 | XIAO_ESP32C3 | Huge APP | The board has no antenna of its own: clip the FPC antenna onto its connector **before** powering it. No code change. If upload fails, hold **BOOT** while plugging in USB. |
+
+Mounting, for every anchor the same way: board upright against the wall (1–2 cm off it, for example on a foam pad), components facing into the room, antenna end pointing **up**, nothing within 5 cm of the antenna (cables, step-down module, metal). On a XIAO C3, stick the FPC antenna upright above the board. Boards with different antennas read a wristband a few dB stronger or weaker; each anchor's own calibration value (🎯 Calibrate Anchors) takes care of that.
+
+---
+
+### 4.4 Board 3: LiDAR Room Sensor Node (ESP32-S3 + RPLIDAR C1, Phase 10)
+
+The LiDAR measures distances all around itself in one flat slice, about 10 turns per second. The node sends every turn to the edge server, which finds the people in it and links them to wristbands. No camera and no image: distances only.
+
+* **Hardware:** ESP32-S3 board (tested: ESP32-S3 N16R8) and a SLAMTEC RPLIDAR C1 (model C1M1-R2).
+* **Firmware:** `firmware/shiro_lidar_node/shiro_lidar_node.ino`
+* **Settings:** copy `firmware/shiro_anchor_node/secrets.h` into `firmware/shiro_lidar_node/` (the same Wi-Fi and MQTT values; the node uses the anchors' MQTT login).
+
+#### Wiring
+Unplug the C1's cable from its green USB board (pull the plug, not the wires). The green board is only for connecting the C1 to a PC; keep it for troubleshooting. Push male jumper pins into the plug's holes and tape them. Connect with everything switched off:
+
+| C1 wire | Connects to |
+| :--- | :--- |
+| Red (VCC, 5 V) | LM2596S 5 V module **OUT+** |
+| Black (GND) | LM2596S **OUT−** and a **GND** pin of the S3 (the grounds must be joined) |
+| Yellow (TX, C1 → S3) | S3 **GPIO18** |
+| Green (RX, S3 → C1) | S3 **GPIO17** |
+
+The C1's signals are 3.3 V and connect directly. It needs 4.8–5.2 V, up to **800 mA while starting**, and 230–260 mA while scanning (Slamtec datasheet C1M1-R2, rev 1.0). Never power it from the S3's 3V3 pin.
+
+#### Powering the S3
+* **While testing (option B):** the S3 runs from its USB-C port marked **COM**: the PC when you want the Serial Monitor, otherwise a phone charger. Its 5V pin stays unconnected.
+* **Final installation (option A):** the same LM2596S module also feeds the S3's **5V** pin, so one supply runs both. **Never plug a USB cable into the S3 while its 5V pin is connected to the module**: unplug that wire first.
+
+#### Flashing
+1. Plug the S3's **COM** USB-C port into the PC.
+2. Arduino IDE: **ESP32S3 Dev Module**, Flash Size **16MB**, PSRAM **Disabled**, Partition Scheme **Huge APP**, USB CDC On Boot **Disabled**, Port: the new COM port.
+3. Upload `shiro_lidar_node.ino`, then open the Serial Monitor at **115200** baud.
+
+#### Test, stage 1: on the PC (option B)
+With the LM2596S module powered and the S3 on USB, the Serial Monitor shows:
+```
+[LIDAR] Found: model 0x.., firmware ..., hardware ...
+[LIDAR] Health: OK (code 0).
+[LIDAR] Scanning (...)
+[OK] Wi-Fi Connected!
+[LIDAR NODE ..] SCANNING | 10.0 turns/s | 500 points/turn (... with a distance) | health OK | sent ..., failed 0 | Wi-Fi -55 dBm | MQTT connected
+```
+* `No answer from the RPLIDAR C1`: check red/black on the module, yellow → GPIO18, green → GPIO17 (swapped yellow and green is the most common mistake) and the shared ground.
+* `Health: ERROR` or a speed well below 10 turns/s: the supply is too low at the C1's plug. With a multimeter, red to black should read 4.9 V or more while it spins.
+* `rc=2: client ID refused`: the edge server is older than Phase 10.
+* Dashboard → **Devices**: the node appears in the discovery radar as **🌀 LiDAR** with turns per second and LiDAR health. Enroll it (it becomes `lidar-001`).
+
+#### Test, stage 2: on its own (option A)
+1. Unplug the USB cable.
+2. Connect the LM2596S **OUT+** to the S3's **5V** pin as well.
+3. On the Devices page the `lidar-001` row should come back within about 30 s and stay at about 10 turns/s with health OK for several minutes.
+
+Slamtec advises 2 minutes of warm-up before measuring. Keep the C1 below 40 °C (not in direct sun).
+
+#### Mounting
+* The laser slice is about 3 cm above the C1's base. Mount it **level** with the base at about **0.92 m**, so the slice is at about 0.95 m: above beds, chair seats and tables, at the torso of a person standing or sitting.
+* Use a small shelf or bracket, a tripod with a small board, or furniture of the right height. The 4 screw holes underneath take **M2.5 screws at most 4 mm deep**; longer screws damage it. Do not screw a tripod's 1/4-inch screw into it.
+* Keep the S3 and the module **below** the C1's base, so nothing blocks the laser window. Keep glass and mirrors out of the slice where possible.
+* WARD-005 (simulated from the ward layout, 20 Nov 2026): against the south wall, centre 0.80 m from the west wall and 0.18 m out from the wall. It sees 99.5 % of the floor a person can stand on, including the whole door area. Any spot along the south wall 0.5–1.1 m from the west wall scores at least 98.8 %. Base square to the wall, the ▲ on top pointing north (into the room), cable towards the wall.
+
 ---
 
 ## 5. Anchor Power Supply Deployment Plan (Central 12V DC Bus)
@@ -345,6 +414,10 @@ For deploying anchors across a room without running multiple individual wall plu
 2. Use a digital multimeter to measure output voltage across `OUT+` and `OUT-` on each buck converter.
 3. Turn the brass adjustment screw until the multimeter reads **exactly 5.0V**.
 4. Only connect the ESP32 board **after** verifying the 5.0V reading to avoid overvoltage damage.
+
+### 5.3 Phase 10 additions
+* **LiDAR node:** one more LM2596S 5 V module on the 12 V bus feeds the RPLIDAR C1 (and, in the final installation, the S3's 5V pin). The fixed 5 V version of the LM2596S (no adjusting screw) holds 4.8–5.2 V, inside the C1's range. Keep its wires to the C1 short (under about 50 cm). The C1 adds up to about 0.65 A on the 12 V side while it starts and about 0.2 A while it runs, which a 12 V 2 A adapter covers together with three anchors.
+* **Anchors without a step-down module:** a WROOM or ESP32-S3 board runs from a phone charger (5 V, 1 A or more) through its USB port, and a XIAO ESP32-C3 through its USB-C port. Use a cable 2–3 m long to reach the mounting height. A power bank is fine for a quick test only: many switch off at such a low current, and they need daily recharging.
 
 ---
 
@@ -571,3 +644,44 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Laser pointer blocked by 3D room overlay | Raycast hit testing virtual wall/bed colliders before physical space. | Virtual room geometry colliders are bypassed during calibration mode; raycast queries physical depth sensor mesh directly. |
 | `[FATAL STARTUP ERROR] Could not connect to MySQL` on `npm start` | MySQL service is not running, or the settings in `edge_server/.env` are wrong. | 1. Start MySQL in XAMPP Control Panel.<br>2. Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` in `.env`.<br>3. Run `npm start` again. |
 | Heart rate shows `--` or stays on `Reading...` | The wristband reports no heart rate while the pulse signal is not clear (movement, loose strap, wrong spot); it never sends a guessed value. | Keep the arm still for about 10 s with the strap snug and the sensor on the outer side of the wrist, at the usual spot (or rest a fingertip on the sensor). The wristband's Serial Monitor shows each broadcast (`[BROADCAST …] BPM: …`). Background: `docs/test_records/heart-rate-measurement.md`. |
+| LiDAR node: `No answer from the RPLIDAR C1` on the Serial Monitor | Wiring or power of the C1. | Red/black on the 5 V module, yellow → GPIO18, green → GPIO17 (often swapped), the C1's black wire and the S3's GND joined. See 4.4. |
+| LiDAR node: `Health: ERROR`, or well below 10 turns/s | The C1's supply is too low; it switches its laser off to protect itself. | Short, thick wires from the LM2596S to the C1; 4.9 V or more at the C1's plug while it spins. |
+| LiDAR node not on the Devices page | No Wi-Fi or MQTT. | The Serial Monitor tells which: Wi-Fi name and password, or `rc=4/5` (MQTT login: copy the anchors' `secrets.h`), or `rc=2` (edge server older than Phase 10). |
+
+---
+
+## 9. Measuring Positioning Accuracy (Position Test, Phase 10)
+
+The position test measures how far the position shown on the maps is from where the wristband really is. The results are saved on the edge server (`edge_server/data/position_tests/`, one file per session) and can be downloaded as CSV for the thesis. A session is one measurement round, for example "Baseline 3 anchors" before a change and "LiDAR + 6 anchors" after it. Measure the same spots in both.
+
+### 9.1 Preparing the room
+1. Mark the spots on the floor with tape. Measure each from the south-west corner: **x** from the west wall, **y** from the south wall (the same origin as the ward editor).
+2. For WARD-005 (2.29 × 3.39 m):
+
+   | Spot | x, y (m) | Posture |
+   | :--- | :--- | :--- |
+   | P1 | 0.7, 0.4 | Standing |
+   | P2 | 0.7, 1.0 | Standing |
+   | P3 | 0.7, 1.6 | Standing |
+   | P4 | 0.6, 2.35 | Standing |
+   | P5 | 1.2, 2.35 | Standing |
+   | P6 | 1.9, 2.35 | Standing |
+   | P7 | 1.9, 3.0 (door entry) | Standing |
+   | Bed edge | 1.35, 1.0 | Sitting |
+   | Bed | 1.74, 1.0 | Lying |
+   | Table | 0.8, 2.45 | Sitting |
+
+3. The anchors must be calibrated (🎯 Calibrate Anchors) and the wristband switched on and visible on the Live Map.
+
+### 9.2 Running the test
+1. Dashboard → **Wards** → the ward → **Live Map** → **📏 Position test**.
+2. **Session:** ➕ New session, with a name such as `Baseline 3 anchors`. Later runs: choose the session in the list.
+3. **Wristband:** the wristband you wear.
+4. **Spot:** type the name (`P1`) and x, y, or press **📍 Pick on map** and click the spot. Spots used before in the session appear as buttons below.
+5. **Facing:** the direction your body faces (N = towards the north wall). **Posture:** standing, sitting or lying.
+6. **▶ Start run.** Walk to the spot within the countdown (10 s). One beep: recording starts. Stand still with your arm relaxed at your side for the recording time (20 s). Two beeps: done.
+7. The run appears in the table with its mean error, 95 % error and the share of readings in the correct zone. After a run facing N, E or S, the next facing is chosen for you, so the four runs of a spot need only ▶ Start run.
+8. A run spoiled by a mistake: 🗑 removes it. A run in progress: **✕ Cancel this run** (nothing is kept).
+9. At the end: **⬇ Summary CSV** (one row per run, then ALL, STANDING and SITTING+LYING) and **⬇ All readings CSV** (every reading: the position shown and its source, the Bluetooth-only position, the raw solver position before smoothing, the zone, the motion state and every anchor's RSSI).
+
+Each reading counts as available when the wristband had a position in this ward that was at most 3.5 s old. The error is the straight-line distance from the marked spot. The zones are the beds (0.3 m around them), the door (1 m into the room) and the rest of the room.
