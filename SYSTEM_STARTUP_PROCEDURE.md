@@ -407,6 +407,14 @@ Slamtec advises 2 minutes of warm-up before measuring. Keep the C1 below 40 °C 
 
 Ward editor → open the ward → Panel 3 → **📐 Plan Anchors & LiDAR**. The server plans for the layout in the editor, saved or not. Nothing is stored until you press **Apply to Ward** and then **Save Changes**.
 
+**Anchors per ward:** 3 to 12. Three is the least that gives a position, and 12 is the most the planner plans. A new ward starts with 6, placed for the default room. Panel 3 does not add a 13th or remove the 3rd, and the server does not store a ward with fewer than 3. The ward templates also have 6 anchors each, where the planner puts them.
+
+**Mounting:** flat on the wall on a 1–2 cm foam pad, **no tilt**. Board upright, antenna end up, components facing into the room, every board the same way. The only angle to set is the facing the planner gives (straight out from the wall). Why no tilt:
+* The modules' small antennas have no narrow beam to aim. Their strength changes by a few dB with direction, while the baseline measured 10–22 dB from the body alone.
+* From 2.30 m to a wrist at 0.85 m, the patient is 20–55° below the board in WARD-005 (55° at 1 m away, 36° at 2 m, 22° at 3.6 m). That spans the whole lower half of an upright board's coverage, so no single tilt fits.
+* Calibration (🎯 Calibrate Anchors) measures each board where it hangs, so a constant difference in antenna gain is absorbed. A flat mount is easy to repeat exactly on six boards and does not sag.
+* What matters more: 15 cm below the ceiling, 1–2 cm off the wall, and nothing within 5 cm of the antenna.
+
 **Settings**
 * **Anchors:** how many (3–12). The default is 6, or more if the ward already has more.
 * **Height:** Auto is 2.40 m, or 15 cm below a lower ceiling (WARD-005: 2.30 m). Never above 3.0 m.
@@ -446,6 +454,13 @@ Ward editor → open the ward → Panel 3 → **📐 Plan Anchors & LiDAR**. The
 | LiDAR | South wall, 0.98 m from the south-west corner, 0.18 m out from the wall |
 
 Expected error drops from 0.96 m to 0.81 m, and the floor with a clear line to 3 or more anchors goes from 96 % to 100 %.
+
+**Why A, B and C stay where they are:**
+* Replanning all six would reach 0.80 m instead of 0.81 m, while moving A, B and C by 0.2–0.7 m each.
+* The three are already close to the best spots for three anchors (0.96 m against 0.92 m).
+* They stay exactly as in the baseline measurement, so before and after differ only by what was added (anchors D–F and the LiDAR), not by moved boards.
+* All six anchors are calibrated again after D–F are mounted. The baseline showed A's and B's calibration made their distances hit the room-size limit.
+* A, B and C stay at 2.40 m as measured in the baseline; the 2.30 m rule applies to the new boards.
 
 ---
 

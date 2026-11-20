@@ -164,10 +164,10 @@
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                   <button class="btn btn-outline btn-sm" style="color: var(--primary); border-color: var(--primary); background: #EFF6FF; font-weight: 700;" onclick="openPlacementPlanner()" title="Suggest where to mount the anchors and the LiDAR, which way each faces, with an installation sheet to print">📐 Plan Anchors &amp; LiDAR</button>
-                  <button class="btn btn-outline btn-sm" onclick="addAnchor()">➕ Add BLE Anchor</button>
+                  <button class="btn btn-outline btn-sm" id="btn-add-anchor" onclick="addAnchor()">➕ Add BLE Anchor</button>
                 </div>
               </div>
-              <div class="card-subtitle">Specify physical (X, Y, Z) coordinates for the stationary anchors (ESP32-WROOM-32E, ESP32-S3 or XIAO ESP32-C3, same firmware). Mounting height: 2.40 m, or 15 cm below a lower ceiling; at most 3.0 m. <b>📐 Plan Anchors &amp; LiDAR</b> suggests the spots, which way each board faces, and prints an installation sheet.</div>
+              <div class="card-subtitle">Specify physical (X, Y, Z) coordinates for the stationary anchors (ESP32-WROOM-32E, ESP32-S3 or XIAO ESP32-C3, same firmware). 3 to 12 anchors per ward (6 for a new ward). Mounting height: 2.40 m, or 15 cm below a lower ceiling; at most 3.0 m; flat on the wall, no tilt. <b>📐 Plan Anchors &amp; LiDAR</b> suggests the spots, which way each board faces, and prints an installation sheet.</div>
 
               <div class="data-table-container">
                 <table class="data-table">

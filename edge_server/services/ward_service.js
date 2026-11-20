@@ -8,6 +8,8 @@ const path = require('path');
 const ipsService = require('./ips_service');
 const { getCalibration } = require('./kalman_filter');
 
+// Each template has 6 anchors at 2.40 m where the placement planner
+// (services/ips/placement.js) puts them for that layout.
 const WARD_TEMPLATES = {
   'L_SHAPED': {
     template_id: 'L_SHAPED',
@@ -25,9 +27,12 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-A1-04', bed_code: 'Bed 4', x: 4.70, y: 0.40, width: 0.90, length: 2.00, status: 'UNAVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 6.40, y: 2.30, z: 2.40, wall_location: 'E wall · 2.30 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 1.80, y: 3.35, z: 2.40, wall_location: 'Ensuite Bathroom A1 east · 0.15 m from SE', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 4.20, y: 0.00, z: 2.40, wall_location: 'S wall · 2.20 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor D', device_id: null, mac_address: '', x: 4.10, y: 4.80, z: 2.40, wall_location: 'N wall · 2.30 m from NE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor E', device_id: null, mac_address: '', x: 2.50, y: 0.00, z: 2.40, wall_location: 'S wall · 2.50 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor F', device_id: null, mac_address: '', x: 0.95, y: 3.20, z: 2.40, wall_location: 'Ensuite Bathroom A1 south · 0.85 m from SE', status: 'STANDBY' }
     ]
   },
   'RECTANGLE': {
@@ -44,9 +49,12 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-A1-04', bed_code: 'Bed 4', x: 4.70, y: 0.40, width: 0.90, length: 2.00, status: 'AVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.00, y: 2.40, z: 2.40, wall_location: 'W wall · 2.40 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 6.40, y: 2.40, z: 2.40, wall_location: 'E wall · 2.40 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 3.90, y: 4.80, z: 2.40, wall_location: 'N wall · 2.50 m from NE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor D', device_id: null, mac_address: '', x: 2.40, y: 0.00, z: 2.40, wall_location: 'S wall · 2.40 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor E', device_id: null, mac_address: '', x: 4.00, y: 0.00, z: 2.40, wall_location: 'S wall · 2.40 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor F', device_id: null, mac_address: '', x: 2.50, y: 4.80, z: 2.40, wall_location: 'N wall · 2.50 m from NW corner', status: 'STANDBY' }
     ]
   },
   'ISOLATION': {
@@ -63,9 +71,12 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-ISO-02', bed_code: 'Bed 2', x: 3.10, y: 1.50, width: 0.90, length: 2.00, status: 'AVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.40, y: 3.60, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 4.40, y: 3.60, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.40, y: 0.40, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 4.80, y: 1.30, z: 2.40, wall_location: 'E wall · 1.30 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 1.60, y: 2.55, z: 2.40, wall_location: 'Ensuite Bathroom east · 0.15 m from SE', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 3.20, y: 0.00, z: 2.40, wall_location: 'S wall · 1.60 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor D', device_id: null, mac_address: '', x: 1.70, y: 0.00, z: 2.40, wall_location: 'S wall · 1.70 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor E', device_id: null, mac_address: '', x: 1.60, y: 3.35, z: 2.40, wall_location: 'Ensuite Bathroom east · 0.65 m from NE', status: 'STANDBY' },
+      { anchor_id: 'Anchor F', device_id: null, mac_address: '', x: 4.80, y: 2.60, z: 2.40, wall_location: 'E wall · 1.40 m from NE corner', status: 'STANDBY' }
     ]
   }
 };

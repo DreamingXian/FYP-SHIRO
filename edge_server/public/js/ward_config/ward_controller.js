@@ -612,10 +612,15 @@
           { bed_id: `BED-${numStr}-01`, bed_code: 'Bed 1', x: 0.80, y: 2.40, width: 0.90, length: 2.00, status: 'AVAILABLE' },
           { bed_id: `BED-${numStr}-02`, bed_code: 'Bed 2', x: 0.80, y: 0.40, width: 0.90, length: 2.00, status: 'AVAILABLE' }
         ],
+        // 6 anchors where the placement planner puts them for this default room;
+        // after entering the real room, run 📐 Plan Anchors & LiDAR again
         anchors: [
-          { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-          { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-          { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+          { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.00, y: 2.40, z: 2.40, wall_location: 'W wall · 2.40 m from SW corner', status: 'STANDBY' },
+          { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 3.90, y: 4.80, z: 2.40, wall_location: 'N wall · 2.50 m from NE corner', status: 'STANDBY' },
+          { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.20, y: 0.00, z: 2.40, wall_location: 'S wall · 2.20 m from SW corner', status: 'STANDBY' },
+          { anchor_id: 'Anchor D', device_id: null, mac_address: '', x: 6.40, y: 2.40, z: 2.40, wall_location: 'E wall · 2.40 m from SE corner', status: 'STANDBY' },
+          { anchor_id: 'Anchor E', device_id: null, mac_address: '', x: 4.00, y: 0.00, z: 2.40, wall_location: 'S wall · 2.40 m from SE corner', status: 'STANDBY' },
+          { anchor_id: 'Anchor F', device_id: null, mac_address: '', x: 2.30, y: 4.80, z: 2.40, wall_location: 'N wall · 2.30 m from NW corner', status: 'STANDBY' }
         ],
         room_sensors: []
       };
@@ -1034,7 +1039,12 @@
       const tbody = document.getElementById('anchors-table-body');
       tbody.innerHTML = '';
       const list = currentWard.anchors || [];
-      document.getElementById('anchor-count-badge').innerText = `${list.length} Mounted`;
+      document.getElementById('anchor-count-badge').innerText = `${list.length} Mounted (3–12)`;
+      const addBtn = document.getElementById('btn-add-anchor');
+      if (addBtn) {
+        addBtn.disabled = list.length >= MAX_ANCHORS;
+        addBtn.title = list.length >= MAX_ANCHORS ? `A ward has at most ${MAX_ANCHORS} anchors` : '';
+      }
 
       if (list.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 14px;">No BLE anchors mounted. Trilateration requires at least 3 anchors.</td></tr>`;
@@ -1107,16 +1117,36 @@
       markUnsavedChanges();
     }
 
+    // Anchors per ward: 3 are the least for a position, 12 the most the placement planner plans
+    const MIN_ANCHORS = 3;
+    const MAX_ANCHORS = 12;
+
+    /** The mounting height rule: 2.40 m, or 15 cm below a lower ceiling, at most 3.0 m. */
+    function defaultAnchorHeight() {
+      const ceiling = parseFloat(currentWard.height_z) || 2.60;
+      return Math.round(Math.max(1.5, Math.min(2.40, ceiling - 0.15, 3.0)) * 100) / 100;
+    }
+
     function addAnchor() {
       if (!currentWard.anchors) currentWard.anchors = [];
-      const letter = String.fromCharCode(65 + currentWard.anchors.length);
+      if (currentWard.anchors.length >= MAX_ANCHORS) {
+        showToast(`A ward has at most ${MAX_ANCHORS} anchors.`, 'warning', 4000);
+        return;
+      }
+      // The first free letter: deleting Anchor B and adding again gives B back
+      const used = new Set(currentWard.anchors.map(a => a.anchor_id));
+      let letter = 'A';
+      for (let i = 0; i < 26; i++) {
+        letter = String.fromCharCode(65 + i);
+        if (!used.has(`Anchor ${letter}`)) break;
+      }
       currentWard.anchors.push({
         anchor_id: `Anchor ${letter}`,
         device_id: null,
         mac_address: '',
         x: 0.50,
-        y: 0.50,
-        z: 1.80,
+        y: 0.00,
+        z: defaultAnchorHeight(),
         wall_location: `Wall ${letter}`,
         status: 'STANDBY'
       });
@@ -1140,6 +1170,10 @@
 
     function deleteAnchor(index) {
       if (currentWard.anchors) {
+        if (currentWard.anchors.length <= MIN_ANCHORS) {
+          showToast(`A ward needs at least ${MIN_ANCHORS} anchors to position a patient. To move one, change its position instead.`, 'warning', 5000);
+          return;
+        }
         currentWard.anchors.splice(index, 1);
         renderAnchorsTable();
         updateWardStats();
@@ -1280,7 +1314,10 @@
       reader.onload = (e) => {
         try {
           const parsed = JSON.parse(e.target.result);
-          if (parsed.length_x && parsed.width_y) {
+          const anchorCount = Array.isArray(parsed.anchors) ? parsed.anchors.length : 0;
+          if (anchorCount > MAX_ANCHORS) {
+            showModal({ title: 'Too Many Anchors', message: `The file has ${anchorCount} anchors; a ward has at most ${MAX_ANCHORS}.`, type: 'danger', confirmText: 'Dismiss' });
+          } else if (parsed.length_x && parsed.width_y) {
             currentWard = parsed;
             populateWardUI();
             markUnsavedChanges();

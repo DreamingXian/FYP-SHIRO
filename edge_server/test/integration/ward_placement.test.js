@@ -77,6 +77,16 @@ describe('ward room sensors and the placement planner', () => {
     assert.deepEqual({ ...rows[0] }, { assigned_ward_id: null, availability_status: 'AVAILABLE' });
   });
 
+  test('a ward with fewer than 3 anchors is not stored; the planner still plans it', async () => {
+    const ward = await wardConfig();
+    const saved = await call('/api/ward/config', { method: 'POST', body: { ...ward, anchors: ward.anchors.slice(0, 2) } });
+    assert.equal(saved.status, 400);
+    assert.match((await saved.json()).error, /at least 3 anchors/);
+    assert.equal((await wardConfig()).anchors.length, ward.anchors.length, 'nothing changed');
+    const planned = await call('/api/ward/placement-plan', { method: 'POST', body: { layout: { ...ward, anchors: [] } } });
+    assert.equal(planned.status, 200, 'a layout still being drawn can be planned');
+  });
+
   test('the planner answers for an unsaved layout and stores nothing', async () => {
     const stored = await wardConfig();
     const layout = { ...stored, anchors: stored.anchors.slice(0, 3) };

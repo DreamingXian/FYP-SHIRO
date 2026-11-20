@@ -119,7 +119,7 @@ describe('anchor plan', () => {
         if (b !== a) assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= DEFAULTS.minSeparation - 1e-9, `${a.anchor_id}-${b.anchor_id} apart`);
       }
       if (a.x === 2.29) assert.ok(a.y < 2.57 - 0.2 || a.y > 3.36 + 0.2, 'not at the door');
-      assert.match(a.instruction, /m from the (north|south)-(east|west) corner\. Board centre 2\.30 m above the floor\. Upright, antenna end up/);
+      assert.match(a.instruction, /m from the (north|south)-(east|west) corner\. Board centre 2\.30 m above the floor\. Flat on the wall \(no tilt\), upright, antenna end up/);
       assert.ok(a.wall_location.length <= 64);
     }
     assert.ok(plan.suggested.mean_error_m < plan.current.mean_error_m, 'six anchors beat three');
@@ -160,12 +160,18 @@ describe('anchor plan', () => {
     assert.ok(plan.warnings.some(w => w.includes('Anchor D') && w.includes('removes')), plan.warnings.join(' | '));
   });
 
-  test('the ward templates are planned with 100 % of the floor in clear view of 3 anchors', () => {
+  test('the ward templates hold the 6 anchors the planner suggests for them', () => {
     for (const id of Object.keys(WARD_TEMPLATES)) {
-      const plan = planPlacement(template(id), { anchorCount: 6 });
-      assert.equal(plan.suggested.anchors.length, 6, id);
+      const t = template(id);
+      assert.equal(t.anchors.length, 6, id);
+      const plan = planPlacement(t, { anchorCount: 6 });
       assert.equal(plan.suggested.clear_to_3_pct, 100, id);
-      assert.ok(plan.suggested.mean_error_m < plan.current.mean_error_m, id);
+      assert.deepEqual(
+        plan.suggested.anchors.map(a => [a.x, a.y, a.z]).sort(),
+        t.anchors.map(a => [a.x, a.y, a.z]).sort(),
+        `${id}: the template's anchors are where the planner puts them`
+      );
+      assert.equal(plan.suggested.mean_error_m, plan.current.mean_error_m, id);
     }
   });
 

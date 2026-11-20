@@ -3,7 +3,7 @@ require('./no_database');
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { checkWardPayload } = require('../../controllers/ward_controller');
+const { checkWardPayload, checkAnchorCount } = require('../../controllers/ward_controller');
 const { HttpError } = require('../../utils/http');
 
 /** A plan as the ward editor sends it. */
@@ -88,5 +88,16 @@ describe('ward plan', () => {
     refuses(plan({ beds: [1, 2] }), 'beds');
     refuses(plan({ anchors: new Array(33).fill({ anchor_id: 'Anchor A' }) }), 'anchors');
     refuses(plan({ door: [] }), 'door');
+  });
+
+  test('a ward is stored with 3 to 12 anchors', () => {
+    const anchors = (n) => Array.from({ length: n }, (_, i) => ({ anchor_id: `Anchor ${String.fromCharCode(65 + i)}`, x: i, y: 0, z: 2.4 }));
+    assert.doesNotThrow(() => checkWardPayload(plan({ anchors: anchors(12) })));
+    refuses(plan({ anchors: anchors(13) }), 'anchors');
+    assert.doesNotThrow(() => checkAnchorCount(plan({ anchors: anchors(3) })));
+    for (const n of [0, 2]) {
+      assert.throws(() => checkAnchorCount(plan({ anchors: anchors(n) })), (err) => err instanceof HttpError && err.status === 400 && /at least 3 anchors/.test(err.message), `${n} anchors`);
+    }
+    assert.throws(() => checkAnchorCount(plan({ anchors: undefined })), HttpError);
   });
 });

@@ -421,11 +421,25 @@ const nextLetterId = (used) => {
   return `Anchor ${used.size + 1}`;
 };
 
-/** The facing of an existing anchor: into the room from the nearest wall. */
-function facingOfPoint(x, y, L, W) {
-  const d = [{ f: 0, v: y }, { f: 180, v: W - y }, { f: 90, v: x }, { f: 270, v: L - x }];
-  d.sort((a, b) => a.v - b.v);
-  return d[0].f;
+/**
+ * The surface an anchor already in the ward is on, and so the way it faces:
+ * a room wall it touches, else the face of a tall obstacle it touches (then
+ * that obstacle does not block it), else the nearest room wall.
+ */
+function surfaceOfPoint(x, y, L, W, obstacles) {
+  const tol = 0.03;
+  const walls = [{ f: 0, v: y }, { f: 180, v: W - y }, { f: 90, v: x }, { f: 270, v: L - x }].sort((a, b) => a.v - b.v);
+  if (walls[0].v <= tol) return { facing: walls[0].f, mountedOn: null };
+  for (const o of obstacles) {
+    if (!MOUNTABLE_OBSTACLES.includes(o.type)) continue;
+    const withinX = x >= o.x - tol && x <= o.x + o.w + tol;
+    const withinY = y >= o.y - tol && y <= o.y + o.l + tol;
+    if (withinX && Math.abs(y - (o.y + o.l)) <= tol) return { facing: 0, mountedOn: o.id };
+    if (withinX && Math.abs(y - o.y) <= tol) return { facing: 180, mountedOn: o.id };
+    if (withinY && Math.abs(x - (o.x + o.w)) <= tol) return { facing: 90, mountedOn: o.id };
+    if (withinY && Math.abs(x - o.x) <= tol) return { facing: 270, mountedOn: o.id };
+  }
+  return { facing: walls[0].f, mountedOn: null };
 }
 
 // ----------------------------------------------------------------------------
@@ -626,11 +640,18 @@ function planPlacement(layout, options = {}) {
 
   const existing = (layout.anchors || []).filter(a => Number.isFinite(Number(a.x)) && Number.isFinite(Number(a.y)));
   const existingMembers = existing.map(a => {
-    const facing = facingOfPoint(Number(a.x), Number(a.y), L, W);
+    const x = Number(a.x);
+    const y = Number(a.y);
+    const { facing, mountedOn } = surfaceOfPoint(x, y, L, W, obstacles);
     const z = Number.isFinite(Number(a.z)) ? Number(a.z) : height;
-    return { anchor: a, x: Number(a.x), y: Number(a.y), z, facing, ...anchorInformation({ x: Number(a.x), y: Number(a.y), z, facing }, points, obstacles, cfg, a.mountedOnObsId) };
+    return { anchor: a, x, y, z, facing, ...anchorInformation({ x, y, z, facing }, points, obstacles, cfg, mountedOn) };
   });
-  const current = existingMembers.length ? evaluator.summary(existingMembers) : null;
+  const current = existingMembers.length
+    ? {
+        ...evaluator.summary(existingMembers),
+        positions: existingMembers.map(m => ({ anchor_id: m.anchor.anchor_id, x: m.x, y: m.y, z: round2(m.z), facing_deg: m.facing }))
+      }
+    : null;
 
   const candidates = anchorCandidates(L, W, layout, obstacles, height, candidateStep)
     .map(c => ({ ...c, facing: c.surface.facing, ...anchorInformation({ x: c.x, y: c.y, z: c.z, facing: c.surface.facing }, points, obstacles, cfg, c.surface.mountedOn) }));
@@ -682,7 +703,7 @@ function planPlacement(layout, options = {}) {
       x: s.x, y: s.y, z: s.z, facing_deg: s.facing, facing_name: compassName(s.facing),
       wall_location: place.short, action, moved_m: moved,
       instruction: `${place.text.charAt(0).toUpperCase()}${place.text.slice(1)}. Board centre ${s.z.toFixed(2)} m above the floor. ` +
-        `Upright, antenna end up, components facing into the room (${compassName(s.facing)}, ${s.facing}°).`
+        `Flat on the wall (no tilt), upright, antenna end up, components facing into the room (${compassName(s.facing)}, ${s.facing}°).`
     });
   });
   planned.sort((a, b) => a.anchor_id.localeCompare(b.anchor_id, 'en', { numeric: true }));

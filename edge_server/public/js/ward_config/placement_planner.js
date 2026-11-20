@@ -318,7 +318,9 @@
 
     // Anchors with the way they face
     const anchors = view === 'current'
-      ? (ward.anchors || []).map(a => ({ anchor_id: a.anchor_id, x: Number(a.x), y: Number(a.y), facing_deg: facingFromWall(Number(a.x), Number(a.y), L, W), action: 'KEEP' }))
+      ? (plan.current && plan.current.positions
+          ? plan.current.positions.map(a => ({ ...a, action: 'KEEP' }))
+          : (ward.anchors || []).map(a => ({ anchor_id: a.anchor_id, x: Number(a.x), y: Number(a.y), facing_deg: facingFromWall(Number(a.x), Number(a.y), L, W), action: 'KEEP' })))
       : plan.suggested.anchors;
     anchors.forEach(a => {
       const [px, py] = toPx(a.x, a.y);
@@ -407,7 +409,7 @@
       <table><thead><tr><th></th><th>Device</th><th>Action</th><th>Where and how</th></tr></thead><tbody>${planRowsHtml}${lidarRowHtml}</tbody></table>
       <ul>
         <li>Distances are measured along the wall from the corner named, to the centre of the board or the LiDAR. Heights are from the floor.</li>
-        <li>Anchors: board upright, antenna end up, components facing into the room, 1–2 cm off the wall (a foam pad), nothing within 5 cm of the antenna. A XIAO ESP32-C3 needs its FPC antenna clipped on, stuck upright above the board.</li>
+        <li>Anchors: flat on the wall on a 1–2 cm foam pad, no tilt; board upright, antenna end up, components facing into the room, nothing within 5 cm of the antenna. Mount every board the same way. A XIAO ESP32-C3 needs its FPC antenna clipped on, stuck upright above the board.</li>
         <li>LiDAR: level, on a shelf or bracket; nothing within 5 cm of it at the height of its window. Check the direction of the ▲ with a phone compass.</li>
         <li>Expected error with these anchors: ${escapeHtml(plan.suggested.mean_error_m)} m on average (lower bound from the signal strength; real readings are worse).</li>
         <li>Afterwards: bind the new boards in the ward editor, Save Changes, then 🎯 Calibrate Anchors on the Live Map.</li>
