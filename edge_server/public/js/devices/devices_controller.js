@@ -909,12 +909,22 @@ async function openManualEnrollModal() {
   setTimeout(window.updateSuggestedManualId, 50);
 }
 
+// The boards an anchor can be (Phase 10: not enough WROOM-32E boards for six anchors)
+const ANCHOR_MODELS = ['ESP32-WROOM-32E', 'ESP32-S3 (N16R8)', 'Seeed Studio XIAO ESP32-C3'];
+
 /**
- * Opens modal to edit device service availability and maintenance.
+ * Opens modal to edit device service availability, hardware model and maintenance.
  */
 function openEditDeviceModal(deviceId) {
   const d = cachedFleet.find(dev => dev.device_id === deviceId);
   if (!d) return;
+
+  // An anchor's board is chosen from the list; other devices keep the model they were enrolled with
+  const models = d.hardware_model && !ANCHOR_MODELS.includes(d.hardware_model) ? [d.hardware_model, ...ANCHOR_MODELS] : ANCHOR_MODELS;
+  const optionsHtml = models.map(m => `<option value="${escapeHtml(m)}" ${m === d.hardware_model ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
+  const modelField = d.device_type === 'ANCHOR'
+    ? `<select class="form-control" id="edit-dev-model">${optionsHtml}</select>`
+    : `<input type="text" class="form-control" value="${escapeHtml(d.hardware_model || '')}" readonly style="background:#F1F5F9;">`;
 
   const isBound = Boolean(d.bound_patient_name);
   const isAssignedWard = Boolean(d.assigned_ward_id);
@@ -971,6 +981,13 @@ function openEditDeviceModal(deviceId) {
         <input type="text" class="form-control" id="edit-dev-fw" value="${escapeHtml(d.firmware_version || 'v1.0.0')}">
       </div>
     </div>
+
+    <div class="form-grid-2">
+      <div class="form-group">
+        <label class="form-label" style="font-weight:600;">Hardware Model</label>
+        ${modelField}
+      </div>
+    </div>
   `;
 
   safeShowModal({
@@ -983,6 +1000,7 @@ function openEditDeviceModal(deviceId) {
       const availEl = document.getElementById('edit-dev-availability');
       const availability = availEl ? availEl.value : (d.availability_status || 'AVAILABLE');
       const fw = document.getElementById('edit-dev-fw')?.value.trim();
+      const modelEl = document.getElementById('edit-dev-model');
 
       try {
         const res = await fetch('/api/devices/update', {
@@ -991,7 +1009,8 @@ function openEditDeviceModal(deviceId) {
           body: JSON.stringify({
             device_id: d.device_id,
             availability_status: availability,
-            firmware_version: fw
+            firmware_version: fw,
+            ...(modelEl ? { hardware_model: modelEl.value } : {})
           })
         });
 
