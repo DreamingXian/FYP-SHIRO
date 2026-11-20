@@ -339,6 +339,16 @@ There were not enough ESP32-WROOM-32E boards for six anchors, so ESP32-S3 and XI
 
 Mounting, for every anchor the same way: board upright against the wall (1–2 cm off it, for example on a foam pad), components facing into the room, antenna end pointing **up**, nothing within 5 cm of the antenna (cables, step-down module, metal). On a XIAO C3, stick the FPC antenna upright above the board. Boards with different antennas read a wristband a few dB stronger or weaker; each anchor's own calibration value (🎯 Calibrate Anchors) takes care of that.
 
+**S3 and C3 need anchor firmware V4.1 or later** (21 Nov 2026). The Arduino-ESP32 core 3.3 uses a different Bluetooth stack on them (NimBLE) than on the WROOM-32E (Bluedroid). With V4, a XIAO C3 restarted about every 25 s (`abort() was called at PC … on core 0`) and passed on about half as many readings as a WROOM: the Bluetooth library kept every device it heard in memory until the memory ran out, and waited for each wristband's scan response. V4.1 scans passively on these boards and keeps no such list. The WROOM-32E runs the same code as before and does not need flashing again.
+
+What V4.1 prints at start and every 30 s:
+```
+Bluetooth: NimBLE, passive scan.            (WROOM-32E: Bluedroid, active scan.)
+[ANCHOR AC:27:6E:... HEALTH] 30 s: 180 wristband advertisements (6.0/s), 950 Bluetooth reports in all. Free memory 112000 bytes (lowest 98000). Wi-Fi -55 dBm, MQTT connected.
+```
+* **Free memory** must stay about the same from one line to the next. If it keeps falling, something still leaks: report it.
+* **Wristband advertisements per second** should be close to a WROOM's next to it (the wristband sends 6–10 a second). Compare the two boards on the same spot.
+
 ---
 
 ### 4.4 Board 3: LiDAR Room Sensor Node (ESP32-S3 + RPLIDAR C1, Phase 10)
@@ -742,6 +752,7 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Ward editor, LiDAR: "Empty room not learned: Only N turns arrived" | The node stopped sending turns while learning (power, Wi-Fi). | Check the Devices page (about 10 turns/s), then learn again. Nothing was saved. |
 | Ward editor, LiDAR: "⚠️ … read farther than the empty room" | The LiDAR was knocked, turned or moved since the empty room was learned (or large furniture was taken out). | Put it back where the panel says; 🎯 Align to walls, Save Changes, 🧹 Learn empty room again. |
 | Ward editor, LiDAR: the live scan's walls do not line up with the drawn walls | x, y or heading in Panel 3b differ from where the LiDAR stands, or the room size in the layout is wrong. | 🎯 Align to walls; if it warns about the heading, set the heading the warning gives and align again. |
+| Anchor (XIAO C3 or ESP32-S3) restarts every half minute with `abort() was called at PC … on core 0`, loses MQTT, passes on few readings | Anchor firmware V4 on a NimBLE board: the Bluetooth library ran out of memory. | Flash anchor firmware V4.1 or later (4.3, "Other anchor boards"); then 🎯 Calibrate Anchors again. |
 | LiDAR node not on the Devices page | No Wi-Fi or MQTT. | The Serial Monitor tells which: Wi-Fi name and password, or `rc=4/5` (MQTT login: copy the anchors' `secrets.h`), or `rc=2` (edge server older than Phase 10). |
 
 ---

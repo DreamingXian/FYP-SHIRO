@@ -1,8 +1,11 @@
 /*
  * =========================================================================================
- *   SHIRO Anchor Node - Combined RSSI Localization & Vitals Gateway (V4 - Protocol 2)
+ *   SHIRO Anchor Node - Combined RSSI Localization & Vitals Gateway (V4.1 - Protocol 2)
  *   Hardware: ESP32-WROOM-32E (or generic ESP32); also ESP32-S3 and Seeed XIAO ESP32-C3
  *             (with its FPC antenna attached), unchanged. Partition scheme "Huge APP" on all.
+ *   Bluetooth: Arduino-ESP32 3.3 uses Bluedroid on the ESP32 and NimBLE on the ESP32-S3
+ *             and ESP32-C3. On NimBLE the scan is passive and keeps no list of devices
+ *             (4.1, see onResult); on Bluedroid it is unchanged from V4.
  *   Function: Continuously scans for SHIRO-WRISTBAND BLE broadcasts, records raw RSSI
  *             for IPS multilateration, unpacks physiological/kinematic telemetry,
  *             and streams unified telemetry packets to the Edge Server over Wi-Fi/MQTT.
@@ -84,6 +87,9 @@ HeardTag trackedTags[MAX_TRACKED_TAGS];
 int trackedTagCount = 0;
 SemaphoreHandle_t tagTableMutex = nullptr;
 volatile uint32_t droppedPackets = 0;            // table full or lock busy
+// Written by the Bluetooth task only, read by loop() for the 30 s health line
+volatile uint32_t bluetoothReports = 0;          // every advertisement reported by the scanner
+volatile uint32_t wristbandReports = 0;          // of those, from a SHIRO wristband
 
 volatile bool pendingCmd = false;
 char pendingTargetMac[24] = {0};
@@ -121,6 +127,23 @@ void evictSilentTags(unsigned long now) {
 // -----------------------------------------------------------------------------
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
+    bluetoothReports = bluetoothReports + 1;
+    handleAdvertisement(advertisedDevice);
+#if defined(CONFIG_NIMBLE_ENABLED)
+    // NimBLE (ESP32-S3, ESP32-C3): during a scan that never ends, the library keeps
+    // every device it has heard in a list that is never emptied, and adds the
+    // device's service UUIDs to it again with every advertisement. Near phones,
+    // which change their address every few minutes, the memory runs out within a
+    // minute and the board aborts (seen on a XIAO C3 on 21 Nov 2026: a std::vector
+    // of BLEUUID growing in BLEAdvertisedDevice::parseAdvertisement). So the device
+    // is removed again as soon as it has been handled. Checked against core 3.3.13:
+    // after onResult() returns, BLEScan::handleGAPEvent() uses the device only when
+    // the result limit is 0, which is not the default (0xFF), so it is not touched again.
+    if (pBLEScan) pBLEScan->erase(advertisedDevice.getAddress());
+#endif
+  }
+
+  void handleAdvertisement(BLEAdvertisedDevice& advertisedDevice) {
     bool isWristband = false;
     bool decoded = false;
     bool unsupported = false;
@@ -169,6 +192,7 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     }
 
     if (idx >= 0) {
+      wristbandReports = wristbandReports + 1;
       HeardTag& tag = trackedTags[idx];
       tag.rssi = rssi;
       tag.lastHeardMs = now;
@@ -443,7 +467,7 @@ void setup() {
   delay(1500);
 
   Serial.println("\n==========================================================");
-  Serial.println("  SHIRO Wall Anchor - Dual RSSI & Telemetry Gateway (V4)");
+  Serial.println("  SHIRO Wall Anchor - Dual RSSI & Telemetry Gateway (V4.1)");
   Serial.println("  Universal Firmware - Identity Managed by Edge Server");
   Serial.printf("  Telemetry packet version %u\n", (unsigned)shiro::PACKET_VERSION);
   Serial.println("==========================================================");
@@ -474,7 +498,17 @@ void setup() {
   BLEDevice::init("SHIRO-ANCHOR");
   pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);
-  pBLEScan->setActiveScan(true);  // Request scan response
+#if defined(CONFIG_NIMBLE_ENABLED)
+  // Passive: NimBLE reports a device that accepts scan requests only once its scan
+  // response has arrived as well, and with Wi-Fi sharing the radio many are missed
+  // (a C3 passed on about half as many readings as a WROOM-32E). The wristband's
+  // telemetry is in the advertisement itself; only its name is in the scan response.
+  pBLEScan->setActiveScan(false);
+  Serial.println("Bluetooth: NimBLE, passive scan.");
+#else
+  pBLEScan->setActiveScan(true);  // Bluedroid: request the scan response (the wristband's name)
+  Serial.println("Bluetooth: Bluedroid, active scan.");
+#endif
   pBLEScan->setInterval(100);     // Scan interval: 100ms
   pBLEScan->setWindow(99);        // Scan window: 99ms
 
@@ -562,7 +596,26 @@ void loop() {
     }
   }
 
-  // 4. Report dropped Bluetooth packets, at most every 10 seconds
+  // 4. Health line every 30 s: how many wristband readings arrive, and whether the
+  //    free memory stays level (it must not fall run after run)
+  static unsigned long lastHealthReport = 0;
+  static uint32_t lastBluetoothReports = 0;
+  static uint32_t lastWristbandReports = 0;
+  if (now - lastHealthReport >= 30000) {
+    const uint32_t bt = bluetoothReports;
+    const uint32_t wb = wristbandReports;
+    const float seconds = lastHealthReport == 0 ? now / 1000.0f : (now - lastHealthReport) / 1000.0f;
+    Serial.printf("[ANCHOR %s HEALTH] %.0f s: %lu wristband advertisements (%.1f/s), %lu Bluetooth reports in all. "
+                  "Free memory %lu bytes (lowest %lu). Wi-Fi %d dBm, MQTT %s.\n",
+                  anchorMac, seconds, (unsigned long)(wb - lastWristbandReports), seconds > 0 ? (wb - lastWristbandReports) / seconds : 0.0f,
+                  (unsigned long)(bt - lastBluetoothReports), (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(),
+                  (int)WiFi.RSSI(), mqttClient.connected() ? "connected" : "NOT connected");
+    lastHealthReport = now;
+    lastBluetoothReports = bt;
+    lastWristbandReports = wb;
+  }
+
+  // 5. Report dropped Bluetooth packets, at most every 10 seconds
   static unsigned long lastDropReport = 0;
   static uint32_t reportedDrops = 0;
   if (droppedPackets != reportedDrops && (now - lastDropReport >= 10000)) {
