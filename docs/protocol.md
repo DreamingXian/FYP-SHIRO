@@ -198,12 +198,14 @@ The layout is defined once for the firmware (`scan_frame.h`) and once for the se
 ### Status message: `shiro/<ward>/lidar/status`, JSON, every 2 seconds
 
 ```json
-{ "lidar_mac": "10:B2:C3:D4:E5:F6", "state": "SCANNING", "node_fw": "1.0.0", "model": 65, "lidar_fw": "1.01", "lidar_hw": 18,
+{ "lidar_mac": "10:B2:C3:D4:E5:F6", "state": "SCANNING", "node_fw": "1.0.1", "model": 65, "lidar_fw": "1.02", "lidar_hw": 18,
   "serial": "…32 hex digits…", "health": "OK", "health_code": 0, "turns_per_s": 10.0, "points_per_turn": 500, "valid_per_turn": 480,
-  "turn_ms": 100, "sent": 120, "send_failed": 0, "overwritten": 0, "bad_bytes": 0, "restarts": 0, "wifi_rssi": -55, "uptime_s": 30 }
+  "turn_ms": 100, "bytes_per_s": 25000, "samples_per_s": 5000, "sent": 120, "send_failed": 0, "overwritten": 0, "bad_bytes": 0,
+  "restarts": 0, "wifi_rssi": -55, "uptime_s": 30 }
 ```
 
-- `state`: `STARTING`, `SCANNING`, `NO_ANSWER` (the LiDAR does not answer: wiring or power) or `FAULT`.
+- `state`: `STARTING` (also while the motor spins up, until the first complete turn), `SCANNING`, `NO_ANSWER` (the LiDAR does not answer: wiring or power) or `FAULT`.
+- `bytes_per_s`, `samples_per_s`: what arrives from the LiDAR at all, for diagnosis (0 while the motor is not at speed). The server ignores them for now.
 - `health`: the LiDAR's own report, `OK`, `WARNING` or `ERROR`. The C1 switches its laser off for a fault, for example a supply below 4.8 V.
 - `lidar_mac` must be the MAC address of the sender's client ID. Unknown fields are ignored, and implausible values are stored as null.
 

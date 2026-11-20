@@ -41,7 +41,7 @@
 #error "secrets.h needs SHIRO_MQTT_USER and SHIRO_MQTT_PASSWORD: the same values as MQTT_ANCHOR_USER and MQTT_ANCHOR_PASSWORD in edge_server/.env (see secrets.example.h)"
 #endif
 
-static const char* NODE_FIRMWARE = "1.0.0";
+static const char* NODE_FIRMWARE = "1.0.1";
 
 // =============================================================================
 // 1. Settings
@@ -64,8 +64,14 @@ HardwareSerial& lidarPort = Serial1;
 
 // A turn needs at least this many samples to be sent (about 500 at 10 Hz)
 static const uint16_t MIN_SAMPLES_PER_TURN = 150;
-// No complete turn for this long: the LiDAR is restarted
+// After the scan command the motor first has to reach its speed: the C1 sends
+// no scan data before that, and takes longer when its supply is low. The first
+// complete turn may take this long.
+static const uint32_t SPIN_UP_TIMEOUT_MS = 10000;
+// Once turns arrive: no complete turn for this long restarts the LiDAR
 static const uint32_t NO_TURN_RESTART_MS = 2000;
+// After a stop for missing turns: the motor comes to rest before the next start
+static const uint32_t RESTART_PAUSE_MS = 3000;
 // No answer at all: try again after this long
 static const uint32_t RETRY_AFTER_MS = 5000;
 
@@ -108,6 +114,8 @@ volatile uint32_t lastTurnMs = 0;
 volatile uint32_t badBytes = 0;
 volatile uint32_t lidarRestarts = 0;
 volatile uint32_t turnsOverwritten = 0;     // a turn replaced the previous one before loop() sent it
+volatile uint32_t scanBytesTotal = 0;       // scan bytes received since power-on
+volatile uint32_t samplesTotal = 0;         // valid samples decoded since power-on
 
 // Written by loop() only
 uint32_t framesSent = 0;
@@ -299,58 +307,112 @@ static bool bringUpLidar() {
     Serial.println("[LIDAR] The scan did not start. Retrying in 5 s.");
     return false;
   }
-  lidarState = LS_SCANNING;
-  Serial.println("[LIDAR] Scanning (the motor spins up; Slamtec advises 2 minutes of warm-up before measuring).");
+  // Stays STARTING until the first complete turn: the motor is still spinning up
+  Serial.printf("[LIDAR] Scan started. Waiting for the motor to reach its speed (up to %lu s).\n",
+                (unsigned long)(SPIN_UP_TIMEOUT_MS / 1000));
   return true;
+}
+
+// Says on the Serial Monitor why no turn arrived, from what did arrive.
+static void explainMissingTurns(bool hadTurns, uint32_t waitedMs, uint32_t bytes, uint32_t samples, uint32_t turnStarts) {
+  const float seconds = waitedMs / 1000.0f;
+  if (hadTurns) {
+    Serial.printf("[LIDAR] Turns stopped: no complete turn for %.1f s.\n", seconds);
+    Serial.println("[LIDAR]   If this repeats, measure red to black at the C1's plug while it spins (4.8-5.2 V).");
+  } else if (bytes == 0) {
+    Serial.printf("[LIDAR] No scan data at all %.1f s after the scan command.\n", seconds);
+    Serial.println("[LIDAR]   The C1 sends data only once its motor runs at speed, and switches its laser off");
+    Serial.println("[LIDAR]   when its supply is too low. Measure red to black AT THE C1's PLUG while the motor");
+    Serial.println("[LIDAR]   turns: Slamtec specifies 4.8-5.2 V, and above 5 V when working normally.");
+    Serial.println("[LIDAR]   Below 4.8 V: shorter, thicker supply wires, screwed straight into the 5 V module.");
+  } else if (samples == 0) {
+    Serial.printf("[LIDAR] %lu bytes arrived in %.1f s but none was a valid sample: the signal is garbled.\n",
+                  (unsigned long)bytes, seconds);
+    Serial.println("[LIDAR]   Check the yellow wire on GPIO18, the shared GND, and keep the signal wires away from the supply wires.");
+  } else {
+    Serial.printf("[LIDAR] %lu samples arrived in %.1f s but no complete turn (%lu turn starts): the motor turns too slowly.\n",
+                  (unsigned long)samples, seconds, (unsigned long)turnStarts);
+    Serial.println("[LIDAR]   Usually a supply below 4.8 V at the C1's plug while it spins.");
+  }
+  Serial.printf("[LIDAR] Restarting the LiDAR in %lu s.\n", (unsigned long)(RESTART_PAUSE_MS / 1000));
 }
 
 static void lidarTask(void*) {
   static scanframe::Turn turn;   // static: 1.4 KB, kept off the task stack
   rplidar::SampleStream stream;
   uint16_t sequence = 0;
+  bool running = false;          // the scan command was accepted
+  bool hadTurns = false;         // complete turns arrived since that command
+  bool firstTurn = true;
+  uint32_t scanStartedMs = 0;
   uint32_t turnStartedMs = 0;
   uint32_t lastBoundaryMs = 0;
-  bool firstTurn = true;
+  uint32_t bytesSinceStart = 0;
+  uint32_t samplesSinceStart = 0;
+  uint32_t turnStartsSinceStart = 0;
 
   for (;;) {
-    if (lidarState != LS_SCANNING) {
+    if (!running) {
       if (!bringUpLidar()) {
         vTaskDelay(pdMS_TO_TICKS(RETRY_AFTER_MS));
         continue;
       }
+      running = true;
+      hadTurns = false;
+      firstTurn = true;
       stream.reset();
       turn.clear();
-      firstTurn = true;
-      turnStartedMs = lastBoundaryMs = millis();
+      bytesSinceStart = samplesSinceStart = turnStartsSinceStart = 0;
+      scanStartedMs = turnStartedMs = lastBoundaryMs = millis();
+      continue;
+    }
+
+    const uint32_t now = millis();
+    const bool spinUpFailed = !hadTurns && now - scanStartedMs > SPIN_UP_TIMEOUT_MS;
+    const bool turnsStopped = hadTurns && now - lastBoundaryMs > NO_TURN_RESTART_MS;
+    if (spinUpFailed || turnsStopped) {
+      lidarRestarts = lidarRestarts + 1;
+      explainMissingTurns(hadTurns, now - (hadTurns ? lastBoundaryMs : scanStartedMs),
+                          bytesSinceStart, samplesSinceStart, turnStartsSinceStart);
+      stopLidar();
+      lidarState = LS_STARTING;
+      running = false;
+      vTaskDelay(pdMS_TO_TICKS(RESTART_PAUSE_MS));
       continue;
     }
 
     int available = lidarPort.available();
     if (available <= 0) {
-      if (millis() - lastBoundaryMs > NO_TURN_RESTART_MS) {
-        lidarRestarts = lidarRestarts + 1;
-        Serial.println("[LIDAR] No complete turn for 2 s: restarting the LiDAR.");
-        stopLidar();
-        lidarState = LS_STARTING;
-      }
       vTaskDelay(1);
       continue;
     }
+    bytesSinceStart += (uint32_t)available;
+    scanBytesTotal = scanBytesTotal + (uint32_t)available;
 
     while (available-- > 0) {
       rplidar::Sample sample;
       if (!stream.push((uint8_t)lidarPort.read(), sample)) continue;
+      samplesSinceStart++;
+      samplesTotal = samplesTotal + 1;
       if (sample.start) {
-        const uint32_t now = millis();
+        turnStartsSinceStart++;
+        const uint32_t t = millis();
         // The first turn after starting is incomplete: never sent
         if (!firstTurn && turn.samples >= MIN_SAMPLES_PER_TURN) {
-          const uint32_t took = now - turnStartedMs;
+          const uint32_t took = t - turnStartedMs;
           handOver(turn, sequence++, (uint16_t)(took > 65535 ? 65535 : took));
+          if (!hadTurns) {
+            hadTurns = true;
+            lidarState = LS_SCANNING;
+            Serial.printf("[LIDAR] Scanning: first complete turn %.1f s after the scan command (%u points). "
+                          "Slamtec advises 2 minutes of warm-up before measuring.\n",
+                          (t - scanStartedMs) / 1000.0f, (unsigned)turn.samples);
+          }
         }
         firstTurn = false;
         turn.clear();
-        turnStartedMs = now;
-        lastBoundaryMs = now;
+        turnStartedMs = t;
+        lastBoundaryMs = t;
       }
       turn.add(sample.angleDeg, sample.distanceMm);
     }
@@ -456,6 +518,8 @@ void reconnectMQTT(unsigned long now) {
 void reportStatus(unsigned long now) {
   static unsigned long lastReport = 0;
   static uint32_t turnsAtLastReport = 0;
+  static uint32_t bytesAtLastReport = 0;
+  static uint32_t samplesAtLastReport = 0;
   if (now - lastReport < STATUS_INTERVAL_MS) return;
   const float seconds = (now - lastReport) / 1000.0f;
   lastReport = now;
@@ -463,6 +527,13 @@ void reportStatus(unsigned long now) {
   const uint32_t turns = turnsDone;
   const float turnsPerSecond = seconds > 0 ? (turns - turnsAtLastReport) / seconds : 0.0f;
   turnsAtLastReport = turns;
+  // What arrives from the LiDAR at all (a turn needs about 2500 bytes, 500 samples)
+  const uint32_t bytes = scanBytesTotal;
+  const uint32_t samples = samplesTotal;
+  const unsigned long bytesPerSecond = seconds > 0 ? (unsigned long)((bytes - bytesAtLastReport) / seconds) : 0;
+  const unsigned long samplesPerSecond = seconds > 0 ? (unsigned long)((samples - samplesAtLastReport) / seconds) : 0;
+  bytesAtLastReport = bytes;
+  samplesAtLastReport = samples;
 
   LidarInfo info;
   if (xSemaphoreTake(sharedMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
@@ -475,25 +546,28 @@ void reportStatus(unsigned long now) {
   const char* health = info.health == 255 ? "UNKNOWN" : rplidar::healthName(info.health);
   const int wifiRssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
 
-  Serial.printf("[LIDAR NODE %s] %s | %.1f turns/s | %lu points/turn (%lu with a distance) | health %s | sent %lu, failed %lu | Wi-Fi %d dBm | MQTT %s\n",
+  Serial.printf("[LIDAR NODE %s] %s | %.1f turns/s | %lu points/turn (%lu with a distance) | data %lu bytes/s, %lu samples/s | health %s | restarts %lu | sent %lu, failed %lu | Wi-Fi %d dBm | MQTT %s\n",
                 nodeMac, stateName(state), turnsPerSecond,
-                (unsigned long)lastSamplesPerTurn, (unsigned long)lastValidPerTurn, health,
+                (unsigned long)lastSamplesPerTurn, (unsigned long)lastValidPerTurn,
+                bytesPerSecond, samplesPerSecond, health, (unsigned long)lidarRestarts,
                 (unsigned long)framesSent, (unsigned long)framesFailed, wifiRssi,
                 mqttClient.connected() ? "connected" : "not connected");
 
   if (!mqttClient.connected()) return;
-  char payload[512];
+  char payload[640];
   const int n = snprintf(payload, sizeof(payload),
                          "{\"lidar_mac\":\"%s\",\"state\":\"%s\",\"node_fw\":\"%s\","
                          "\"model\":%u,\"lidar_fw\":\"%u.%02u\",\"lidar_hw\":%u,\"serial\":\"%s\","
                          "\"health\":\"%s\",\"health_code\":%u,"
                          "\"turns_per_s\":%.1f,\"points_per_turn\":%lu,\"valid_per_turn\":%lu,\"turn_ms\":%lu,"
+                         "\"bytes_per_s\":%lu,\"samples_per_s\":%lu,"
                          "\"sent\":%lu,\"send_failed\":%lu,\"overwritten\":%lu,\"bad_bytes\":%lu,\"restarts\":%lu,"
                          "\"wifi_rssi\":%d,\"uptime_s\":%lu}",
                          nodeMac, stateName(state), NODE_FIRMWARE,
                          info.model, info.firmwareMajor, info.firmwareMinor, info.hardware, info.serial,
                          health, info.healthCode,
                          turnsPerSecond, (unsigned long)lastSamplesPerTurn, (unsigned long)lastValidPerTurn, (unsigned long)lastTurnMs,
+                         bytesPerSecond, samplesPerSecond,
                          (unsigned long)framesSent, (unsigned long)framesFailed, (unsigned long)turnsOverwritten,
                          (unsigned long)badBytes, (unsigned long)lidarRestarts,
                          wifiRssi, (unsigned long)(now / 1000));

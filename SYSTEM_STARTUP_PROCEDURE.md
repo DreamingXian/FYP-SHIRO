@@ -350,7 +350,7 @@ The LiDAR measures distances all around itself in one flat slice, about 10 turns
 * **Settings:** copy `firmware/shiro_anchor_node/secrets.h` into `firmware/shiro_lidar_node/` (the same Wi-Fi and MQTT values; the node uses the anchors' MQTT login).
 
 #### Wiring
-Unplug the C1's cable from its green USB board (pull the plug, not the wires). The green board is only for connecting the C1 to a PC; keep it for troubleshooting. Push male jumper pins into the plug's holes and tape them. Connect with everything switched off:
+Unplug the C1's cable from its green USB board (pull the plug, not the wires). The green board is only for connecting the C1 to a PC; keep it for troubleshooting. Plug a strip of five standard 2.54 mm **male pin headers** into the plug: their square pins grip the plug's contacts firmly, while loose round jumper pins add resistance. Solder or screw the wires to the header pins. Connect with everything switched off:
 
 | C1 wire | Connects to |
 | :--- | :--- |
@@ -360,6 +360,8 @@ Unplug the C1's cable from its green USB board (pull the plug, not the wires). T
 | Green (RX, S3 → C1) | S3 **GPIO17** |
 
 The C1's signals are 3.3 V and connect directly. It needs 4.8–5.2 V, up to **800 mA while starting**, and 230–260 mA while scanning (Slamtec datasheet C1M1-R2, rev 1.0). Never power it from the S3's 3V3 pin.
+
+**The supply wires decide whether it works.** At 800 mA, every ohm in the red or black wire costs 0.8 V. Use wires of at least 0.3 mm² (22 AWG), as short as possible (under 30 cm), screwed straight into the module's OUT+ and OUT− terminals: no breadboard and no chain of jumper wires. Give the S3's GND its own wire to OUT−. Then measure red to black **at the C1's plug while the motor turns**: Slamtec specifies at least 4.8 V and above 5 V in normal operation, and the C1 switches its laser off when the supply is low. On 20 Nov 2026, with jumper wires, the module gave 5.08 V but only 4.18 V reached the C1 while it was spinning, and the C1 sent no scan data.
 
 #### Powering the S3
 * **While testing (option B):** the S3 runs from its USB-C port marked **COM**: the PC when you want the Serial Monitor, otherwise a phone charger. Its 5V pin stays unconnected.
@@ -373,14 +375,17 @@ The C1's signals are 3.3 V and connect directly. It needs 4.8–5.2 V, up to **8
 #### Test, stage 1: on the PC (option B)
 With the LM2596S module powered and the S3 on USB, the Serial Monitor shows:
 ```
-[LIDAR] Found: model 0x.., firmware ..., hardware ...
+[LIDAR] Found: model 0x41, firmware 1.02, hardware 18.
 [LIDAR] Health: OK (code 0).
-[LIDAR] Scanning (...)
+[LIDAR] Scan started. Waiting for the motor to reach its speed (up to 10 s).
+[LIDAR] Scanning: first complete turn ... s after the scan command (... points). ...
 [OK] Wi-Fi Connected!
-[LIDAR NODE ..] SCANNING | 10.0 turns/s | 500 points/turn (... with a distance) | health OK | sent ..., failed 0 | Wi-Fi -55 dBm | MQTT connected
+[LIDAR NODE ..] SCANNING | 10.0 turns/s | 500 points/turn (... with a distance) | data ... bytes/s, 5000 samples/s | health OK | restarts 0 | sent ..., failed 0 | Wi-Fi -55 dBm | MQTT connected
 ```
 * `No answer from the RPLIDAR C1`: check red/black on the module, yellow → GPIO18, green → GPIO17 (swapped yellow and green is the most common mistake) and the shared ground.
-* `Health: ERROR` or a speed well below 10 turns/s: the supply is too low at the C1's plug. With a multimeter, red to black should read 4.9 V or more while it spins.
+* `No scan data at all ... after the scan command` (and `data 0 bytes/s`): the motor never reached its speed or the C1 switched its laser off. Almost always the supply at the C1's plug: see the wiring note above.
+* `... bytes arrived ... but none was a valid sample`: a garbled signal. Check the yellow wire, the shared ground, and keep the signal wires away from the supply wires.
+* `Health: ERROR`, a speed well below 10 turns/s, or `restarts` counting up: the supply is too low at the C1's plug. With a multimeter, red to black there should read 4.8 V or more while it spins, normally above 5 V.
 * `rc=2: client ID refused`: the edge server is older than Phase 10.
 * Dashboard → **Devices**: the node appears in the discovery radar as **🌀 LiDAR** with turns per second and LiDAR health. Enroll it (it becomes `lidar-001`).
 
@@ -416,7 +421,7 @@ For deploying anchors across a room without running multiple individual wall plu
 4. Only connect the ESP32 board **after** verifying the 5.0V reading to avoid overvoltage damage.
 
 ### 5.3 Phase 10 additions
-* **LiDAR node:** one more LM2596S 5 V module on the 12 V bus feeds the RPLIDAR C1 (and, in the final installation, the S3's 5V pin). The fixed 5 V version of the LM2596S (no adjusting screw) holds 4.8–5.2 V, inside the C1's range. Keep its wires to the C1 short (under about 50 cm). The C1 adds up to about 0.65 A on the 12 V side while it starts and about 0.2 A while it runs, which a 12 V 2 A adapter covers together with three anchors.
+* **LiDAR node:** one more LM2596S 5 V module on the 12 V bus feeds the RPLIDAR C1 (and, in the final installation, the S3's 5V pin). The fixed 5 V version of the LM2596S (no adjusting screw) holds 4.8–5.2 V, inside the C1's range. Keep its wires to the C1 short (under 30 cm, at least 0.3 mm², screwed into the module; see 4.4). The C1 adds up to about 0.65 A on the 12 V side while it starts and about 0.2 A while it runs, which a 12 V 2 A adapter covers together with three anchors.
 * **Anchors without a step-down module:** a WROOM or ESP32-S3 board runs from a phone charger (5 V, 1 A or more) through its USB port, and a XIAO ESP32-C3 through its USB-C port. Use a cable 2–3 m long to reach the mounting height. A power bank is fine for a quick test only: many switch off at such a low current, and they need daily recharging.
 
 ---
@@ -645,7 +650,7 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | `[FATAL STARTUP ERROR] Could not connect to MySQL` on `npm start` | MySQL service is not running, or the settings in `edge_server/.env` are wrong. | 1. Start MySQL in XAMPP Control Panel.<br>2. Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` in `.env`.<br>3. Run `npm start` again. |
 | Heart rate shows `--` or stays on `Reading...` | The wristband reports no heart rate while the pulse signal is not clear (movement, loose strap, wrong spot); it never sends a guessed value. | Keep the arm still for about 10 s with the strap snug and the sensor on the outer side of the wrist, at the usual spot (or rest a fingertip on the sensor). The wristband's Serial Monitor shows each broadcast (`[BROADCAST …] BPM: …`). Background: `docs/test_records/heart-rate-measurement.md`. |
 | LiDAR node: `No answer from the RPLIDAR C1` on the Serial Monitor | Wiring or power of the C1. | Red/black on the 5 V module, yellow → GPIO18, green → GPIO17 (often swapped), the C1's black wire and the S3's GND joined. See 4.4. |
-| LiDAR node: `Health: ERROR`, or well below 10 turns/s | The C1's supply is too low; it switches its laser off to protect itself. | Short, thick wires from the LM2596S to the C1; 4.9 V or more at the C1's plug while it spins. |
+| LiDAR node: `No scan data at all`, `Health: ERROR`, well below 10 turns/s, or restarts counting up | The C1's supply is too low at its plug; it sends no data until its motor is at speed and switches its laser off to protect itself. | Short wires of at least 0.3 mm² screwed straight into the LM2596S, pin headers in the C1's plug, no breadboard; 4.8 V or more at the C1's plug while it spins (normally above 5 V). See 4.4. |
 | LiDAR node not on the Devices page | No Wi-Fi or MQTT. | The Serial Monitor tells which: Wi-Fi name and password, or `rc=4/5` (MQTT login: copy the anchors' `secrets.h`), or `rc=2` (edge server older than Phase 10). |
 
 ---
