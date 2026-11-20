@@ -2,7 +2,8 @@
 // Ward editor: LiDAR room sensor panel (Phase 10)
 // Where each LiDAR stands in the ward, the height of its base, which way the ▲
 // on its top points, and which enrolled LiDAR node it is. Saved with the ward
-// (room_sensors). The placement planner fills it in too.
+// (room_sensors). The placement planner fills it in too. Under each LiDAR, the
+// tools of room_sensor_live.js: live scan, learn empty room, align to walls.
 // =============================================================================
 (function () {
   let roomSensorDevices = [];
@@ -45,14 +46,16 @@
     if (badge) badge.innerText = `${list.length} Placed`;
     if (list.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 14px;">No LiDAR placed. Add one, or let 📐 Plan Anchors &amp; LiDAR suggest a spot.</td></tr>';
+      if (window.onRoomSensorsRendered) window.onRoomSensorsRendered();
       return;
     }
     tbody.innerHTML = list.map((s, index) => {
       const xVal = Number(s.x || 0).toFixed(2);
       const yVal = Number(s.y || 0).toFixed(2);
       const hVal = Number(s.base_height !== undefined ? s.base_height : 0.92).toFixed(2);
-      const heading = Math.round(Number(s.heading_deg) || 0);
+      const heading = (((Number(s.heading_deg) || 0) % 360) + 360) % 360;
       const optionsHtml = deviceOptions(index, s.device_id);   // built from escaped parts
+      const toolsHtml = window.roomSensorToolsHtml ? window.roomSensorToolsHtml(index) : '';   // built from escaped parts
       return `<tr>
         <td><input type="text" class="form-control" style="width: 92px; padding: 4px; font-weight: 700; color: #7C3AED;" maxlength="32" value="${escapeHtml(s.sensor_id || '')}" onchange="updateRoomSensor(${index}, 'sensor_id', this.value)"></td>
         <td><select class="form-control" style="padding: 4px 8px; font-size: 12px; font-weight: 600;" onchange="updateRoomSensor(${index}, 'device_id', this.value)">${optionsHtml}</select></td>
@@ -67,16 +70,22 @@
           </div>
         </td>
         <td>
-          <select class="form-control" style="padding: 4px 8px; font-size: 12px;" onchange="updateRoomSensor(${index}, 'heading_deg', this.value)">
-            <option value="0" ${heading === 0 ? 'selected' : ''}>0° north</option>
-            <option value="90" ${heading === 90 ? 'selected' : ''}>90° east</option>
-            <option value="180" ${heading === 180 ? 'selected' : ''}>180° south</option>
-            <option value="270" ${heading === 270 ? 'selected' : ''}>270° west</option>
-          </select>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <input type="number" step="0.1" min="0" max="359.9" class="form-control" style="width: 64px; padding: 4px;" value="${heading.toFixed(1)}" title="0° north, 90° east, 180° south, 270° west" onchange="updateRoomSensor(${index}, 'heading_deg', this.value)">
+            <span style="font-size: 11px; color: var(--text-muted);">° ${escapeHtml(compassWord(heading))}</span>
+          </div>
         </td>
         <td><button class="btn btn-danger-outline btn-sm" onclick="deleteRoomSensor(${index})">🗑</button></td>
-      </tr>`;
+      </tr>
+      <tr><td colspan="5" style="padding: 2px 6px 10px; border-top: none;">${toolsHtml}</td></tr>`;
     }).join('');
+    if (window.onRoomSensorsRendered) window.onRoomSensorsRendered();
+  }
+
+  /** A compass word for a heading: north, north-east, ... */
+  function compassWord(deg) {
+    const names = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+    return names[Math.round((((deg % 360) + 360) % 360) / 45) % 8];
   }
 
   async function fetchRoomSensorDevices() {
@@ -115,7 +124,9 @@
     if (field === 'x' || field === 'y' || field === 'base_height') {
       s[field] = Math.max(0, Math.round((parseFloat(value) || 0) * 100) / 100);
     } else if (field === 'heading_deg') {
-      s.heading_deg = ((Math.round(parseFloat(value) || 0) % 360) + 360) % 360;
+      // Tenths of a degree: Align to walls finds the heading to about that
+      s.heading_deg = Math.round(((((parseFloat(value) || 0) % 360) + 360) % 360) * 10) / 10;
+      renderRoomSensorsTable();
     } else if (field === 'device_id') {
       s.device_id = (value || '').trim() || null;
       renderRoomSensorsTable();

@@ -35,6 +35,8 @@ const RULES = [
   ['POST', '/api/ward/calibration/start', ACCESS.ADMIN],
   ['POST', '/api/ward/calibration/apply', ACCESS.ADMIN],
   ['POST', '/api/ward/calibration/reset', ACCESS.ADMIN],
+  ['POST', '/api/room-sensors/learn', ACCESS.ADMIN],          // stores a LiDAR's empty room
+  ['POST', '/api/room-sensors/learn/cancel', ACCESS.ADMIN],
 
   // What the headset reads and does
   ['GET', '/api/ward/list', ACCESS.STAFF_OR_HEADSET],

@@ -514,6 +514,8 @@ function redrawWardMap() {
   mapCanvas.height = parentH;
 
   renderWardToCanvas(mapCanvas, window.currentWard, { bgColor: '#FFFFFF' });
+  // A LiDAR's live scan, when switched on in Panel 3b (room_sensor_live.js)
+  if (window.drawRoomSensorOverlay) window.drawRoomSensorOverlay(mapCanvas, window.currentWard);
 
   const scaleText = document.getElementById('canvas-scale-text');
   if (scaleText && window.currentWard) {

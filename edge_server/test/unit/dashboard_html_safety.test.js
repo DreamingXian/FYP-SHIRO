@@ -150,6 +150,8 @@ const SAFE_EXPRESSIONS = [
   /\.length$/, /^w\.(beds|anchors|obstacles) \? w\.\1\.length : 0$/, /^validPoints\.length > 50 \? 2 : 3\.5$/,
   /^[\w.]+ \? '[^'`$]*' : '[^'`$]*'$/, /^[\w.]+ === '[A-Z]+' \? '[^']*' : '[^']*'$/,
   /^(textColor|barColor|batColor|deltaColor|dotColor|strokeColor|normalBgColor|badgeClass|icon|typePill|typeBadge|statusBadge|availBadge|riskBadge|powerDisplay|avatarHtml|photoImg|bedInfo|secondaryActionBtn|liveMapBtn|nodeDisplay|statusBadgeHtml|optionsHtml|wardOptions|bedsList|anchorsList|obstaclesList|hrSvg|spo2Svg|gridLines|inUseDetail|inUseNote|genderLabel|pathD|startTimeStr|endTimeStr|timeStr|rotLabel|uuidShort|hVal|xVal|yVal|zVal|wVal|lVal|avgHR|minHR|maxHR|avgSpO2|minSpO2|maxSpO2|unit)$/,
+  // ward_config/room_sensor_panel.js and room_sensor_live.js: LiDAR tools built in code from escaped parts
+  /^(toolsHtml|alignHtml|learnButtonHtml|warningsHtml)$/,
   // ward_config/placement_planner.js: dialog parts built in code from escaped parts
   /^(countOptionsHtml|heightOptionsHtml|tableRowsHtml|roomOnlyHtml|currentHtml|suggestedHtml|boardNote|movedNote|bandsHtml|planRowsHtml|lidarRowHtml)$/,
   // incident_history.js: markup built in code from escaped parts

@@ -211,6 +211,29 @@ The layout is defined once for the firmware (`scan_frame.h`) and once for the se
 
 The server shows the node on the Devices page (device type `ROOM_SENSOR`, IDs `lidar-001`, …) and on `GET /api/room-sensors/status`.
 
+### In the ward: live scan, empty room, alignment (Phase 10, step 5a)
+
+A node placed in a ward (Panel 3b of the ward editor, saved as `ward_room_sensors`) is used in that ward's coordinates. A return at distance `d` in direction `i` lies at compass bearing `heading + (i + 0.5) × 0.5°` from the LiDAR's `(x, y)`, so at `x + d·sin(bearing)`, `y + d·cos(bearing)` (0° north = +y, 90° east = +x).
+
+| Address | Who | What |
+| :--- | :--- | :--- |
+| `GET /api/room-sensors/scan?ward_id=&device_id=` | clinician | The newest turn (`distances_mm`, 720 values), `foreground_bins` (directions closer than the empty room, null when none is learned), the empty room's summary, the moved check, learning progress. The ward editor polls it three times a second while 👁 Live scan is on. |
+| `POST /api/room-sensors/learn` `{ ward_id, device_id, countdown_s?, duration_s? }` | admin | Learns the empty room: after the countdown (default 15 s, at most 60), records the turns for `duration_s` (default 20, 5–60). Needs the node in the ward's saved setup and sending turns. Fails, and saves nothing, with fewer than half the expected turns (10 a second). |
+| `POST /api/room-sensors/learn/cancel` `{ device_id }` | admin | Stops learning; nothing is saved. |
+| `POST /api/room-sensors/align` `{ layout, sensor: { device_id, x, y, heading_deg, base_height? } }` | clinician | Where the LiDAR is from its scan of the walls: the x, y and heading (within 0.30 m and 10° of the given ones) at which the returns lie on the drawn walls and the obstacles at least as tall as the scan slice. Uses the learned empty room, else the median of the last 30 turns. Computes only. Reports the fit (`before`/`after`: share of returns within 5 cm of a surface, median distance), a quality (`GOOD`, `FAIR`, `POOR`) and warnings when another heading or a mirrored scan fits clearly better. |
+
+**Empty room** (table `room_sensor_backgrounds`, by ward and node; `services/room_sensor/background.js`): per direction the median distance, the 10th percentile ("near") and the share of turns with a return. A return is **new in the room** when it is more than 10 cm closer than the nearest "near" of its direction and the two next to it, or where none of the three had a surface. People only ever make returns closer. When more than 10 % of the steady directions (a return in at least 60 % of turns) read more than 15 cm farther than the empty room, averaged over about 2 s, the LiDAR has probably been knocked or turned: the server logs it and sends `ROOM_SENSOR_MOVED`, until it is under 5 % again.
+
+WebSocket messages to the dashboards:
+
+| `type` | Fields |
+| :--- | :--- |
+| `ROOM_SENSOR_LEARNING` | `learning`: state (`COUNTDOWN`, `RECORDING`, `SAVING`, `DONE`, `FAILED`), turns, result or error |
+| `ROOM_SENSOR_BACKGROUND` | `ward_id`, `device_id`, `background`: learned_at, learned_by, turns, coverage_pct, unsteady_pct |
+| `ROOM_SENSOR_MOVED` | `ward_id`, `device_id`, `suspected` (true/false), `farther_pct` |
+
+**Recorded with the position test:** when the ward has a placed LiDAR, every turn from the start of a run's countdown to its end is saved in `edge_server/data/position_tests/<session>-run<n>.lidar.json.gz`, with where the LiDAR stands, its empty room and the wristband's positions four times a second (`services/ips/lidar_record.js` describes the file). Removing a run removes its file.
+
 ## 6. Changing the protocol
 
 1. Change `shiro_packet.h` in the wristband folder and copy it over the anchor's copy. For an incompatible change, raise `PACKET_VERSION`.

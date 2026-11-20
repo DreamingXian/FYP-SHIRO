@@ -142,7 +142,7 @@
       : currentSession.runs.map(r => `
         <tr style="border-bottom:1px solid var(--border-light);">
           <td style="padding:3px 2px;">${escapeHtml(r.number)}</td>
-          <td>${escapeHtml(r.posture === 'STANDING' ? r.spot : `${r.spot} (${r.posture.toLowerCase()})`)}</td>
+          <td>${escapeHtml(r.posture === 'STANDING' ? r.spot : `${r.spot} (${r.posture.toLowerCase()})`)}${r.lidar && r.lidar.turns > 0 ? ' <span title="LiDAR turns recorded with this run">🌀</span>' : ''}</td>
           <td>${escapeHtml(r.facing || '–')}</td>
           <td>${escapeHtml(metres(r.stats.final.mean))}</td>
           <td>${escapeHtml(metres(r.stats.final.p95))}</td>
@@ -151,8 +151,10 @@
         </tr>`).join('');
 
     const all = currentSession.summary ? currentSession.summary.all : null;
+    const lidarRuns = currentSession.runs.filter(r => r.lidar && r.lidar.turns > 0).length;
     summary.textContent = all
-      ? `All runs: mean error ${metres(all.final.mean)}, 95% within ${metres(all.final.p95)}, correct zone ${percent(all.zone_ok_pct)}, position available ${percent(all.available_pct)}.`
+      ? `All runs: mean error ${metres(all.final.mean)}, 95% within ${metres(all.final.p95)}, correct zone ${percent(all.zone_ok_pct)}, position available ${percent(all.available_pct)}.` +
+        (lidarRuns ? ` LiDAR turns recorded with ${lidarRuns} of ${currentSession.runs.length} runs (🌀).` : '')
       : 'No runs yet.';
 
     chips.innerHTML = (currentSession.spots || []).map(s =>

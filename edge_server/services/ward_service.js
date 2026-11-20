@@ -195,6 +195,13 @@ function roomSensorFromRow(r) {
  * Replaces a ward's room sensors and binds their devices to the ward. A save
  * without a room_sensors list (an older client or JSON file) keeps the stored ones.
  */
+/** The LiDAR manager reads the placements (and empty rooms) again after a change. */
+function reloadRoomSensors() {
+  require('./room_sensor/room_sensor_manager').instance().reload().catch(err => {
+    logger.warn('[WARD SERVICE] Error refreshing the LiDAR placements:', err.message);
+  });
+}
+
 async function replaceRoomSensors(conn, wardId, list) {
   let sensors = list;
   if (!Array.isArray(sensors)) {
@@ -349,6 +356,7 @@ async function saveWardConfig(data) {
     ipsService.reloadWardAnchorsCache().catch(err => {
       logger.warn('[WARD SERVICE] Error refreshing IPS cache:', err.message);
     });
+    reloadRoomSensors();
     return { success: true, ward_id: wardId };
   } catch (err) {
     await conn.rollback();
@@ -408,6 +416,7 @@ async function deleteWard(wardId) {
     await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ?", [wardId]);
     await conn.query('DELETE FROM ward_rooms WHERE ward_id = ?', [wardId]);
     await conn.commit();
+    reloadRoomSensors();
     return { success: true, ward_id: wardId };
   } catch (err) {
     await conn.rollback();

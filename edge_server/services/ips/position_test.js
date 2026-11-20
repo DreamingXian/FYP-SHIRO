@@ -11,6 +11,9 @@
 // A session holds the runs of one measurement round (for example "baseline,
 // 3 anchors"). Sessions are saved as JSON in edge_server/data/position_tests/
 // (git-ignored) after every run, and can be downloaded as CSV.
+// When the ward has a LiDAR, its turns are recorded with each run, from the
+// start of the countdown to the end, in a file next to the session
+// (lidar_record.js), for developing and checking LiDAR positioning offline.
 // No patient data: a wristband ID and positions only.
 // =============================================================================
 const fs = require('fs');
@@ -18,6 +21,7 @@ const path = require('path');
 const { buildZones, zoneAt } = require('./zones');
 const { csvCell } = require('../alerts/incident_csv');
 const { HttpError } = require('../../utils/http');
+const lidarRecord = require('./lidar_record');
 
 const SAMPLE_INTERVAL_MS = 250;
 const DEFAULT_DURATION_S = 20;
@@ -40,7 +44,26 @@ const DEFAULT_DIR = process.env.POSITION_TEST_DIR || path.join(__dirname, '..', 
 // ----------------------------------------------------------------------------
 function fileStore(dir = DEFAULT_DIR) {
   const fileOf = (id) => path.join(dir, `${id}.json`);
+  const lidarFileOf = (id, number) => {
+    if (!SESSION_ID.test(String(id)) || !Number.isInteger(number) || number < 1) throw new Error('bad session ID or run number');
+    return path.join(dir, `${id}-run${number}.lidar.json.gz`);
+  };
   return {
+    /** The LiDAR turns of a run (bytes from lidar_record.pack). */
+    saveLidar(id, number, bytes) {
+      fs.mkdirSync(dir, { recursive: true });
+      const file = lidarFileOf(id, number);
+      fs.writeFileSync(`${file}.tmp`, bytes);
+      fs.renameSync(`${file}.tmp`, file);
+    },
+    loadLidar(id, number) {
+      const file = lidarFileOf(id, number);
+      return fs.existsSync(file) ? fs.readFileSync(file) : null;
+    },
+    deleteLidar(id, number) {
+      const file = lidarFileOf(id, number);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    },
     save(session) {
       fs.mkdirSync(dir, { recursive: true });
       const file = fileOf(session.id);
@@ -70,8 +93,12 @@ function fileStore(dir = DEFAULT_DIR) {
 
 function memoryStore() {
   const sessions = new Map();
+  const lidar = new Map();
   const copy = (s) => JSON.parse(JSON.stringify(s));
   return {
+    saveLidar: (id, number, bytes) => { lidar.set(`${id}#${number}`, Buffer.from(bytes)); },
+    loadLidar: (id, number) => lidar.get(`${id}#${number}`) || null,
+    deleteLidar: (id, number) => { lidar.delete(`${id}#${number}`); },
     save: (s) => { sessions.set(s.id, copy(s)); },
     load: (id) => (sessions.has(id) ? copy(sessions.get(id)) : null),
     list: () => [...sessions.values()].map(copy)
@@ -166,13 +193,14 @@ function summaryCsv(session) {
     'Samples', 'Available (%)', 'Mean error (m)', 'Median error (m)', '95% error (m)', 'Largest error (m)',
     'Within 0.5 m (%)', 'Within 1.0 m (%)', 'Within 1.5 m (%)', 'Zone correct (%)',
     'Bluetooth mean error (m)', 'Bluetooth 95% error (m)', 'Bluetooth zone correct (%)', 'Raw mean error (m)',
-    'Source BLE (%)', 'Source LIDAR (%)', 'Source HEADSET (%)', 'Mean anchors heard'];
+    'Source BLE (%)', 'Source LIDAR (%)', 'Source HEADSET (%)', 'Mean anchors heard', 'LiDAR turns recorded'];
   const line = (label, run, st) => [session.id, session.ward_id, label, run ? run.spot : '', run ? run.posture : '', run ? (run.facing || '') : '',
     run ? run.true_x : '', run ? run.true_y : '', run ? run.true_zone : '',
     st.samples, st.available_pct, st.final.mean, st.final.median, st.final.p95, st.final.max,
     st.final.within_0_5, st.final.within_1_0, st.final.within_1_5, st.zone_ok_pct,
     st.ble.mean, st.ble.p95, st.ble_zone_ok_pct, st.raw.mean,
-    st.sources.BLE ?? 0, st.sources.LIDAR ?? 0, st.sources.HEADSET ?? 0, st.mean_anchors];
+    st.sources.BLE ?? 0, st.sources.LIDAR ?? 0, st.sources.HEADSET ?? 0, st.mean_anchors,
+    run ? (run.lidar ? run.lidar.turns : '') : ''];
   const rows = session.runs.map(run => line(run.number, run, run.stats));
   const summary = sessionSummary(session);
   rows.push(line('ALL', null, summary.all), line('STANDING', null, summary.standing), line('SITTING+LYING', null, summary.sitting_lying));
@@ -200,14 +228,15 @@ function intInRange(value, name, min, max, fallback) {
  * @param {Function} deps.getPosition        (tagId) => position as ips_service.getTagPosition, or null
  * @param {Function} deps.getAnchorReadings  (tagId) => [{anchor_id, rssi, raw_rssi, distance, age_ms}]
  * @param {Function} deps.getWardLayout      async (wardId) => ward_service.getWardConfig result, or null
+ * @param {object}   [deps.lidar]            { onFrame(listener) => stop, sensorsOfWard(wardId) => [placement with background] }
  * @param {object}   [deps.store]            fileStore() or memoryStore()
  * @param {Function} [deps.now]
  * @param {Function} [deps.setInterval]
  * @param {Function} [deps.clearInterval]
  */
-function createPositionTest({ getPosition, getAnchorReadings = () => [], getWardLayout, store = fileStore(), now = Date.now,
+function createPositionTest({ getPosition, getAnchorReadings = () => [], getWardLayout, lidar = null, store = fileStore(), now = Date.now,
   setInterval: startTimer = setInterval, clearInterval: stopTimer = clearInterval } = {}) {
-  let active = null;       // { session, run, zoneMap, timer }
+  let active = null;       // { session, run, zoneMap, timer, lidar }
   let lastFinished = null; // { session_id, run }
 
   function takeSample(run, zoneMap, t) {
@@ -253,12 +282,45 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
     run.samples.push(sample);
   }
 
+  /** The wristband's position for the LiDAR record, four times a second from the start of the countdown. */
+  function trackTag(rec, run, t) {
+    const pos = getPosition(run.tag_id);
+    rec.track.push(pos
+      ? {
+          t_ms: t - run.starts_at, status: pos.status || null, source: pos.source || 'BLE',
+          x: round(pos.x), y: round(pos.y),
+          ble_x: pos.has_ble === false ? null : round(pos.ble_x), ble_y: pos.has_ble === false ? null : round(pos.ble_y),
+          raw_x: round(pos.raw_x), raw_y: round(pos.raw_y), motion_state: pos.motion_state || null
+        }
+      : { t_ms: t - run.starts_at, status: 'NO_POSITION' });
+  }
+
+  /** Saves the LiDAR turns of a finished run next to the session; the run notes how many. */
+  function saveLidar(session, run, rec) {
+    rec.stop();
+    run.lidar = { sensors: rec.sensors.map(s => s.device_id), turns: rec.frames.length, empty_room: rec.sensors.some(s => !!s.background) };
+    if (rec.frames.length === 0) return;
+    try {
+      store.saveLidar(session.id, run.number, lidarRecord.pack({
+        session_id: session.id, run: run.number, ward_id: run.ward_id, tag_id: run.tag_id,
+        created_at: run.created_at, starts_at: run.starts_at, ends_at: run.ends_at,
+        truth: { x: run.true_x, y: run.true_y, zone: run.true_zone, spot: run.spot, posture: run.posture, facing: run.facing },
+        sensors: rec.sensors.map(lidarRecord.sensorEntry),
+        frames: rec.frames,
+        track: rec.track
+      }));
+    } catch (err) {
+      run.lidar.error = `not saved: ${err.message}`;
+    }
+  }
+
   function finish() {
     const { session, run, timer } = active;
     stopTimer(timer);
     run.state = 'DONE';
     run.finished_at = now();
     run.stats = summarise(run.samples);
+    if (active.lidar) saveLidar(session, run, active.lidar);
     session.runs.push(run);
     session.updated_at = run.finished_at;
     session.summary = sessionSummary(session);
@@ -271,6 +333,7 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
     if (!active) return;
     const t = now();
     const { run, zoneMap } = active;
+    if (active.lidar && t <= run.ends_at) trackTag(active.lidar, run, t);
     if (t < run.starts_at) return;
     if (run.state === 'COUNTDOWN') run.state = 'RECORDING';
     if (t <= run.ends_at) takeSample(run, zoneMap, t);
@@ -364,13 +427,23 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
 
       const zoneMap = buildZones(layout);
       const run = {
-        number: session.runs.length + 1,
+        // One more than the highest so far: unique even after a run was discarded (its LiDAR file is named by it)
+        number: session.runs.reduce((max, r) => Math.max(max, r.number), 0) + 1,
         ward_id: wardId, spot, tag_id: tagId, true_x: round(x), true_y: round(y), true_zone: zoneAt(zoneMap, x, y).id,
         facing, posture, duration_s: durationS, countdown_s: countdownS,
         created_at: t, starts_at: t + countdownS * 1000, ends_at: t + countdownS * 1000 + durationS * 1000,
         started_by: startedBy, state: countdownS > 0 ? 'COUNTDOWN' : 'RECORDING', samples: [], stats: null
       };
-      active = { session, run, zoneMap, timer: null };
+      active = { session, run, zoneMap, timer: null, lidar: null };
+      const sensors = lidar ? lidar.sensorsOfWard(wardId).filter(s => s.device_id) : [];
+      if (sensors.length > 0) {
+        const ids = new Set(sensors.map(s => s.device_id));
+        const rec = { sensors, frames: [], track: [], stop: () => {} };
+        rec.stop = lidar.onFrame(({ deviceId, frame, at }) => {
+          if (ids.has(deviceId) && at >= run.created_at && at <= run.ends_at) rec.frames.push(lidarRecord.frameEntry(at - run.starts_at, deviceId, frame));
+        });
+        active.lidar = rec;
+      }
       active.timer = startTimer(tick, SAMPLE_INTERVAL_MS);
       return liveStatus();
     },
@@ -379,6 +452,7 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
     cancelRun() {
       if (!active) return false;
       stopTimer(active.timer);
+      if (active.lidar) active.lidar.stop();
       active = null;
       return true;
     },
@@ -414,6 +488,11 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
       const index = s.runs.findIndex(r => r.number === Number(number));
       if (index < 0) throw new HttpError(404, `Session ${id} has no run ${number}.`);
       s.runs.splice(index, 1);
+      try {
+        store.deleteLidar(s.id, Number(number));
+      } catch {
+        // no LiDAR file, or it could not be removed: the run itself is gone
+      }
       s.updated_at = now();
       s.summary = s.runs.length ? sessionSummary(s) : null;
       store.save(s);
@@ -430,6 +509,12 @@ function createPositionTest({ getPosition, getAnchorReadings = () => [], getWard
       const s = store.load(String(id));
       if (!s) throw new HttpError(404, `Session ${id} is not known.`);
       return summaryCsv(s);
+    },
+
+    /** The LiDAR turns recorded with a run (lidar_record.unpack), or null. */
+    loadLidarRecord(id, number) {
+      const bytes = store.loadLidar(String(id), Number(number));
+      return bytes ? lidarRecord.unpack(bytes) : null;
     }
   };
 }
@@ -440,10 +525,16 @@ function instance() {
   if (!serverInstance) {
     const ipsService = require('../ips_service');
     const wardService = require('../ward_service');
+    const roomSensorService = require('../room_sensor/room_sensor_service');
+    const roomSensorManager = require('../room_sensor/room_sensor_manager');
     serverInstance = createPositionTest({
       getPosition: (tagId) => ipsService.getTagPosition(tagId),
       getAnchorReadings: (tagId) => ipsService.getTagAnchorReadings(tagId),
-      getWardLayout: (wardId) => wardService.getWardConfig(wardId)
+      getWardLayout: (wardId) => wardService.getWardConfig(wardId),
+      lidar: {
+        onFrame: (listener) => roomSensorService.onFrame(listener),
+        sensorsOfWard: (wardId) => roomSensorManager.instance().sensorsOfWard(wardId)
+      }
     });
   }
   return serverInstance;

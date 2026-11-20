@@ -13,6 +13,7 @@ const ipsService = require('./services/ips_service');
 const deviceService = require('./services/device_service');
 const bindingCache = require('./services/binding_cache');
 const timeSeriesService = require('./services/time_series_service');
+const roomSensorManager = require('./services/room_sensor/room_sensor_manager');
 
 // A shutdown that has not finished after this long ends the process anyway
 const SHUTDOWN_TIMEOUT_MS = 8000;
@@ -35,6 +36,8 @@ async function bootstrap() {
   await ipsService.reloadWardAnchorsCache();
   await deviceService.syncEnrolledDevicesCache();
   await bindingCache.refresh();
+  // LiDAR room sensors: where each stands, its empty room, the moved check (Phase 10)
+  await roomSensorManager.instance().start();
 
   // Background work: device freshness, tag offline detection, batched presence writes
   deviceService.startFreshnessWatchdog();
@@ -113,6 +116,7 @@ async function shutdown(reason, exitCode = 0) {
 
   deviceService.stopFreshnessWatchdog();
   ipsService.stopOfflineWatchdog();
+  roomSensorManager.instance().stop();
 
   // 1. No new work: anchors, dashboards and headsets are disconnected
   await step('Stopping the MQTT broker', () => stopMqttBroker());

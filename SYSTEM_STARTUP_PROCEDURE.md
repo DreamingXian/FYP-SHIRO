@@ -400,7 +400,8 @@ Slamtec advises 2 minutes of warm-up before measuring. Keep the C1 below 40 °C 
 * The laser slice is about 3 cm above the C1's base. Mount it **level** with the base at about **0.92 m**, so the slice is at about 0.95 m: above beds, chair seats and tables, at the torso of a person standing or sitting.
 * Use a small shelf or bracket, a tripod with a small board, or furniture of the right height. The 4 screw holes underneath take **M2.5 screws at most 4 mm deep**; longer screws damage it. Do not screw a tripod's 1/4-inch screw into it.
 * Keep the S3 and the module **below** the C1's base, so nothing blocks the laser window. Keep glass and mirrors out of the slice where possible.
-* WARD-005: against the south wall, 0.18 m out from it, between the west wall and the head of the bed. The placement planner (4.5) suggests the centre 0.98 m from the south-west corner (99.3 % of the floor a person can stand on); a hand simulation on 20 Nov gave 0.80 m (99.5 %). Anything 0.5–1.1 m from the west wall is fine. Base square to the wall, the ▲ on top pointing north (into the room), cable towards the wall.
+* WARD-005 (mounted 21 Nov 2026): against the east wall, centre 1.31 m from the north-east corner and 0.18 m out from the wall, just past the foot of the bed, ▲ on top pointing west (270°, into the room), cable towards the wall. With the partitions now drawn in the south-west corner, this is the planner's spot (4.5): it sees 99.3 % of the floor a person can stand on. The earlier south-wall spot (0.98 m from the south-west corner) now sees only 90.7 %, because the partitions hide the west side. The spot is 0.4 m from the path from the bed's foot to the door, so fix the stand so it cannot be knocked.
+* The position that counts is the **centre** of the C1 (the middle of its round top), not its edge. A few centimetres or 1–2° off the plan is fine: 🎯 Align to walls (4.6) finds the real position and heading from the scan.
 * Tested on 21 Nov 2026 (firmware 1.0.1): on USB and on its own (S3's 5V pin on the module, no laptop), 10.0 turns/s, about 510 points per turn, 5,093 samples/s, no restarts. 4.62 V at the C1's plug while it spins, still below the 4.8 V minimum: rewire with the pin headers and thicker wires when mounting it for good.
 
 ### 4.5 Planning where the anchors and the LiDAR go (Phase 10)
@@ -443,6 +444,7 @@ Ward editor → open the ward → Panel 3 → **📐 Plan Anchors & LiDAR**. The
 2. Print the installation sheet and mount the devices as listed.
 3. Bind each new board in Panel 3 and the LiDAR node in Panel 3b, then **Save Changes**.
 4. Live Map → **🎯 Calibrate Anchors** (new and moved anchors need it).
+5. The LiDAR: learn the empty room and align it to the walls (4.6).
 
 **WARD-005, 21 Nov 2026** (6 anchors, A, B and C kept):
 
@@ -451,7 +453,7 @@ Ward editor → open the ward → Panel 3 → **📐 Plan Anchors & LiDAR**. The
 | Anchor D | South wall, 0.80 m from the south-west corner, board centre 2.30 m high |
 | Anchor E | North wall, 0.90 m from the north-west corner, 2.30 m high |
 | Anchor F | East wall, 1.49 m from the north-east corner, 2.30 m high |
-| LiDAR | South wall, 0.98 m from the south-west corner, 0.18 m out from the wall |
+| LiDAR | East wall, 1.31 m from the north-east corner, centre 0.18 m out from the wall, base 0.92 m high, ▲ west (270°) |
 
 Expected error drops from 0.96 m to 0.81 m, and the floor with a clear line to 3 or more anchors goes from 96 % to 100 %.
 
@@ -461,6 +463,32 @@ Expected error drops from 0.96 m to 0.81 m, and the floor with a clear line to 3
 * They stay exactly as in the baseline measurement, so before and after differ only by what was added (anchors D–F and the LiDAR), not by moved boards.
 * All six anchors are calibrated again after D–F are mounted. The baseline showed A's and B's calibration made their distances hit the room-size limit.
 * A, B and C stay at 2.40 m as measured in the baseline; the 2.30 m rule applies to the new boards.
+
+### 4.6 Setting up the LiDAR in its ward: live scan, empty room, alignment (Phase 10)
+
+Ward editor → the ward → Panel 3b. Under each LiDAR with a node assigned are three tools. The node must be on and scanning (Devices page: about 10 turns/s).
+
+**👁 Live scan** draws the LiDAR's newest turn on the floor plan, three times a second, at the x, y and heading in the panel.
+* Grey dots: the room as the LiDAR sees it. They should lie on the drawn walls and on the sides of obstacles taller than the slice (0.95 m). Walls that are doubled, bent or turned mean the x, y or heading in the panel is off.
+* Orange dots (once the empty room is learned): something new in the room, normally a person. Walk about and watch your dot follow you.
+* Things not drawn in the layout show as grey dots in open floor (a chair, a bin, bed rails above 0.95 m). That is fine.
+
+**🧹 Learn empty room** (admin; save the ward first)
+1. Put the furniture where it normally stays and the door as it normally is.
+2. Press 🧹 Learn empty room → **▶ Start**, and leave the room within **15 s**. One beep: recording starts.
+3. Stay out of the LiDAR's view for **20 s**, until two beeps. The panel then shows "Empty room learned … (about 200 turns, surface in …% of directions)".
+4. A warning that directions "changed while learning" means someone or something moved in view: learn again.
+* The empty room belongs to the LiDAR where it stands: learn it again after moving the LiDAR or the furniture. Changing x, y or heading in the panel does not spoil it.
+* If the LiDAR is knocked or turned later, the panel shows "⚠️ … read farther than the empty room: the LiDAR may have been moved or turned" (a person never causes this). Put it back, align it and learn the empty room again.
+
+**🎯 Align to walls**
+1. Press 🎯 Align to walls (after learning the empty room: it uses that; without it, the last 3 s of turns).
+2. The fit appears in green on the plan, and the panel shows the new x, y and heading with the change from the panel's values, the share of returns within 5 cm of a drawn wall before and after, and a quality (GOOD, FAIR, POOR).
+3. If the green dots lie on the walls: **✅ Use this position**, then **Save Changes**.
+* It searches within 0.30 m and 10° of the panel's values. A warning that "the scan fits much better with the ▲ pointing about …" means the heading in the panel is far off: set roughly that heading and align again.
+* A low share on the walls usually means the room size or obstacles in the layout differ from the real room: measure them again.
+
+**WARD-005:** learn the empty room and align once, before the "6 anchors" position-test session, so that the LiDAR turns recorded with each run (9.2) come with a correct position and empty room.
 
 ---
 
@@ -711,6 +739,9 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Heart rate shows `--` or stays on `Reading...` | The wristband reports no heart rate while the pulse signal is not clear (movement, loose strap, wrong spot); it never sends a guessed value. | Keep the arm still for about 10 s with the strap snug and the sensor on the outer side of the wrist, at the usual spot (or rest a fingertip on the sensor). The wristband's Serial Monitor shows each broadcast (`[BROADCAST …] BPM: …`). Background: `docs/test_records/heart-rate-measurement.md`. |
 | LiDAR node: `No answer from the RPLIDAR C1` on the Serial Monitor | Wiring or power of the C1. | Red/black on the 5 V module, yellow → GPIO18, green → GPIO17 (often swapped), the C1's black wire and the S3's GND joined. See 4.4. |
 | LiDAR node: `No scan data at all`, `Health: ERROR`, well below 10 turns/s, or restarts counting up | The C1's supply is too low at its plug; it sends no data until its motor is at speed and switches its laser off to protect itself. | Short wires of at least 0.3 mm² screwed straight into the LM2596S, pin headers in the C1's plug, no breadboard; 4.8 V or more at the C1's plug while it spins (normally above 5 V). See 4.4. |
+| Ward editor, LiDAR: "Empty room not learned: Only N turns arrived" | The node stopped sending turns while learning (power, Wi-Fi). | Check the Devices page (about 10 turns/s), then learn again. Nothing was saved. |
+| Ward editor, LiDAR: "⚠️ … read farther than the empty room" | The LiDAR was knocked, turned or moved since the empty room was learned (or large furniture was taken out). | Put it back where the panel says; 🎯 Align to walls, Save Changes, 🧹 Learn empty room again. |
+| Ward editor, LiDAR: the live scan's walls do not line up with the drawn walls | x, y or heading in Panel 3b differ from where the LiDAR stands, or the room size in the layout is wrong. | 🎯 Align to walls; if it warns about the heading, set the heading the warning gives and align again. |
 | LiDAR node not on the Devices page | No Wi-Fi or MQTT. | The Serial Monitor tells which: Wi-Fi name and password, or `rc=4/5` (MQTT login: copy the anchors' `secrets.h`), or `rc=2` (edge server older than Phase 10). |
 
 ---
@@ -748,5 +779,6 @@ The position test measures how far the position shown on the maps is from where 
 7. The run appears in the table with its mean error, 95 % error and the share of readings in the correct zone. After a run facing N, E or S, the next facing is chosen for you, so the four runs of a spot need only ▶ Start run.
 8. A run spoiled by a mistake: 🗑 removes it. A run in progress: **✕ Cancel this run** (nothing is kept).
 9. At the end: **⬇ Summary CSV** (one row per run, then ALL, STANDING and SITTING+LYING) and **⬇ All readings CSV** (every reading: the position shown and its source, the Bluetooth-only position, the raw solver position before smoothing, the zone, the motion state and every anchor's RSSI).
+10. **LiDAR:** when the ward has a LiDAR (Panel 3b), its turns are recorded with every run, from the start of the countdown to the end, with where it stands, its empty room and the wristband's positions. A 🌀 after the spot shows a run with LiDAR turns; the summary CSV has a column "LiDAR turns recorded" (about 10 per second). The files are in `edge_server/data/position_tests/` (`<session>-run<n>.lidar.json.gz`), for working out the LiDAR's accuracy against the marked spots. Removing a run removes its file.
 
 Each reading counts as available when the wristband had a position in this ward that was at most 3.5 s old. The error is the straight-line distance from the marked spot. The zones are the beds (0.3 m around them), the door (1 m into the room) and the rest of the room.

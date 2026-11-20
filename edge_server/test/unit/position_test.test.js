@@ -4,6 +4,8 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const { buildZones, zoneAt, bedFootprint } = require('../../services/ips/zones');
 const { createPositionTest, memoryStore, errorStats } = require('../../services/ips/position_test');
+const { learnBackground } = require('../../services/room_sensor/background');
+const { WARD_005: LIDAR_WARD, simulateTurns } = require('./lidar_scene');
 
 // WARD-005 as configured on 20 Nov 2026: 2.29 x 3.39 m, door on the east wall, one bed along it
 const WARD_005 = {
@@ -59,11 +61,27 @@ describe('error statistics', () => {
   });
 });
 
-/** A recorder with a hand-moved clock and a hand-run timer. */
-function setup({ position = null } = {}) {
+/** A recorder with a hand-moved clock and a hand-run timer; with withLidar, a LiDAR node sending a turn every 250 ms. */
+function setup({ position = null, withLidar = false } = {}) {
   let now = 1_800_000_000_000;
   let timer = null;
   const store = memoryStore();
+  const listeners = new Set();
+  const turns = withLidar ? simulateTurns(LIDAR_WARD, LIDAR_WARD.room_sensors[0], 40) : [];
+  const lidarSensor = { ...LIDAR_WARD.room_sensors[0], ward_id: 'WARD-005', background: null };
+  if (withLidar) {
+    const { model } = learnBackground(turns);
+    lidarSensor.background = { ward_id: 'WARD-005', device_id: 'lidar-001', learned_at: 1_700_000_000_000, turns: 40, coverage_pct: model.coverage_pct, model };
+  }
+  let sequence = 0;
+  const emit = () => {
+    const distancesMm = Uint16Array.from(turns[sequence % turns.length]);
+    const frame = { sequence: sequence++, turnMs: 100, samples: 500, valid: 480, distancesMm };
+    for (const l of listeners) {
+      l({ mac: '10:00:00:00:00:41', deviceId: 'lidar-001', frame, at: now });
+      l({ mac: '10:00:00:00:00:42', deviceId: 'lidar-999', frame, at: now });   // another ward's node
+    }
+  };
   const state = {
     position: position || {
       x: 0.5, y: 1.0, raw_x: 0.3, raw_y: 1.0, ble_x: 0.5, ble_y: 1.0, has_ble: true, source: 'BLE',
@@ -74,15 +92,28 @@ function setup({ position = null } = {}) {
     getPosition: (tagId) => (tagId === 'TAG-002' && state.position ? { ...state.position, last_seen: state.position.last_seen ?? now } : null),
     getAnchorReadings: () => [{ anchor_id: 'Anchor A', rssi: -63.2, raw_rssi: -61, distance: 2.35, age_ms: 100 }],
     getWardLayout: async (id) => (id === 'WARD-005' ? WARD_005 : null),
+    lidar: withLidar
+      ? {
+          onFrame: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+          sensorsOfWard: (wardId) => (wardId === 'WARD-005' ? [lidarSensor] : [])
+        }
+      : null,
     store,
     now: () => now,
     setInterval: (fn) => { timer = fn; return 1; },
     clearInterval: () => { timer = null; }
   });
   return {
-    recorder, store, state,
-    // Moves the clock in 250 ms steps, running the sampler at each step
-    run: (ms) => { for (let t = 0; t < ms; t += 250) { now += 250; if (state.position && state.keepFresh !== false) state.position.last_seen = now; if (timer) timer(); } },
+    recorder, store, state, listeners, turns, lidarSensor,
+    // Moves the clock in 250 ms steps, running the sampler at each step (and sending a LiDAR turn)
+    run: (ms) => {
+      for (let t = 0; t < ms; t += 250) {
+        now += 250;
+        if (state.position && state.keepFresh !== false) state.position.last_seen = now;
+        if (withLidar) emit();
+        if (timer) timer();
+      }
+    },
     timerRunning: () => timer !== null
   };
 }
@@ -181,5 +212,66 @@ describe('position test recorder', () => {
     session = t.recorder.getSession(id);
     assert.deepEqual(session.runs.map(r => r.spot), ['P3']);
     assert.throws(() => t.recorder.discardRun(id, 7), /has no run 7/);
+
+    // The next run is number 3, not a second number 2
+    await t.recorder.startRun({ ...START, session_id: id, countdown_s: 0, duration_s: 5 });
+    t.run(5000);
+    assert.deepEqual(t.recorder.getSession(id).runs.map(r => r.number), [2, 3]);
+  });
+
+  test('without a LiDAR in the ward nothing is recorded for it', async () => {
+    const t = setup();
+    await t.recorder.startRun({ ...START, countdown_s: 0, duration_s: 5 });
+    t.run(5000);
+    const id = t.recorder.listSessions()[0].id;
+    assert.equal(t.recorder.getSession(id).runs[0].lidar, undefined);
+    assert.equal(t.recorder.loadLidarRecord(id, 1), null);
+  });
+});
+
+describe('LiDAR turns recorded with a run', () => {
+  test('from the start of the countdown to the end, with where the LiDAR stands, its empty room and the wristband', async () => {
+    const t = setup({ withLidar: true });
+    await t.recorder.startRun(START);   // 5 s countdown, 20 s recording
+    assert.equal(t.listeners.size, 1);
+    t.run(25000);
+    assert.equal(t.listeners.size, 0, 'stops listening when the run ends');
+
+    const id = t.recorder.listSessions()[0].id;
+    const run = t.recorder.getSession(id).runs[0];
+    assert.deepEqual(run.lidar, { sensors: ['lidar-001'], turns: 100, empty_room: true });   // a turn every 250 ms for 25 s, only lidar-001
+
+    const rec = t.recorder.loadLidarRecord(id, 1);
+    assert.equal(rec.format, 'shiro-lidar-run');
+    assert.equal(rec.ward_id, 'WARD-005');
+    assert.deepEqual(rec.truth, { x: 0.7, y: 1, zone: 'ROOM', spot: 'P2', posture: 'STANDING', facing: 'N' });
+    assert.equal(rec.frames.length, 100);
+    assert.equal(rec.frames[0].t_ms, -4750, 'the countdown is recorded too');
+    assert.equal(rec.frames[99].t_ms, 20000);
+    assert.deepEqual(rec.frames[0].distancesMm, Array.from(t.turns[0]));
+    assert.equal(rec.frames[0].device_id, 'lidar-001');
+    const sensor = rec.sensors[0];
+    assert.deepEqual([sensor.device_id, sensor.x, sensor.y, sensor.heading_deg], ['lidar-001', 2.11, 2.08, 270]);
+    assert.deepEqual(sensor.background.model.median_mm, t.lidarSensor.background.model.median_mm);
+    assert.deepEqual(sensor.background.model.hit_pct, t.lidarSensor.background.model.hit_pct);
+    assert.equal(rec.track.length, 100, 'the wristband four times a second, countdown included');
+    assert.deepEqual(rec.track[0], { t_ms: -4750, status: 'ONLINE', source: 'BLE', x: 0.5, y: 1, ble_x: 0.5, ble_y: 1, raw_x: 0.3, raw_y: 1, motion_state: 'STATIONARY' });
+
+    const summary = t.recorder.summaryCsv(id).replace(/^\uFEFF/, '').trim().split('\r\n');
+    assert.match(summary[0], /,LiDAR turns recorded$/);
+    assert.match(summary[1], /,100$/);
+
+    t.recorder.discardRun(id, 1);
+    assert.equal(t.recorder.loadLidarRecord(id, 1), null, 'removing a run removes its LiDAR file');
+  });
+
+  test('a cancelled run stops listening and keeps nothing', async () => {
+    const t = setup({ withLidar: true });
+    await t.recorder.startRun(START);
+    t.run(2000);
+    t.recorder.cancelRun();
+    assert.equal(t.listeners.size, 0);
+    const id = t.recorder.listSessions()[0].id;
+    assert.equal(t.recorder.loadLidarRecord(id, 1), null);
   });
 });
