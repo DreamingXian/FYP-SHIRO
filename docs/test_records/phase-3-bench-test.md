@@ -277,6 +277,64 @@ Sitting still, active streaming, about one minute. The complete Serial Monitor l
 15. **The alarm rules hold, but the heart rate itself is not stable.** No vitals alarm was raised in 36 minutes of wear, live and in the replay. The heart rate behind it is noisy: sitting still with a counted pulse of 94 BPM, the wristband showed values from 53 to 130 BPM within one minute. The average is right (96 BPM), single values are not. The first value took about 14 seconds, and one value (130) stayed until it was withdrawn after 6 seconds without a beat. Cause: on the wrist the beat detection misses beats and detects extra ones, and a median of four beats does not absorb that. This is a limit of the measurement, not of the alarm path. It is open and is handled as a separate task (heart-rate measurement quality), with recorded beat intervals as the basis.
 16. **An unacknowledged alarm is shown again after a server restart. This is intended.** No second incident is created: the history holds one incident per fall. When the dashboard reconnects it asks the server for the alarms that are still open and shows them again. An alarm that nobody has acknowledged must not disappear because the server was restarted.
 
+## Round 4: false alarms while standing (21 November 2026)
+
+### What happened
+
+Three fall alarms were raised although nobody fell: one during a demonstration to the supervisor, two during the position test while the tester walked, turned and stood with some hand movement.
+
+| Date and time | Situation | Free-fall min | Impact | Post-impact motion |
+| :--- | :--- | ---: | ---: | ---: |
+| 16 Nov 2026, 14:54:19 | Demonstration to the supervisor | 0.26 g | 3.47 g | 0.13 g |
+| 21 Nov 2026, 06:00:49 | Position test, turning to the next facing during the countdown of run 4 | 0.25 g | 2.67 g | 0.10 g |
+| 21 Nov 2026, 06:02:34 | Position test, countdown of run 6 | 0.28 g | 2.87 g | 0.16 g |
+
+An ordinary movement met all three phases. The arm, lowered quickly, is briefly in free-fall; it stops against the leg or the body (2.7 to 3.5 g); then the wearer stands with only small hand movements, below the 0.20 g limit. Finding 5 already named this kind of limit for an arm dropped onto a table; these are the first cases from everyday movement. Part B (B1 to B6) did not contain this movement.
+
+### The stored values
+
+Values of every fall the wristband confirmed after the settling fix (14 Nov 2026, from 09:00), taken from the incident history: 50 deliberate arm drops (Round 2, Round 3 and later demonstrations on 15 to 17 Nov) and the 3 false alarms. Round 1 is left out because its stillness was measured differently, and so is the B7 series (arm moved after the drop). The values are in `firmware/tests/data/fall_values.csv`.
+
+| Measure | 50 arm drops | 3 false alarms |
+| :--- | :--- | :--- |
+| Free-fall minimum | 0.05 to 0.36 g | 0.25 to 0.28 g |
+| Impact | 2.88 to 25.43 g; below 4 g only 4 drops (2.88, 3.04, 3.72, 3.89 g) | 2.67 to 3.47 g |
+| Post-impact motion, all | 0.01 to 0.09 g (0.09 g once, on a pillow, at 14.29 g) | 0.10 to 0.16 g |
+| Post-impact motion after an impact below 4 g | 0.02 to 0.03 g | 0.10 to 0.16 g |
+
+The free-fall minimum does not separate the two groups. The impact separates them only partly: the softest drops are as soft as the false alarms. The movement after a soft impact separates them clearly.
+
+Candidate rules replayed on these values:
+
+| Rule | Arm drops still detected | False alarms still raised |
+| :--- | ---: | ---: |
+| Until now: impact above 2.5 g, then motion below 0.20 g | 50 / 50 | 3 / 3 |
+| Impact above 3.0 g | 49 / 50 | 1 / 3 |
+| Impact above 3.5 g | 48 / 50 | 0 / 3 |
+| **Chosen: after an impact below 4 g, motion below 0.08 g** | **50 / 50** | **0 / 3** |
+
+### Change (wristband firmware V5.1)
+
+- After an impact whose peak stays below 4 g, the post-impact motion must be below 0.08 g. After an impact of 4 g and above the limit stays 0.20 g, so a patient who falls hard and still moves a little raises the alarm (finding 12).
+- All other thresholds are unchanged: free-fall below 0.50 g for at least 150 ms, impact above 2.50 g within 500 ms, 0.5 s settling, 2 s observation.
+- The power-on self-test has two more traces: a soft fall followed by lying still (must be detected), and an arm drop while standing followed by small hand movements (must be ignored).
+- Host tests: the three false alarms rebuilt as traces; the limit itself (0.07 g still, 0.09 g moving; 3.99 g soft, 4.0 g hard; the peak of the whole impact decides); the stored values (50 of 50 drops confirmed, 0 of 3 false alarms raised; with the old rule 3 of 3).
+
+### Limits of the change
+
+- The rule rests on three false alarms. More everyday wear will show whether 4 g and 0.08 g hold.
+- Arm drops stand in for falls (see Method). A real fall with a soft landing, after which the patient moves a little (0.08 g or more), is no longer reported. A hard fall is reported as before.
+- An arm drop while standing is still reported if the wearer then keeps completely still, or if the arm hits harder than 4 g. A wrist-worn threshold detector cannot tell standing still from lying still. The LiDAR, which sees a standing person but not one on the floor, could check this later.
+
+### Hardware check after flashing V5.1
+
+| Check | Result |
+| :--- | :--- |
+| At power-on the Serial Monitor shows `V5.1` and `[SELF-TEST] Fall detector: PASS (… arm drop while standing: ignored)` | |
+| 5 arm drops onto the table as in Part A, arm kept still for 3 s: falls detected | / 5 |
+| 10 times, standing: turn on the spot, let the arm drop quickly against the leg, then keep moving the hand a little for 5 s: fall alarms (expected 0) | / 10 |
+| 10 times, the same, then stand completely still for 5 s: fall alarms (known limit, counted for the record) | / 10 |
+
 ## Decision
 
 - [x] Thresholds kept as in the thesis (0.50 g, 2.50 g, 0.20 g, 150 ms, 500 ms, 2 s).
@@ -285,3 +343,5 @@ Sitting still, active streaming, about one minute. The complete Serial Monitor l
 - [x] After Round 2: SpO2 raises no alarm until it is calibrated; heart-rate alarm rules and heart-rate reporting corrected (finding 10).
 - [x] Round 3 accepted for the alarm path: no false vitals alarm, one incident per fall, no second incident after a server restart.
 - [ ] Open, outside Phase 3: stability of the heart-rate value (finding 15).
+- [x] Round 4 (21 Nov 2026): after three false alarms while standing, an impact below 4 g now needs post-impact motion below 0.08 g (wristband firmware V5.1). This departs from the single 0.20 g limit of the thesis (Chapter 4, Algorithm 3); all other thresholds are unchanged.
+- [ ] Round 4 hardware check (table above).

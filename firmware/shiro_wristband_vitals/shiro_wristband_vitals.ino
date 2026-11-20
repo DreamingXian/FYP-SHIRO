@@ -1,6 +1,6 @@
 /*
  * =========================================================================================
- *   SHIRO Wristband Tag - Physiological & Kinematic Telemetry Node (V5 - Protocol 2)
+ *   SHIRO Wristband Tag - Physiological & Kinematic Telemetry Node (V5.1 - Protocol 2)
  *   Hardware: Seeed Studio XIAO ESP32-C6
  *   Sensors:  HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) via I2C (SDA: D4, SCL: D5)
  *   Battery:  100k/100k Divider on BAT+ to D0
@@ -463,7 +463,7 @@ void setup() {
   delay(1500);
 
   Serial.println("\n==========================================================");
-  Serial.println("  SHIRO Wristband Tag - Adaptive Telemetry (V5 - Protocol 2)");
+  Serial.println("  SHIRO Wristband Tag - Adaptive Telemetry (V5.1 - Protocol 2)");
   Serial.println("  Hardware: Seeed Studio XIAO ESP32-C6");
   Serial.println("==========================================================");
 
@@ -485,11 +485,13 @@ void setup() {
 
   // 3. Self-test of the fall state machine with built-in traces (no sensor involved)
   FallSelfTestResult selfTest = runFallSelfTest();
-  Serial.printf("[SELF-TEST] Fall detector: %s (fall: %s, short dip: %s, movement: %s)\n",
+  Serial.printf("[SELF-TEST] Fall detector: %s (fall: %s, soft fall: %s, short dip: %s, movement: %s, arm drop while standing: %s)\n",
                 selfTest.passed() ? "PASS" : "FAIL",
                 selfTest.fallDetected ? "detected" : "MISSED",
+                selfTest.softFallDetected ? "detected" : "MISSED",
                 selfTest.shortDipIgnored ? "ignored" : "FALSE ALARM",
-                selfTest.movementIgnored ? "ignored" : "FALSE ALARM");
+                selfTest.movementIgnored ? "ignored" : "FALSE ALARM",
+                selfTest.armDropIgnored ? "ignored" : "FALSE ALARM");
 
   // 4. Initialize HW-605 (MAX30102)
   if (particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {

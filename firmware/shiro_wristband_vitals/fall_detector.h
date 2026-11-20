@@ -9,7 +9,9 @@
  *     1. Free-fall : total acceleration stays below freefallG for at least freefallMinMs
  *     2. Impact    : total acceleration exceeds impactG within impactMaxMs of the free-fall
  *     3. Stillness : after settleMs (the shock of the impact dying away), the mean
- *                    |acceleration - 1 g| over stillDurationMs stays below stillnessG
+ *                    |acceleration - 1 g| over stillDurationMs stays below stillnessG.
+ *                    After a soft impact (peak below softImpactG) the wrist must be
+ *                    clearly still: below softStillnessG.
  *
  *   Feed one sample per call to update(). Time is passed in, never read here.
  * =========================================================================================
@@ -24,6 +26,8 @@ struct FallConfig {
   float freefallG;           // below this the wrist is in free-fall
   float impactG;             // above this an impact has happened
   float stillnessG;          // mean post-impact motion below this means "not moving"
+  float softImpactG;         // an impact whose peak stays below this is a soft one
+  float softStillnessG;      // after a soft impact, mean post-impact motion must stay below this
   uint32_t freefallMinMs;    // free-fall must last at least this long
   uint32_t impactMaxMs;      // impact must follow the end of free-fall within this time
   uint32_t settleMs;         // time after the impact that is not counted as movement
@@ -35,11 +39,19 @@ struct FallConfig {
 // bench tests of 14 Nov 2026: without it the impact shock itself (several samples
 // far above 1 g, then ringing) was averaged into the "post-impact motion", so a
 // harder impact was less likely to be confirmed than a soft one.
+// softImpactG and softStillnessG come from the false alarms of 16 and 21 Nov 2026:
+// a wearer who is standing lowers the arm quickly (free-fall), it stops against the
+// leg (2.7 to 3.5 g) and then stands with small hand movements (0.10 to 0.16 g).
+// Every deliberate arm drop below 4 g was followed by 0.02 to 0.03 g
+// (firmware/tests/data/fall_values.csv). A hard impact keeps the 0.20 g limit, so
+// a patient who falls hard and still moves a little raises the alarm.
 inline FallConfig defaultFallConfig() {
   FallConfig c;
   c.freefallG = 0.50f;
   c.impactG = 2.50f;
   c.stillnessG = 0.20f;
+  c.softImpactG = 4.00f;
+  c.softStillnessG = 0.08f;
   c.freefallMinMs = 150;
   c.impactMaxMs = 500;
   c.settleMs = 500;
@@ -120,7 +132,7 @@ class FallDetector {
         stillnessSamples++;
         if ((uint32_t)(nowMs - impactMs) >= cfg.settleMs + cfg.stillDurationMs) {
           const float meanMotion = stillnessSamples > 0 ? stillnessSum / (float)stillnessSamples : 0.0f;
-          if (meanMotion < cfg.stillnessG) {
+          if (meanMotion < stillnessLimit(runPeakImpactG)) {
             phase = FALL_PHASE_CONFIRMED;
             confirmedMs = nowMs;
             counter++;
@@ -169,6 +181,11 @@ class FallDetector {
 
   const FallConfig& config() const { return cfg; }
 
+  // The post-impact motion must stay below this value after an impact with this peak
+  float stillnessLimit(float peakImpactG) const {
+    return peakImpactG < cfg.softImpactG ? cfg.softStillnessG : cfg.stillnessG;
+  }
+
  private:
   void reset() {
     phase = FALL_PHASE_MONITORING;
@@ -209,14 +226,18 @@ class FallDetector {
 };
 
 // -----------------------------------------------------------------------------
-// Built-in self-test: replays three synthetic 50 Hz traces through a private
+// Built-in self-test: replays five synthetic 50 Hz traces through a private
 // detector. Runs on the wristband at boot and on the PC in the test program.
 // -----------------------------------------------------------------------------
 struct FallSelfTestResult {
   bool fallDetected;      // free-fall + impact + stillness must confirm a fall
+  bool softFallDetected;  // a soft impact followed by lying still must too
   bool shortDipIgnored;   // a dip shorter than freefallMinMs must not
   bool movementIgnored;   // free-fall + impact followed by movement must not
-  bool passed() const { return fallDetected && shortDipIgnored && movementIgnored; }
+  bool armDropIgnored;    // soft impact, then standing with small hand movements, must not
+  bool passed() const {
+    return fallDetected && softFallDetected && shortDipIgnored && movementIgnored && armDropIgnored;
+  }
 };
 
 namespace shiro_selftest {
@@ -237,6 +258,17 @@ inline bool feedMovement(FallDetector& d, uint32_t& t, uint32_t durationMs) {
   uint32_t n = 0;
   for (uint32_t elapsed = 0; elapsed < durationMs; elapsed += 20, n++) {
     if (d.update((n % 2 == 0) ? 0.6f : 1.6f, t)) confirmed = true;
+    t += 20;
+  }
+  return confirmed;
+}
+
+// Feeds `durationMs` of small movement: alternating 0.88 g and 1.12 g (mean motion 0.12 g).
+inline bool feedSmallMovement(FallDetector& d, uint32_t& t, uint32_t durationMs) {
+  bool confirmed = false;
+  uint32_t n = 0;
+  for (uint32_t elapsed = 0; elapsed < durationMs; elapsed += 20, n++) {
+    if (d.update((n % 2 == 0) ? 0.88f : 1.12f, t)) confirmed = true;
     t += 20;
   }
   return confirmed;
@@ -274,6 +306,24 @@ inline FallSelfTestResult runFallSelfTest() {
     c = feed(d, t, 4.0f, 40) || c;
     c = feedMovement(d, t, 3000) || c;
     r.movementIgnored = !c && !d.emergency();
+  }
+  {  // 4. A soft fall: 3 g impact, then lying still
+    FallDetector d;
+    uint32_t t = 1000;
+    bool c = feed(d, t, 1.0f, 1000);
+    c = feed(d, t, 0.25f, 250) || c;
+    c = feed(d, t, 3.0f, 40) || c;
+    c = feed(d, t, 1.02f, 3000) || c;
+    r.softFallDetected = c && d.emergency();
+  }
+  {  // 5. Standing: the arm drops against the leg (3 g), then small hand movements
+    FallDetector d;
+    uint32_t t = 1000;
+    bool c = feed(d, t, 1.0f, 1000);
+    c = feed(d, t, 0.25f, 250) || c;
+    c = feed(d, t, 3.0f, 40) || c;
+    c = feedSmallMovement(d, t, 3000) || c;
+    r.armDropIgnored = !c && !d.emergency();
   }
   return r;
 }

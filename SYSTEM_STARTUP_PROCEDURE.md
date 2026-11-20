@@ -280,7 +280,7 @@ The dashboard and every API address need a signed-in clinician. Two roles exist:
 #### What the Serial Monitor shows at power-on (115200 baud):
 ```
 [OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x68.
-[SELF-TEST] Fall detector: PASS (fall: detected, short dip: ignored, movement: ignored)
+[SELF-TEST] Fall detector: PASS (fall: detected, soft fall: detected, short dip: ignored, movement: ignored, arm drop while standing: ignored)
 [OK] HW-605 (MAX30102) Initialized.
 [OK] Telemetry packet version 2, 15 bytes.
 ```

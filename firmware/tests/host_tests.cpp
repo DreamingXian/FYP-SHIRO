@@ -87,8 +87,10 @@ static void testSelfTest() {
   section("built-in self-test");
   const FallSelfTestResult r = runFallSelfTest();
   CHECK(r.fallDetected);
+  CHECK(r.softFallDetected);
   CHECK(r.shortDipIgnored);
   CHECK(r.movementIgnored);
+  CHECK(r.armDropIgnored);
   CHECK(r.passed());
 }
 
@@ -175,7 +177,7 @@ static void testImpactWindow() {
 }
 
 static void testStillness() {
-  section("post-impact stillness: mean motion below 0.20 g for 2 s, after 0.5 s settling");
+  section("post-impact stillness after a hard impact: mean motion below 0.20 g for 2 s, after 0.5 s settling");
   {
     Trace tr;  // lying still but breathing/trembling slightly
     tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.10f, 400, 3000);
@@ -335,6 +337,133 @@ static void testEverydayActivities() {
     tr.hold(1.0f, 1000).hold(1.8f, 20).hold(1.0f, 5000);
     CHECK(tr.confirmations == 0);
   }
+}
+
+static void testSoftImpact() {
+  section("after an impact below 4 g the wrist must be clearly still (below 0.08 g)");
+  {
+    // 21 Nov 2026, standing: the arm is lowered quickly, stops against the leg,
+    // then small hand movements (stored: free-fall 0.25 g, impact 2.67 g, motion 0.10 g)
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.25f, 200).hold(2.67f, 40).swing(0.16f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+    CHECK(!tr.detector.emergency());
+  }
+  {
+    Trace tr;  // 21 Nov 2026: 2.87 g, then 0.16 g
+    tr.hold(1.0f, 1000).hold(0.28f, 200).hold(2.87f, 40).swing(0.25f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // 16 Nov 2026: 3.47 g, then 0.13 g
+    tr.hold(1.0f, 1000).hold(0.26f, 200).hold(3.47f, 40).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // a soft impact followed by lying still is still a fall (the 2.88 g arm drop of 14 Nov)
+    tr.fall(300, 0.33f, 2.88f, 1.03f);
+    CHECK(tr.confirmations == 1);
+    CHECK(nearly(tr.detector.peakImpactG(), 2.88f));
+  }
+  {
+    Trace tr;  // at the limit: 0.07 g of motion counts as still
+    tr.fall(300, 0.15f, 3.0f, 1.07f);
+    CHECK(tr.confirmations == 1);
+  }
+  {
+    Trace tr;  // 0.09 g does not
+    tr.fall(300, 0.15f, 3.0f, 1.09f);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // a hard impact keeps the 0.20 g limit: a patient who falls hard and moves a little
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 1);
+    CHECK(tr.detector.stillnessG() > 0.08f);
+  }
+  {
+    Trace tr;  // the same movement after 3.99 g: a soft impact
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(3.99f, 40).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // the peak of the whole impact decides, not its first sample
+    tr.hold(1.0f, 1000).hold(0.15f, 300).sample(3.0f).sample(9.0f).sample(5.0f).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 1);
+  }
+  {
+    FallDetector d;
+    CHECK(nearly(d.stillnessLimit(2.6f), 0.08f));
+    CHECK(nearly(d.stillnessLimit(3.99f), 0.08f));
+    CHECK(nearly(d.stillnessLimit(4.0f), 0.20f));
+    CHECK(nearly(d.stillnessLimit(24.0f), 0.20f));
+  }
+}
+
+// Values the edge server stored for real confirmed falls (tests/data/fall_values.csv)
+struct RecordedFall {
+  std::string kind;  // DROP or FALSE_ALARM
+  float freefallG;
+  float impactG;
+  float stillnessG;
+};
+
+static std::vector<RecordedFall> loadRecordedFalls() {
+  std::vector<RecordedFall> out;
+  std::ifstream in("data/fall_values.csv");
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#' || line.compare(0, 5, "time,") == 0) continue;
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (true) {
+      const size_t comma = line.find(',', start);
+      fields.push_back(line.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+      if (comma == std::string::npos) break;
+      start = comma + 1;
+    }
+    if (fields.size() < 5) continue;
+    RecordedFall r;
+    r.kind = fields[1];
+    r.freefallG = std::stof(fields[2]);
+    r.impactG = std::stof(fields[3]);
+    r.stillnessG = std::stof(fields[4]);
+    out.push_back(r);
+  }
+  return out;
+}
+
+// Would a detector with this configuration confirm a fall with these measured values?
+static bool confirms(const FallDetector& d, const RecordedFall& r) {
+  const FallConfig& c = d.config();
+  return r.freefallG < c.freefallG && r.impactG > c.impactG && r.stillnessG < d.stillnessLimit(r.impactG);
+}
+
+static void testRecordedFallValues() {
+  section("stored values: every deliberate arm drop still confirmed, the three false alarms not");
+  const std::vector<RecordedFall> falls = loadRecordedFalls();
+  const FallDetector now;
+  FallConfig beforeConfig = defaultFallConfig();
+  beforeConfig.softImpactG = 0.0f;  // the rule until 21 Nov 2026: 0.20 g after every impact
+  const FallDetector before(beforeConfig);
+  int drops = 0, dropsKept = 0, falseAlarms = 0, falseRaised = 0, falseRaisedBefore = 0;
+  for (const RecordedFall& r : falls) {
+    if (r.kind == "DROP") {
+      drops++;
+      if (confirms(now, r)) dropsKept++;
+    } else if (r.kind == "FALSE_ALARM") {
+      falseAlarms++;
+      if (confirms(now, r)) falseRaised++;
+      if (confirms(before, r)) falseRaisedBefore++;
+    }
+  }
+  std::printf("  %d arm drops: %d still confirmed. %d false alarms: %d still raised (before the change: %d)\n",
+              drops, dropsKept, falseAlarms, falseRaised, falseRaisedBefore);
+  CHECK(drops >= 50);
+  CHECK(falseAlarms == 3);
+  CHECK(dropsKept == drops);
+  CHECK(falseRaised == 0);
+  CHECK(falseRaisedBefore == falseAlarms);  // the stored values really exercise the change
 }
 
 // ---------------------------------------------------------------------------
@@ -987,6 +1116,8 @@ int main() {
   testClockWrap();
   testBadSamples();
   testEverydayActivities();
+  testSoftImpact();
+  testRecordedFallValues();
   testPacketLayout();
   testPacketRoundTrip();
   testPacketFallFlag();
