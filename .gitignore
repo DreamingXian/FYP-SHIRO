@@ -24,6 +24,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Position test sessions (Phase 10): measurement data, exported as CSV for the thesis
+edge_server/data/
+
 # Temporary scratch and backup files
 edge_server/scratch/
 *.tmp

@@ -307,7 +307,7 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
     });
   }
 
-  // 5b. 3D Line-of-Sight Rays & Coverage Geometry (for Auto-Suggest Preview)
+  // 5b. 3D Line-of-Sight Rays & Coverage Geometry (optional preview)
   if (options.show3dLosRays && Array.isArray(ward.anchors) && ward.anchors.length >= 3) {
     // Draw baseline trilateration triangle / coverage polygon
     mapCtx.save();
@@ -415,6 +415,90 @@ function renderWardToCanvas(mapCanvas, currentWard, options = {}) {
       }
     });
   }
+
+  // 7. LiDAR room sensors (Phase 10): where each stands and where its ▲ points
+  if (Array.isArray(ward.room_sensors)) {
+    ward.room_sensors.forEach(s => {
+      const label = s.device_id ? `${s.sensor_id || 'LiDAR'} (${s.device_id})` : (s.sensor_id || 'LiDAR');
+      drawLidarMarker(mapCtx, originX + Number(s.x) * scale, originY + (roomY - Number(s.y)) * scale, Number(s.heading_deg) || 0, label);
+    });
+  }
+}
+
+/**
+ * A LiDAR on a floor plan: a purple square with an arrow where the ▲ on its top
+ * points. heading: compass degrees (0 = north = up on the plan, 90 = east).
+ */
+function drawLidarMarker(ctx, px, py, headingDeg, label, color = '#7C3AED') {
+  const rad = (headingDeg * Math.PI) / 180;
+  const dx = Math.sin(rad);
+  const dy = -Math.cos(rad);
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.strokeStyle = '#FFFFFF';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.rect(px - 6, py - 6, 12, 12);
+  ctx.fill();
+  ctx.stroke();
+  // Heading arrow
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(px + dx * 8, py + dy * 8);
+  ctx.lineTo(px + dx * 22, py + dy * 22);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(px + dx * 27, py + dy * 27);
+  ctx.lineTo(px + dx * 19 - dy * 5, py + dy * 19 + dx * 5);
+  ctx.lineTo(px + dx * 19 + dy * 5, py + dy * 19 - dx * 5);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  if (label) {
+    ctx.font = '700 10px sans-serif';
+    ctx.fillText(label, px + 9, py + 16);
+  }
+  ctx.restore();
+}
+
+/** An arrow on a floor plan from (px, py) in a compass direction, length in pixels. */
+function drawFacingArrow(ctx, px, py, headingDeg, length, color) {
+  const rad = (headingDeg * Math.PI) / 180;
+  const dx = Math.sin(rad);
+  const dy = -Math.cos(rad);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(px + dx * (length - 5), py + dy * (length - 5));
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(px + dx * length, py + dy * length);
+  ctx.lineTo(px + dx * (length - 7) - dy * 4, py + dy * (length - 7) + dx * 4);
+  ctx.lineTo(px + dx * (length - 7) + dy * 4, py + dy * (length - 7) - dx * 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+/** The metres-to-pixels mapping renderWardToCanvas uses for a canvas and ward. */
+function wardCanvasTransform(mapCanvas, ward, padding = 38) {
+  const width = mapCanvas.width || mapCanvas.clientWidth || 400;
+  const height = mapCanvas.height || mapCanvas.clientHeight || 300;
+  const roomX = ward.length_x || 6.40;
+  const roomY = ward.width_y || 4.80;
+  const availableW = Math.max(10, width - padding * 2);
+  const availableH = Math.max(10, height - padding * 2);
+  const scale = Math.min(availableW / roomX, availableH / roomY);
+  const originX = padding + (availableW - (roomX * scale)) / 2;
+  const originY = padding + (availableH - (roomY * scale)) / 2;
+  return {
+    scale,
+    toPx: (x, y) => [originX + x * scale, originY + (roomY - y) * scale]
+  };
 }
 
 function redrawWardMap() {
@@ -430,6 +514,8 @@ function redrawWardMap() {
   mapCanvas.height = parentH;
 
   renderWardToCanvas(mapCanvas, window.currentWard, { bgColor: '#FFFFFF' });
+  // A LiDAR's live scan, when switched on in Panel 3b (room_sensor_live.js)
+  if (window.drawRoomSensorOverlay) window.drawRoomSensorOverlay(mapCanvas, window.currentWard);
 
   const scaleText = document.getElementById('canvas-scale-text');
   if (scaleText && window.currentWard) {
@@ -512,4 +598,7 @@ function check3dRayLos(A, T, obstacles, roomH = 2.80, ignoreObsId = null) {
 
 window.check3dRayLos = check3dRayLos;
 window.renderWardToCanvas = renderWardToCanvas;
+window.drawLidarMarker = drawLidarMarker;
+window.drawFacingArrow = drawFacingArrow;
+window.wardCanvasTransform = wardCanvasTransform;
 window.redrawWardMap = redrawWardMap;

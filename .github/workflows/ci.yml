@@ -102,6 +102,42 @@ jobs:
           cp firmware/shiro_anchor_node/secrets.example.h firmware/shiro_anchor_node/secrets.h
           arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app firmware/shiro_anchor_node
 
+  # Phase 10: the other boards the anchors run on, and the LiDAR node. One job per
+  # board, in parallel, so the checks do not take longer one after the other.
+  firmware-boards:
+    name: Firmware compile (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: anchor on ESP32-S3
+            sketch: firmware/shiro_anchor_node
+            fqbn: esp32:esp32:esp32s3:PartitionScheme=huge_app
+          - name: anchor on XIAO ESP32-C3
+            sketch: firmware/shiro_anchor_node
+            fqbn: esp32:esp32:XIAO_ESP32C3:PartitionScheme=huge_app
+          - name: LiDAR node on ESP32-S3
+            sketch: firmware/shiro_lidar_node
+            fqbn: esp32:esp32:esp32s3:PartitionScheme=huge_app,FlashSize=16M
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install the ESP32 core and libraries (same versions as the development PC)
+        run: |
+          arduino-cli core update-index --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+          arduino-cli lib install "PubSubClient@2.8"
+
+      - name: Compile with the example settings
+        run: |
+          cp ${{ matrix.sketch }}/secrets.example.h ${{ matrix.sketch }}/secrets.h
+          arduino-cli compile --fqbn ${{ matrix.fqbn }} ${{ matrix.sketch }}
+
   headset-logic:
     name: Headset logic tests (.NET, outside Unity)
     runs-on: ubuntu-latest

@@ -17,6 +17,10 @@
     CRITICAL_VITALS: '❤️ Critical vitals',
     GEOFENCE_BREACH: '🚪 Left the ward'
   };
+  // A geofence alert is one of two kinds (Phase 10); older ones have none
+  const GEOFENCE_KIND_LABELS = { LEFT_WARD: '🚪 Left the ward', AT_DOOR: '🚪 At the door' };
+  const typeLabel = (inc) => (inc.incident_category === 'GEOFENCE_BREACH' && GEOFENCE_KIND_LABELS[inc.geofence_kind])
+    || CATEGORY_LABELS[inc.incident_category] || inc.incident_category;
   const LIST_LIMIT = 200;
 
   // What the open modal shows. null patientId = every patient.
@@ -69,7 +73,7 @@
   }
 
   function incidentRow(inc, showPatient) {
-    const typeBadge = `<span class="badge ${inc.incident_category === 'FALL_ACCIDENT' ? 'badge-alert' : 'badge-warning'}">${escapeHtml(CATEGORY_LABELS[inc.incident_category] || inc.incident_category)}</span>`
+    const typeBadge = `<span class="badge ${inc.incident_category === 'FALL_ACCIDENT' ? 'badge-alert' : 'badge-warning'}">${escapeHtml(typeLabel(inc))}</span>`
       + (Number(inc.is_simulated) === 1 ? ' <span class="badge badge-neutral" title="Created on the Live Lab test bench, not by a wristband">TEST</span>' : '');
 
     let statusBadge;
@@ -228,7 +232,7 @@
             <option value="">All types</option>
             <option value="FALL_ACCIDENT">Falls</option>
             <option value="CRITICAL_VITALS">Critical vitals</option>
-            <option value="GEOFENCE_BREACH">Left the ward</option>
+            <option value="GEOFENCE_BREACH">Door: at the door, left the ward</option>
           </select>
           <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;">
             <input type="checkbox" checked${actionAttrs('setIncidentHistorySimulated', [], { event: 'change', element: true })}> Live Lab tests

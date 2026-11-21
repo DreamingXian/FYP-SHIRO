@@ -2,22 +2,30 @@
 // SHIRO Edge Server - MQTT access control
 // Who may connect to the broker, and which topics they may use.
 //
-// Only the anchors use MQTT. They share one username and password, set in
-// edge_server/.env (MQTT_ANCHOR_USER, MQTT_ANCHOR_PASSWORD) and in the anchor
-// firmware's secrets.h. Without both values the server does not start: an open
-// broker is never the fallback.
+// Only the hardware nodes use MQTT: the anchors and the LiDAR room sensors
+// (Phase 10). They share one username and password, set in edge_server/.env
+// (MQTT_ANCHOR_USER, MQTT_ANCHOR_PASSWORD) and in the firmware's secrets.h.
+// Without both values the server does not start: an open broker is never the
+// fallback. The client ID says which kind of node it is, and each kind may
+// publish to its own topics only.
 // =============================================================================
 const logger = require('../utils/logger');
 const crypto = require('crypto');
 
-// Client ID an anchor uses: SHIRO_Anchor_ followed by its Wi-Fi MAC address without colons
+// Client IDs: SHIRO_Anchor_ or SHIRO_Lidar_ followed by the node's Wi-Fi MAC address without colons
 const ANCHOR_CLIENT_ID = /^SHIRO_Anchor_([0-9A-Fa-f]{12})$/;
+const LIDAR_CLIENT_ID = /^SHIRO_Lidar_([0-9A-Fa-f]{12})$/;
 
-// Topics an anchor may publish to, and the topics it may subscribe to
-const PUBLISH_TOPICS = [
-  /^shiro\/[A-Za-z0-9_-]{1,32}\/anchor\/telemetry$/,
-  /^shiro\/discovery$/
-];
+// Topics each kind of node may publish to
+const PUBLISH_TOPICS = {
+  ANCHOR: [
+    /^shiro\/[A-Za-z0-9_-]{1,32}\/anchor\/telemetry$/,
+    /^shiro\/discovery$/
+  ],
+  ROOM_SENSOR: [
+    /^shiro\/[A-Za-z0-9_-]{1,32}\/lidar\/(scan|status)$/
+  ]
+};
 const CONTROL_PREFIX = 'shiro/control/';
 const TOPIC_LEVEL = /^([A-Za-z0-9_-]{1,32}|\+)$/;
 
@@ -66,14 +74,32 @@ function secretEquals(expected, given) {
   return crypto.timingSafeEqual(a, b);
 }
 
-/** The anchor MAC address in an anchor client ID ("AA:BB:CC:DD:EE:FF"), or null. */
-function anchorMacFromClientId(clientId) {
-  const match = typeof clientId === 'string' ? clientId.match(ANCHOR_CLIENT_ID) : null;
+function macFromClientId(clientId, pattern) {
+  const match = typeof clientId === 'string' ? clientId.match(pattern) : null;
   return match ? match[1].toUpperCase().match(/.{2}/g).join(':') : null;
 }
 
-function mayPublish(topic) {
-  return typeof topic === 'string' && PUBLISH_TOPICS.some(re => re.test(topic));
+/** The anchor MAC address in an anchor client ID ("AA:BB:CC:DD:EE:FF"), or null. */
+function anchorMacFromClientId(clientId) {
+  return macFromClientId(clientId, ANCHOR_CLIENT_ID);
+}
+
+/** The LiDAR node MAC address in a LiDAR client ID ("AA:BB:CC:DD:EE:FF"), or null. */
+function lidarMacFromClientId(clientId) {
+  return macFromClientId(clientId, LIDAR_CLIENT_ID);
+}
+
+/** 'ANCHOR', 'ROOM_SENSOR' or null: the kind of node a client ID belongs to. */
+function nodeKindOf(clientId) {
+  if (anchorMacFromClientId(clientId)) return 'ANCHOR';
+  if (lidarMacFromClientId(clientId)) return 'ROOM_SENSOR';
+  return null;
+}
+
+/** Whether a node of this kind may publish to the topic (anchors when no kind is given). */
+function mayPublish(topic, kind = 'ANCHOR') {
+  const allowed = PUBLISH_TOPICS[kind];
+  return typeof topic === 'string' && Array.isArray(allowed) && allowed.some(re => re.test(topic));
 }
 
 function maySubscribe(topic) {
@@ -137,9 +163,9 @@ function createAccessControl(credentials, options = {}) {
       return callback(refusal(NOT_AUTHORIZED, 'Too many failed logins'), false);
     }
 
-    if (!anchorMacFromClientId(clientId)) {
+    if (!nodeKindOf(clientId)) {
       recordFailure(address);
-      warnOnce(`${address}|id`, `[MQTT SECURITY] Refused ${address}: client ID "${clientId}" is not an anchor ID (SHIRO_Anchor_<12 hex digits>).`);
+      warnOnce(`${address}|id`, `[MQTT SECURITY] Refused ${address}: client ID "${clientId}" is not a node ID (SHIRO_Anchor_ or SHIRO_Lidar_ followed by 12 hex digits).`);
       return callback(refusal(IDENTIFIER_REJECTED, 'Client ID not allowed'), false);
     }
 
@@ -158,7 +184,8 @@ function createAccessControl(credentials, options = {}) {
   }
 
   function authorizePublish(client, packet, callback) {
-    if (mayPublish(packet && packet.topic)) return callback(null);
+    const kind = nodeKindOf(client && client.id);
+    if (kind && mayPublish(packet && packet.topic, kind)) return callback(null);
     const clientId = client && typeof client.id === 'string' ? client.id.slice(0, 60) : 'unknown';
     warnOnce(`${clientId}|pub`, `[MQTT SECURITY] ${clientId} may not publish to "${String(packet && packet.topic).slice(0, 80)}": disconnected.`);
     return callback(new Error('Publishing to this topic is not allowed'));
@@ -178,6 +205,8 @@ module.exports = {
   readAnchorCredentials,
   createAccessControl,
   anchorMacFromClientId,
+  lidarMacFromClientId,
+  nodeKindOf,
   mayPublish,
   maySubscribe,
   secretEquals,

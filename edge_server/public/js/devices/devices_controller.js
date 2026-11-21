@@ -9,6 +9,50 @@ let currentDeviceTypeFilter = 'ALL';
 let currentStatusFilter = null; // null | 'ONLINE' | 'OFFLINE'
 let currentAvailFilter = null;  // null | 'AVAILABLE' | 'IN_USE' | 'UNAVAILABLE'
 let isWsListenersRegistered = false;
+// Live picture of the LiDAR room sensors (Phase 10), by device ID and by MAC address
+const roomSensorLive = new Map();
+
+/** The badge of a device category, the same in the fleet table, the radar and the enrolment window. */
+function deviceTypeBadge(type) {
+  if (type === 'ANCHOR') return `<span class="badge badge-neutral">📡 Anchor</span>`;
+  if (type === 'HEADSET') return `<span class="badge badge-neutral" style="color:var(--primary); font-weight:700;">🥽 Headset</span>`;
+  if (type === 'ROOM_SENSOR') return `<span class="badge badge-neutral" style="color:#7C3AED; font-weight:700;">🌀 LiDAR</span>`;
+  return `<span class="badge badge-info">🛏️ Wristband</span>`;
+}
+
+/** A LiDAR node's live state: scanning and how fast, points per turn, the LiDAR's own health. */
+function lidarLiveHtml(s) {
+  if (!s) return `<span style="color:var(--text-muted); font-size:11px;">⚡ 5 V supply · no report yet</span>`;
+  if (!s.online) return `<span style="color:var(--text-muted); font-size:11px;">⚡ 5 V supply · not connected</span>`;
+  const node = s.node || {};
+  const health = node.health || 'UNKNOWN';
+  const scanText = s.scanning
+    ? `${s.turns_per_s} turns/s${s.last_frame ? ` · ${s.last_frame.valid} points` : ''}`
+    : `${node.state || 'connected'}, not scanning`;
+  return `
+    <div style="font-size:11px; line-height:1.45;">
+      <div style="font-weight:700; color:${s.scanning ? 'var(--success)' : '#D97706'};">🌀 ${escapeHtml(scanText)}</div>
+      <div style="color:${health === 'OK' ? 'var(--success)' : health === 'WARNING' ? '#D97706' : 'var(--danger)'};">LiDAR health ${escapeHtml(health)}</div>
+    </div>
+  `;
+}
+
+function rememberRoomSensor(s) {
+  if (!s || !s.mac) return;
+  roomSensorLive.set(s.mac, s);
+  if (s.device_id) roomSensorLive.set(s.device_id, s);
+}
+
+/** Loads the live LiDAR states once; later ones arrive as ROOM_SENSOR_STATUS messages. */
+async function loadRoomSensorStatus() {
+  try {
+    const res = await fetch('/api/room-sensors/status');
+    const data = await res.json();
+    if (data.success && Array.isArray(data.sensors)) data.sensors.forEach(rememberRoomSensor);
+  } catch (err) {
+    console.warn('[DEVICES] Could not load the LiDAR status:', err.message);
+  }
+}
 
 /**
  * Robust helper to invoke custom modal safely.
@@ -39,6 +83,7 @@ function safeShowToast(message, type = 'info', duration = 3500) {
  */
 async function initDevicesModule() {
   setupDeviceWsListeners();
+  await loadRoomSensorStatus();
   await Promise.all([
     loadDevicesFleet(),
     loadUnprovisionedDiscovery()
@@ -98,6 +143,21 @@ function setupDeviceWsListeners() {
     if (!msg || !Array.isArray(msg.unprovisioned)) return;
     cachedUnprovisioned = msg.unprovisioned;
     renderDiscoveryTable(cachedUnprovisioned);
+  });
+
+  // 6. LiDAR room sensors: scanning, turns per second, LiDAR health (at most once a second each)
+  window.wsClient.on('ROOM_SENSOR_STATUS', (msg) => {
+    const s = msg && msg.sensor;
+    if (!s || !s.mac) return;
+    rememberRoomSensor(s);
+    if (s.device_id) {
+      const row = document.querySelector(`tr[data-device-id="${CSS.escape(String(s.device_id))}"]`);
+      const cell = row && row.querySelector('.device-power-cell');
+      if (cell) cell.innerHTML = lidarLiveHtml(s);
+    }
+    const radarRow = document.querySelector(`tr[data-radar-mac="${CSS.escape(String(s.mac))}"]`);
+    const radarCell = radarRow && radarRow.querySelector('.radar-rssi-cell');
+    if (radarCell) radarCell.innerHTML = lidarLiveHtml(s);
   });
 }
 
@@ -238,6 +298,8 @@ function getRadarSignalHtml(d) {
     `;
   }
 
+  if (d.device_type === 'ROOM_SENSOR') return lidarLiveHtml(roomSensorLive.get(d.mac));
+
   // WRISTBAND
   return `
     <div style="display:flex; align-items:center; gap:8px;">
@@ -252,6 +314,9 @@ function getRadarSignalHtml(d) {
 function getRadarBatteryHtml(d) {
   if (d.device_type === 'ANCHOR') {
     return `<span style="color:var(--text-muted); font-size:12px;">⚡ AC Mains Power</span>`;
+  }
+  if (d.device_type === 'ROOM_SENSOR') {
+    return `<span style="color:var(--text-muted); font-size:12px;">⚡ 5 V supply</span>`;
   }
   if (d.battery_level !== null && d.battery_level !== undefined) {
     const batVal = Math.min(100, Math.max(0, Number(d.battery_level)));
@@ -321,11 +386,7 @@ function renderDiscoveryTable(items) {
       const tr = document.createElement('tr');
       tr.setAttribute('data-radar-mac', d.mac);
 
-      const typePill = d.device_type === 'WRISTBAND' 
-        ? `<span class="badge badge-info">🛏️ Wristband</span>`
-        : d.device_type === 'ANCHOR'
-        ? `<span class="badge badge-neutral">📡 Anchor</span>`
-        : `<span class="badge badge-neutral">🥽 Headset</span>`;
+      const typePill = deviceTypeBadge(d.device_type);
 
       tr.innerHTML = `
         <td class="mono" style="font-weight: 700; color: var(--primary);">${escapeHtml(d.mac)}</td>
@@ -410,6 +471,7 @@ function updateFleetCounts() {
   const pillWristband = document.getElementById('filter-pill-wristband');
   const pillAnchor = document.getElementById('filter-pill-anchor');
   const pillHeadset = document.getElementById('filter-pill-headset');
+  const pillRoomSensor = document.getElementById('filter-pill-room-sensor');
 
   const countBadge = document.getElementById('fleet-count-badge');
 
@@ -423,6 +485,7 @@ function updateFleetCounts() {
   const wristbands = cachedFleet.filter(d => d.device_type === 'WRISTBAND').length;
   const anchors = cachedFleet.filter(d => d.device_type === 'ANCHOR').length;
   const headsets = cachedFleet.filter(d => d.device_type === 'HEADSET').length;
+  const roomSensors = cachedFleet.filter(d => d.device_type === 'ROOM_SENSOR').length;
 
   const online = cachedFleet.filter(d => d.status === 'ONLINE' || d.status === 'CHARGING').length;
   const offline = cachedFleet.filter(d => d.status === 'OFFLINE' || (!d.status || d.status === 'STANDBY')).length;
@@ -435,6 +498,7 @@ function updateFleetCounts() {
   if (pillWristband) pillWristband.innerText = `🛏️ Wristbands (${wristbands})`;
   if (pillAnchor) pillAnchor.innerText = `📡 Anchors (${anchors})`;
   if (pillHeadset) pillHeadset.innerText = `🥽 Headsets (${headsets})`;
+  if (pillRoomSensor) pillRoomSensor.innerText = `🌀 LiDAR (${roomSensors})`;
 
   if (countBadge) countBadge.innerText = `${total} Device${total === 1 ? '' : 's'}`;
 
@@ -537,9 +601,7 @@ function renderDevicesTable(filtered) {
   }
 
   tbody.innerHTML = filtered.map(d => {
-    let typeBadge = `<span class="badge badge-info">🛏️ Wristband</span>`;
-    if (d.device_type === 'ANCHOR') typeBadge = `<span class="badge badge-neutral">📡 Anchor</span>`;
-    if (d.device_type === 'HEADSET') typeBadge = `<span class="badge badge-neutral" style="color:var(--primary); font-weight:700;">🥽 Headset</span>`;
+    const typeBadge = deviceTypeBadge(d.device_type);
 
     let statusBadge = `<span class="badge badge-live">● ONLINE</span>`;
     if (d.status === 'CHARGING') {
@@ -549,7 +611,9 @@ function renderDevicesTable(filtered) {
     }
 
     let powerDisplay = `<span style="color:var(--text-muted); font-size:11px;">⚡ Mains / USB</span>`;
-    if (d.battery_level !== null && d.battery_level !== undefined) {
+    if (d.device_type === 'ROOM_SENSOR') {
+      powerDisplay = lidarLiveHtml(roomSensorLive.get(d.device_id) || roomSensorLive.get(String(d.mac_address || '').toUpperCase()));
+    } else if (d.battery_level !== null && d.battery_level !== undefined) {
       const bat = Math.min(100, Math.max(0, Number(d.battery_level)));
       const isCharging = (d.status === 'CHARGING' || d.is_charging === true);
       const batColor = isCharging ? '#D97706' : (bat > 40 ? '#16A34A' : bat > 20 ? '#D97706' : '#DC2626');
@@ -658,9 +722,7 @@ async function openEnrollModal(mac, model, type, battery, ip) {
     return;
   }
 
-  const typePill = type === 'WRISTBAND' ? `<span class="badge badge-info">🛏️ Wristband</span>`
-    : type === 'ANCHOR' ? `<span class="badge badge-neutral">📡 Anchor</span>`
-    : `<span class="badge badge-neutral">🥽 Headset</span>`;
+  const typePill = deviceTypeBadge(type);
 
   const modalHtml = `
     <div style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">
@@ -759,6 +821,7 @@ async function openManualEnrollModal() {
           <option value="WRISTBAND" selected>🛏️ Wearable Wristband Tag</option>
           <option value="ANCHOR">📡 Stationary Wall Anchor</option>
           <option value="HEADSET">🥽 Meta Quest 3 Headset</option>
+          <option value="ROOM_SENSOR">🌀 LiDAR Room Sensor</option>
         </select>
       </div>
       <div class="form-group">
@@ -785,6 +848,7 @@ async function openManualEnrollModal() {
     if (t === 'ANCHOR' && modelInput) modelInput.value = 'ESP32-WROOM-32E';
     if (t === 'HEADSET' && modelInput) modelInput.value = 'Meta Quest 3 (128GB)';
     if (t === 'WRISTBAND' && modelInput) modelInput.value = 'Seeed Studio XIAO ESP32-C6';
+    if (t === 'ROOM_SENSOR' && modelInput) modelInput.value = 'ESP32-S3 + RPLIDAR C1';
 
     try {
       const res = await fetch(`/api/devices/next-id?type=${encodeURIComponent(t)}`);
@@ -845,12 +909,22 @@ async function openManualEnrollModal() {
   setTimeout(window.updateSuggestedManualId, 50);
 }
 
+// The boards an anchor can be (Phase 10: not enough WROOM-32E boards for six anchors)
+const ANCHOR_MODELS = ['ESP32-WROOM-32E', 'ESP32-S3 (N16R8)', 'Seeed Studio XIAO ESP32-C3'];
+
 /**
- * Opens modal to edit device service availability and maintenance.
+ * Opens modal to edit device service availability, hardware model and maintenance.
  */
 function openEditDeviceModal(deviceId) {
   const d = cachedFleet.find(dev => dev.device_id === deviceId);
   if (!d) return;
+
+  // An anchor's board is chosen from the list; other devices keep the model they were enrolled with
+  const models = d.hardware_model && !ANCHOR_MODELS.includes(d.hardware_model) ? [d.hardware_model, ...ANCHOR_MODELS] : ANCHOR_MODELS;
+  const optionsHtml = models.map(m => `<option value="${escapeHtml(m)}" ${m === d.hardware_model ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('');
+  const modelField = d.device_type === 'ANCHOR'
+    ? `<select class="form-control" id="edit-dev-model">${optionsHtml}</select>`
+    : `<input type="text" class="form-control" value="${escapeHtml(d.hardware_model || '')}" readonly style="background:#F1F5F9;">`;
 
   const isBound = Boolean(d.bound_patient_name);
   const isAssignedWard = Boolean(d.assigned_ward_id);
@@ -907,6 +981,13 @@ function openEditDeviceModal(deviceId) {
         <input type="text" class="form-control" id="edit-dev-fw" value="${escapeHtml(d.firmware_version || 'v1.0.0')}">
       </div>
     </div>
+
+    <div class="form-grid-2">
+      <div class="form-group">
+        <label class="form-label" style="font-weight:600;">Hardware Model</label>
+        ${modelField}
+      </div>
+    </div>
   `;
 
   safeShowModal({
@@ -919,6 +1000,7 @@ function openEditDeviceModal(deviceId) {
       const availEl = document.getElementById('edit-dev-availability');
       const availability = availEl ? availEl.value : (d.availability_status || 'AVAILABLE');
       const fw = document.getElementById('edit-dev-fw')?.value.trim();
+      const modelEl = document.getElementById('edit-dev-model');
 
       try {
         const res = await fetch('/api/devices/update', {
@@ -927,7 +1009,8 @@ function openEditDeviceModal(deviceId) {
           body: JSON.stringify({
             device_id: d.device_id,
             availability_status: availability,
-            firmware_version: fw
+            firmware_version: fw,
+            ...(modelEl ? { hardware_model: modelEl.value } : {})
           })
         });
 

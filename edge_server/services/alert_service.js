@@ -65,7 +65,10 @@ function describeLocation(wardId, bedId, posX, posY) {
   return parts.length > 0 ? parts.join(', ') : 'location unknown';
 }
 
-function buildAlertMessage(category, { impactG, stillness, freefallMinG, bpm, spo2, wardId, bedId, posX, posY }) {
+// The two kinds of geofence alert (Phase 10): left through the door, or standing at it
+const GEOFENCE_KINDS = Object.freeze(['LEFT_WARD', 'AT_DOOR']);
+
+function buildAlertMessage(category, { impactG, stillness, freefallMinG, bpm, spo2, wardId, bedId, posX, posY, geofenceKind = null, seconds = null }) {
   const where = describeLocation(wardId, bedId, posX, posY);
   if (category === 'FALL_ACCIDENT') {
     const freefall = freefallMinG !== null ? `free-fall minimum ${freefallMinG} g` : 'free-fall minimum not reported';
@@ -79,7 +82,15 @@ function buildAlertMessage(category, { impactG, stillness, freefallMinG, bpm, sp
     return `PHYSIOLOGICAL ANOMALY: Heart rate ${hr}, SpO2 ${ox}; ${where}. Immediate clinical check required.`;
   }
   if (category === 'GEOFENCE_BREACH') {
-    return `GEOFENCE BOUNDARY BREACH: Patient outside the authorised boundary; ${where}.`;
+    if (geofenceKind === 'LEFT_WARD') {
+      const gone = seconds !== null ? `, not seen in the room for ${seconds} s` : '';
+      return `LEFT THE WARD: last seen at the door${gone}; ${where}.`;
+    }
+    if (geofenceKind === 'AT_DOOR') {
+      const stay = seconds !== null ? ` for ${seconds} s` : '';
+      return `AT THE DOOR: standing at the door${stay}, may be about to leave; ${where}.`;
+    }
+    return `GEOFENCE: patient at the door or outside the ward; ${where}.`;
   }
   return `Clinical safety event; ${where}.`;
 }
@@ -157,6 +168,11 @@ async function recordIncident(incidentData) {
   }
 
   const category = incidentData.incident_category || 'FALL_ACCIDENT';
+  // Only a geofence alert has a kind; anything else stays NULL
+  const geofenceKind = category === 'GEOFENCE_BREACH' && GEOFENCE_KINDS.includes(incidentData.geofence_kind)
+    ? incidentData.geofence_kind
+    : null;
+  const geofenceSeconds = numberOrNull(incidentData.geofence_seconds);
   const impactG = numberOrNull(incidentData.kinematic_impact_force);
   const stillness = numberOrNull(incidentData.post_impact_stillness);
   const freefallMinG = numberOrNull(incidentData.freefall_min_g);
@@ -164,7 +180,7 @@ async function recordIncident(incidentData) {
   const spo2 = numberOrNull(incidentData.spo2);
 
   let alertMessage = incidentData.alert_message ||
-    buildAlertMessage(category, { impactG, stillness, freefallMinG, bpm, spo2, wardId, bedId, posX, posY });
+    buildAlertMessage(category, { impactG, stillness, freefallMinG, bpm, spo2, wardId, bedId, posX, posY, geofenceKind, seconds: geofenceSeconds });
   if (isSimulated && !alertMessage.startsWith('[SIMULATION]')) {
     alertMessage = `[SIMULATION] ${alertMessage}`;
   }
@@ -177,12 +193,12 @@ async function recordIncident(incidentData) {
     try {
       await pool.query(`
         INSERT INTO emergency_incident_logs
-        (incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id, incident_category,
+        (incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id, incident_category, geofence_kind,
          pos_x, pos_y, kinematic_impact_force, post_impact_stillness, freefall_min_g, heart_rate, spo2,
          alert_message, is_simulated, resolution_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
       `, [
-        incidentId, patientId, patientName, wristbandMac, wardId, bedId, category,
+        incidentId, patientId, patientName, wristbandMac, wardId, bedId, category, geofenceKind,
         posX, posY, impactG, stillness, freefallMinG, bpm, spo2, alertMessage, isSimulated ? 1 : 0
       ]);
       persisted = true;
@@ -206,6 +222,7 @@ async function recordIncident(incidentData) {
     wristband_mac: wristbandMac,
     device_id: deviceId,
     incident_category: category,
+    geofence_kind: geofenceKind,
     trigger_timestamp: new Date().toISOString(),
     pos_x: posX,
     pos_y: posY,
@@ -386,7 +403,7 @@ async function getIncidentHistory({ limit = 50, patientId = null, range = 'all',
 
   const [rows] = await pool.query(`
     SELECT incident_id, patient_id, patient_name, wristband_mac, ward_id, bed_id,
-           incident_category, trigger_timestamp, pos_x, pos_y,
+           incident_category, geofence_kind, trigger_timestamp, pos_x, pos_y,
            kinematic_impact_force, post_impact_stillness, freefall_min_g,
            heart_rate, spo2, alert_message, is_simulated,
            acknowledgment_time, response_latency_seconds, attending_clinician,
@@ -416,6 +433,8 @@ async function getIncidentHistory({ limit = 50, patientId = null, range = 'all',
 
 module.exports = {
   UNVERIFIED_CLINICIAN,
+  GEOFENCE_KINDS,
+  buildAlertMessage,
   recordIncident,
   evaluateTelemetry,
   acknowledgeIncident,

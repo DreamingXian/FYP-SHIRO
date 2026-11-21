@@ -7,7 +7,7 @@
 CREATE TABLE IF NOT EXISTS `devices` (
     `device_id` VARCHAR(32) NOT NULL PRIMARY KEY,
     `mac_address` VARCHAR(32) NOT NULL UNIQUE,
-    `device_type` ENUM('WRISTBAND', 'ANCHOR', 'HEADSET') NOT NULL,
+    `device_type` ENUM('WRISTBAND', 'ANCHOR', 'HEADSET', 'ROOM_SENSOR') NOT NULL,
     `hardware_model` VARCHAR(64) NOT NULL DEFAULT 'ESP32',
     `firmware_version` VARCHAR(32) DEFAULT 'v1.0.0',
     `ip_address` VARCHAR(45) NULL,

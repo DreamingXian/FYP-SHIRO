@@ -58,6 +58,11 @@ describe('permission table', () => {
     assert.equal(requiredAccess('GET', '/api/some/new/route'), ACCESS.STAFF, 'unlisted addresses are protected');
     assert.equal(requiredAccess('GET', '/api/admin/audit'), ACCESS.ADMIN);
     assert.equal(requiredAccess('POST', '/api/devices/enroll'), ACCESS.ADMIN);
+    // LiDAR: storing an empty room is an admin's; looking and aligning (computes only) are any clinician's
+    assert.equal(requiredAccess('POST', '/api/room-sensors/learn'), ACCESS.ADMIN);
+    assert.equal(requiredAccess('POST', '/api/room-sensors/learn/cancel'), ACCESS.ADMIN);
+    assert.equal(requiredAccess('GET', '/api/room-sensors/scan'), ACCESS.STAFF);
+    assert.equal(requiredAccess('POST', '/api/room-sensors/align'), ACCESS.STAFF);
   });
 
   test('roles decide who may do what', () => {

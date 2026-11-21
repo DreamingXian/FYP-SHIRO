@@ -19,8 +19,8 @@ const MAX_MESSAGE_BYTES = 16 * 1024;
 
 const RSSI_AT_1M = { min: -120, max: 0 };   // calibration value A, dBm
 const PATH_LOSS = { min: 0.5, max: 10 };    // calibration value n
-const ACTIVE_MODE_SECONDS = { min: 5, max: 600 };
-const ACTIVE_MODE_DEFAULT_SECONDS = 60;     // the length of one activation in the firmware
+const ACTIVE_MODE_SECONDS = { min: 5, max: 600 };   // a requested length is checked, but ...
+const ACTIVE_MODE_FIRMWARE_SECONDS = 120;           // ... the wristband streams for its own fixed time (firmware V5.3)
 const WARD_COORDINATE = { min: -100, max: 100 }; // m from the ward's corner
 const PERSON_HEIGHT = { min: 0.5, max: 2.5 };    // m, measured by the headset
 
@@ -47,13 +47,14 @@ function validateCommand(cmd) {
       return { action: cmd.action, anchorId, A, n };
     }
 
-    case 'SET_ACTIVE_MODE':
-      return {
-        action: cmd.action,
-        tagId: requireDeviceRef(cmd.tag_id || data.tagId, 'tag_id'),
-        targetMac: optionalMac(cmd.target_mac || data.targetMac, 'target_mac'),
-        duration: optionalInt(cmd.duration !== undefined ? cmd.duration : data.duration, 'duration', ACTIVE_MODE_SECONDS, ACTIVE_MODE_DEFAULT_SECONDS)
-      };
+    case 'SET_ACTIVE_MODE': {
+      const tagId = requireDeviceRef(cmd.tag_id || data.tagId, 'tag_id');
+      const targetMac = optionalMac(cmd.target_mac || data.targetMac, 'target_mac');
+      optionalInt(cmd.duration !== undefined ? cmd.duration : data.duration, 'duration', ACTIVE_MODE_SECONDS, null);
+      // The anchor only tells the wristband to start; it streams for its own fixed time,
+      // so that is the length sent and reported back
+      return { action: cmd.action, tagId, targetMac, duration: ACTIVE_MODE_FIRMWARE_SECONDS };
+    }
 
     // A headset sees the patient of a wristband (linked to a person its depth sensor
     // sees) at x, y in ward coordinates; seen: false when it no longer does

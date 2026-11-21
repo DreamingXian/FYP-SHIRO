@@ -10,6 +10,7 @@
   const statusEl = $('report-status');
 
   const CATEGORY_TEXT = { FALL_ACCIDENT: 'Fall', CRITICAL_VITALS: 'Critical vitals', GEOFENCE_BREACH: 'Left the ward' };
+  const GEOFENCE_KIND_TEXT = { LEFT_WARD: 'Left the ward', AT_DOOR: 'At the door' };
 
   const pad = (n) => String(n).padStart(2, '0');
   function fmtTime(isoText) {
@@ -118,7 +119,7 @@
           <tr>
             <td>${escapeHtml(fmtTime(i.time))}</td>
             <td>${escapeHtml(i.patient_name || 'not recorded')}<div class="muted">${escapeHtml(i.patient_id || '')}</div></td>
-            <td>${escapeHtml(CATEGORY_TEXT[i.category] || i.category)}${testTag}</td>
+            <td>${escapeHtml((i.category === 'GEOFENCE_BREACH' && GEOFENCE_KIND_TEXT[i.geofence_kind]) || CATEGORY_TEXT[i.category] || i.category)}${testTag}</td>
             <td>${escapeHtml(i.message || '')}</td>
             <td>${escapeHtml(response)}</td>
             <td>${escapeHtml(i.notes || '')}</td>

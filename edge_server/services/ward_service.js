@@ -8,6 +8,8 @@ const path = require('path');
 const ipsService = require('./ips_service');
 const { getCalibration } = require('./kalman_filter');
 
+// Each template has 6 anchors at 2.40 m where the placement planner
+// (services/ips/placement.js) puts them for that layout.
 const WARD_TEMPLATES = {
   'L_SHAPED': {
     template_id: 'L_SHAPED',
@@ -25,9 +27,12 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-A1-04', bed_code: 'Bed 4', x: 4.70, y: 0.40, width: 0.90, length: 2.00, status: 'UNAVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 6.40, y: 2.30, z: 2.40, wall_location: 'E wall · 2.30 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 1.80, y: 3.35, z: 2.40, wall_location: 'Ensuite Bathroom A1 east · 0.15 m from SE', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 4.20, y: 0.00, z: 2.40, wall_location: 'S wall · 2.20 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor D', device_id: null, mac_address: '', x: 4.10, y: 4.80, z: 2.40, wall_location: 'N wall · 2.30 m from NE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor E', device_id: null, mac_address: '', x: 2.50, y: 0.00, z: 2.40, wall_location: 'S wall · 2.50 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor F', device_id: null, mac_address: '', x: 0.95, y: 3.20, z: 2.40, wall_location: 'Ensuite Bathroom A1 south · 0.85 m from SE', status: 'STANDBY' }
     ]
   },
   'RECTANGLE': {
@@ -44,9 +49,12 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-A1-04', bed_code: 'Bed 4', x: 4.70, y: 0.40, width: 0.90, length: 2.00, status: 'AVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.50, y: 4.30, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 5.90, y: 4.30, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.80, y: 0.50, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.00, y: 2.40, z: 2.40, wall_location: 'W wall · 2.40 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 6.40, y: 2.40, z: 2.40, wall_location: 'E wall · 2.40 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 3.90, y: 4.80, z: 2.40, wall_location: 'N wall · 2.50 m from NE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor D', device_id: null, mac_address: '', x: 2.40, y: 0.00, z: 2.40, wall_location: 'S wall · 2.40 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor E', device_id: null, mac_address: '', x: 4.00, y: 0.00, z: 2.40, wall_location: 'S wall · 2.40 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor F', device_id: null, mac_address: '', x: 2.50, y: 4.80, z: 2.40, wall_location: 'N wall · 2.50 m from NW corner', status: 'STANDBY' }
     ]
   },
   'ISOLATION': {
@@ -63,9 +71,12 @@ const WARD_TEMPLATES = {
       { bed_id: 'BED-ISO-02', bed_code: 'Bed 2', x: 3.10, y: 1.50, width: 0.90, length: 2.00, status: 'AVAILABLE' }
     ],
     anchors: [
-      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 0.40, y: 3.60, z: 1.80, wall_location: 'North-West Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 4.40, y: 3.60, z: 1.80, wall_location: 'North-East Wall', status: 'STANDBY' },
-      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 2.40, y: 0.40, z: 1.80, wall_location: 'South Wall', status: 'STANDBY' }
+      { anchor_id: 'Anchor A', device_id: null, mac_address: '', x: 4.80, y: 1.30, z: 2.40, wall_location: 'E wall · 1.30 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor B', device_id: null, mac_address: '', x: 1.60, y: 2.55, z: 2.40, wall_location: 'Ensuite Bathroom east · 0.15 m from SE', status: 'STANDBY' },
+      { anchor_id: 'Anchor C', device_id: null, mac_address: '', x: 3.20, y: 0.00, z: 2.40, wall_location: 'S wall · 1.60 m from SE corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor D', device_id: null, mac_address: '', x: 1.70, y: 0.00, z: 2.40, wall_location: 'S wall · 1.70 m from SW corner', status: 'STANDBY' },
+      { anchor_id: 'Anchor E', device_id: null, mac_address: '', x: 1.60, y: 3.35, z: 2.40, wall_location: 'Ensuite Bathroom east · 0.65 m from NE', status: 'STANDBY' },
+      { anchor_id: 'Anchor F', device_id: null, mac_address: '', x: 4.80, y: 2.60, z: 2.40, wall_location: 'E wall · 1.40 m from NE corner', status: 'STANDBY' }
     ]
   }
 };
@@ -106,6 +117,12 @@ async function getWardConfig(wardId) {
      LEFT JOIN devices d ON wa.device_id = d.device_id
      WHERE wa.ward_id = ? 
      ORDER BY wa.anchor_id ASC`,
+    [wardId]
+  );
+
+  // 5. Room sensors (LiDAR, Phase 10)
+  const [roomSensors] = await pool.query(
+    'SELECT sensor_id, device_id, x, y, base_height, heading_deg, wall_location FROM ward_room_sensors WHERE ward_id = ? ORDER BY sensor_id ASC',
     [wardId]
   );
 
@@ -157,8 +174,55 @@ async function getWardConfig(wardId) {
       calibrated_a: a.calibrated_a !== null && a.calibrated_a !== undefined ? parseFloat(a.calibrated_a) : null,
       calibrated_n: a.calibrated_n !== null && a.calibrated_n !== undefined ? parseFloat(a.calibrated_n) : null,
       last_calibrated_at: a.last_calibrated_at || null
-    }))
+    })),
+    room_sensors: roomSensors.map(roomSensorFromRow)
   };
+}
+
+function roomSensorFromRow(r) {
+  return {
+    sensor_id: r.sensor_id,
+    device_id: r.device_id || null,
+    x: parseFloat(r.x),
+    y: parseFloat(r.y),
+    base_height: parseFloat(r.base_height),
+    heading_deg: parseFloat(r.heading_deg),
+    wall_location: r.wall_location || ''
+  };
+}
+
+/**
+ * Replaces a ward's room sensors and binds their devices to the ward. A save
+ * without a room_sensors list (an older client or JSON file) keeps the stored ones.
+ */
+/** The LiDAR manager reads the placements (and empty rooms) again after a change. */
+function reloadRoomSensors() {
+  require('./room_sensor/room_sensor_manager').instance().reload().catch(err => {
+    logger.warn('[WARD SERVICE] Error refreshing the LiDAR placements:', err.message);
+  });
+  require('./room_sensor/people_service').instance().reload();
+}
+
+async function replaceRoomSensors(conn, wardId, list) {
+  let sensors = list;
+  if (!Array.isArray(sensors)) {
+    const [rows] = await conn.query('SELECT sensor_id, device_id, x, y, base_height, heading_deg, wall_location FROM ward_room_sensors WHERE ward_id = ?', [wardId]);
+    sensors = rows.map(roomSensorFromRow);
+  }
+  await conn.query('DELETE FROM ward_room_sensors WHERE ward_id = ?', [wardId]);
+  for (let i = 0; i < sensors.length; i++) {
+    const s = sensors[i];
+    const sensorId = s.sensor_id || `LiDAR ${i + 1}`;
+    const devId = typeof s.device_id === 'string' && s.device_id.trim() !== '' ? s.device_id.trim() : null;
+    if (devId) {
+      await conn.query("UPDATE devices SET assigned_ward_id = ?, availability_status = 'IN_USE' WHERE device_id = ?", [wardId, devId]);
+    }
+    const heading = ((Number(s.heading_deg) || 0) % 360 + 360) % 360;
+    await conn.query(
+      'INSERT INTO ward_room_sensors (sensor_id, ward_id, device_id, x, y, base_height, heading_deg, wall_location) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [sensorId, wardId, devId, Number(s.x) || 0, Number(s.y) || 0, Number.isFinite(Number(s.base_height)) ? Number(s.base_height) : 0.92, heading, s.wall_location || '']
+    );
+  }
 }
 
 /**
@@ -285,11 +349,15 @@ async function saveWardConfig(data) {
       }
     }
 
+    // 5. Replace room sensors (LiDAR); their devices were unbound with the anchors above
+    await replaceRoomSensors(conn, wardId, data.room_sensors);
+
     await conn.commit();
     // Refresh IPS engine anchor coordinates cache
     ipsService.reloadWardAnchorsCache().catch(err => {
       logger.warn('[WARD SERVICE] Error refreshing IPS cache:', err.message);
     });
+    reloadRoomSensors();
     return { success: true, ward_id: wardId };
   } catch (err) {
     await conn.rollback();
@@ -311,6 +379,7 @@ async function getAllWards() {
       (SELECT COUNT(*) FROM ward_beds b WHERE b.ward_id = r.ward_id) AS bed_count,
       (SELECT COUNT(*) FROM ward_anchors a WHERE a.ward_id = r.ward_id) AS anchor_count,
       (SELECT COUNT(*) FROM ward_anchors a WHERE a.ward_id = r.ward_id AND a.device_id IS NOT NULL AND a.device_id != '') AS assigned_anchor_count,
+      (SELECT COUNT(*) FROM ward_room_sensors s WHERE s.ward_id = r.ward_id) AS room_sensor_count,
       (SELECT COUNT(*) FROM ward_obstacles o WHERE o.ward_id = r.ward_id) AS obstacle_count
     FROM ward_rooms r
     ORDER BY r.ward_id ASC;
@@ -331,6 +400,7 @@ async function getAllWards() {
     bed_count: parseInt(r.bed_count, 10) || 0,
     anchor_count: parseInt(r.anchor_count, 10) || 0,
     assigned_anchor_count: parseInt(r.assigned_anchor_count, 10) || 0,
+    room_sensor_count: parseInt(r.room_sensor_count, 10) || 0,
     obstacle_count: parseInt(r.obstacle_count, 10) || 0
   }));
 }
@@ -347,6 +417,7 @@ async function deleteWard(wardId) {
     await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ?", [wardId]);
     await conn.query('DELETE FROM ward_rooms WHERE ward_id = ?', [wardId]);
     await conn.commit();
+    reloadRoomSensors();
     return { success: true, ward_id: wardId };
   } catch (err) {
     await conn.rollback();

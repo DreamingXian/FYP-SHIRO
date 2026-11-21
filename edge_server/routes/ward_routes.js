@@ -40,6 +40,12 @@ async function handleWardRoutes(pathname, req, res, parsedUrl, body) {
     }
   }
 
+  // Placement planner for anchors and the LiDAR (Phase 10): computes, stores nothing
+  if (pathname === '/api/ward/placement-plan' && req.method === 'POST') {
+    await wardController.planPlacement(req, res, body);
+    return true;
+  }
+
   if (pathname === '/api/ward/templates' && req.method === 'GET') {
     wardController.getTemplates(req, res);
     return true;

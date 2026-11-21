@@ -538,7 +538,7 @@ namespace ShiroMR
 
         /// <summary>
         /// Asks the edge server to put a wristband into 1 Hz mode through its strongest
-        /// anchor (SET_ACTIVE_MODE, 60 s). The answer arrives as OnActiveModeResult.
+        /// anchor (SET_ACTIVE_MODE, 120 s: the wristband's own length). The answer arrives as OnActiveModeResult.
         /// </summary>
         public bool RequestActiveMode(string tagId, string macAddress)
         {
@@ -548,7 +548,7 @@ namespace ShiroMR
             _lastActiveModeTag = safeTag;
             string json = "{\"action\":\"SET_ACTIVE_MODE\",\"tag_id\":\"" + safeTag + "\"" +
                           (safeMac.Length == 17 ? ",\"target_mac\":\"" + safeMac + "\"" : "") +
-                          ",\"duration\":60}";
+                          ",\"duration\":120}";
             _ = SendSafeAsync(json, CancellationToken.None);
             return true;
         }

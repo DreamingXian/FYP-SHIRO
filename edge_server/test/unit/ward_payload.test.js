@@ -3,7 +3,7 @@ require('./no_database');
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
-const { checkWardPayload } = require('../../controllers/ward_controller');
+const { checkWardPayload, checkAnchorCount } = require('../../controllers/ward_controller');
 const { HttpError } = require('../../utils/http');
 
 /** A plan as the ward editor sends it. */
@@ -68,10 +68,36 @@ describe('ward plan', () => {
     refuses(plan({ spatial_anchor_uuid: '"><script>' }), 'spatial_anchor_uuid');
   });
 
+  test('a LiDAR room sensor with its position, base height and heading is accepted', () => {
+    assert.doesNotThrow(() => checkWardPayload(plan({
+      room_sensors: [{ sensor_id: 'LiDAR 1', device_id: 'lidar-001', x: 0.98, y: 0.18, base_height: 0.92, heading_deg: 0, wall_location: 'south wall · 0.98 m from south-west' }]
+    })));
+    assert.doesNotThrow(() => checkWardPayload(plan({ room_sensors: [{ sensor_id: 'LiDAR 1', device_id: null, x: '1.2', y: 3, heading_deg: 270 }] })));
+  });
+
+  test('a LiDAR room sensor with bad values is refused', () => {
+    refuses(plan({ room_sensors: [{ sensor_id: 'LiDAR 1', heading_deg: 'north' }] }), 'room_sensors[0].heading_deg');
+    refuses(plan({ room_sensors: [{ sensor_id: 'LiDAR 1', base_height: 12 }] }), 'room_sensors[0].base_height');
+    refuses(plan({ room_sensors: [{ sensor_id: '<b>x</b>' }] }), 'room_sensors[0].sensor_id');
+    refuses(plan({ room_sensors: [{ sensor_id: 'LiDAR 1', device_id: 'lidar 001' }] }), 'room_sensors[0].device_id');
+    refuses(plan({ room_sensors: new Array(5).fill({ sensor_id: 'LiDAR 1' }) }), 'room_sensors');
+  });
+
   test('lists must be lists of objects and not unbounded', () => {
     refuses(plan({ beds: 'four' }), 'beds');
     refuses(plan({ beds: [1, 2] }), 'beds');
     refuses(plan({ anchors: new Array(33).fill({ anchor_id: 'Anchor A' }) }), 'anchors');
     refuses(plan({ door: [] }), 'door');
+  });
+
+  test('a ward is stored with 3 to 12 anchors', () => {
+    const anchors = (n) => Array.from({ length: n }, (_, i) => ({ anchor_id: `Anchor ${String.fromCharCode(65 + i)}`, x: i, y: 0, z: 2.4 }));
+    assert.doesNotThrow(() => checkWardPayload(plan({ anchors: anchors(12) })));
+    refuses(plan({ anchors: anchors(13) }), 'anchors');
+    assert.doesNotThrow(() => checkAnchorCount(plan({ anchors: anchors(3) })));
+    for (const n of [0, 2]) {
+      assert.throws(() => checkAnchorCount(plan({ anchors: anchors(n) })), (err) => err instanceof HttpError && err.status === 400 && /at least 3 anchors/.test(err.message), `${n} anchors`);
+    }
+    assert.throws(() => checkAnchorCount(plan({ anchors: undefined })), HttpError);
   });
 });

@@ -4,6 +4,7 @@
 const logger = require('../utils/logger');
 const wardService = require('../services/ward_service');
 const headsetAnchors = require('../services/headset_anchor_service');
+const placement = require('../services/ips/placement');
 const { broadcastToClients } = require('../services/websocket_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const {
@@ -22,6 +23,9 @@ const COORDINATE = { min: -1000, max: 1000 };
 const SIZE = { min: 0, max: 1000 };
 const RSSI_AT_1M = { min: -120, max: 0 };   // calibration value A, dBm
 const PATH_LOSS = { min: 0.5, max: 10 };    // calibration value n
+// Anchors per ward: 3 are the least for a position, 12 the most the placement planner plans
+const MIN_ANCHORS = 3;
+const MAX_ANCHORS = 12;
 
 /**
  * Checks a ward plan sent by the ward editor. Only the fields the server stores
@@ -68,7 +72,7 @@ function checkWardPayload(payload) {
     optionalNumber(b.rotation_deg, `${at}.rotation_deg`, { min: -360, max: 360 });
   });
 
-  optionalArray(payload.anchors, 'anchors', 32).forEach((a, i) => {
+  optionalArray(payload.anchors, 'anchors', MAX_ANCHORS).forEach((a, i) => {
     const at = `anchors[${i}]`;
     if (a.anchor_id !== undefined && a.anchor_id !== null && a.anchor_id !== '') requireLabel(a.anchor_id, `${at}.anchor_id`);
     optionalId(typeof a.device_id === 'string' ? a.device_id.trim() : a.device_id, `${at}.device_id`);
@@ -80,6 +84,62 @@ function checkWardPayload(payload) {
     optionalNumber(a.calibrated_a, `${at}.calibrated_a`, RSSI_AT_1M);
     optionalNumber(a.calibrated_n, `${at}.calibrated_n`, PATH_LOSS);
   });
+
+  // Room sensors (LiDAR, Phase 10)
+  optionalArray(payload.room_sensors, 'room_sensors', 4).forEach((s, i) => {
+    const at = `room_sensors[${i}]`;
+    if (s.sensor_id !== undefined && s.sensor_id !== null && s.sensor_id !== '') requireLabel(s.sensor_id, `${at}.sensor_id`);
+    optionalId(typeof s.device_id === 'string' ? s.device_id.trim() : s.device_id, `${at}.device_id`);
+    optionalText(s.wall_location, `${at}.wall_location`, 64);
+    optionalNumber(s.x, `${at}.x`, COORDINATE);
+    optionalNumber(s.y, `${at}.y`, COORDINATE);
+    optionalNumber(s.base_height, `${at}.base_height`, { min: 0, max: 5 });
+    optionalNumber(s.heading_deg, `${at}.heading_deg`, { min: -360, max: 360 });
+  });
+}
+
+/**
+ * A ward is stored with 3 to 12 anchors. (A layout sent to the planner may
+ * have fewer: it is still being drawn.)
+ */
+function checkAnchorCount(payload) {
+  const count = Array.isArray(payload.anchors) ? payload.anchors.length : 0;
+  if (count < MIN_ANCHORS) {
+    throw new HttpError(400, `A ward needs at least ${MIN_ANCHORS} anchors to position a patient (this one has ${count}).`);
+  }
+}
+
+/**
+ * POST /api/ward/placement-plan
+ * Suggests where to mount the anchors and the LiDAR for the layout the ward
+ * editor holds (saved or not). Computes only: nothing is stored.
+ * Body: { layout: <ward plan>, options: { anchor_count, mount_height, keep_existing, include_lidar } }
+ */
+async function planPlacement(req, res, body) {
+  try {
+    const payload = parseJsonBody(body);
+    const layout = payload.layout;
+    if (!layout || typeof layout !== 'object' || Array.isArray(layout)) throw new HttpError(400, 'layout must be an object.');
+    checkWardPayload(layout);
+    const options = payload.options && typeof payload.options === 'object' && !Array.isArray(payload.options) ? payload.options : {};
+    const flag = (value, name, fallback) => {
+      if (value === undefined || value === null) return fallback;
+      if (typeof value !== 'boolean') throw new HttpError(400, `options.${name} must be true or false.`);
+      return value;
+    };
+    const anchorCount = optionalNumber(options.anchor_count, 'options.anchor_count', { min: 3, max: 12 }, 6);
+    const mountHeight = optionalNumber(options.mount_height, 'options.mount_height', { min: 1.5, max: 3.0 });
+    const plan = placement.planPlacement(layout, {
+      anchorCount: Math.round(anchorCount),
+      mountHeight,
+      keepExisting: flag(options.keep_existing, 'keep_existing', false),
+      includeLidar: flag(options.include_lidar, 'include_lidar', true)
+    });
+    sendJson(res, 200, { success: true, plan });
+  } catch (err) {
+    // A room the planner cannot plan (too small, no free wall) is the request's problem
+    sendFailure(res, err instanceof placement.PlacementError ? new HttpError(400, err.message) : err, 'planPlacement');
+  }
 }
 
 async function listWards(req, res) {
@@ -106,6 +166,7 @@ async function saveWard(req, res, body) {
   try {
     const payload = parseJsonBody(body);
     checkWardPayload(payload);
+    checkAnchorCount(payload);
     const result = await wardService.saveWardConfig(payload);
 
     // Notify connected WebSockets (Web Dashboard & Meta Quest 3)
@@ -303,5 +364,9 @@ module.exports = {
   applyCalibration,
   resetCalibration,
   saveSpatialAnchor,
-  checkWardPayload
+  planPlacement,
+  checkWardPayload,
+  checkAnchorCount,
+  MIN_ANCHORS,
+  MAX_ANCHORS
 };

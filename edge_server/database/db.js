@@ -100,6 +100,10 @@ async function applySchema() {
   await migrateBindingHistory();
   const { migrate: migratePatientDischargeWard } = require('./migrate_patient_discharge_ward');
   await migratePatientDischargeWard();
+  const { migrate: migrateRoomSensorType } = require('./migrate_room_sensor_type');
+  await migrateRoomSensorType();
+  const { migrate: migrateIncidentGeofenceKind } = require('./migrate_incident_geofence_kind');
+  await migrateIncidentGeofenceKind();
 }
 
 /**

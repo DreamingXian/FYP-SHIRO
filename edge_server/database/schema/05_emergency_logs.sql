@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS `emergency_incident_logs` (
     `ward_id` VARCHAR(32) NULL,
     `bed_id` VARCHAR(32) NULL,
     `incident_category` ENUM('FALL_ACCIDENT', 'CRITICAL_VITALS', 'GEOFENCE_BREACH') NOT NULL,
+    `geofence_kind` ENUM('LEFT_WARD', 'AT_DOOR') NULL,
     `trigger_timestamp` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `pos_x` FLOAT NULL,
     `pos_y` FLOAT NULL,

@@ -1,0 +1,346 @@
+# Patient Position Accuracy in the Ward (Phase 10)
+
+Test record of how accurately the system places a patient inside the ward. Phase 10 adds a LiDAR room sensor (RPLIDAR C1) to the Bluetooth anchors. This record holds the measurement before that change (the baseline) and will hold the measurement after it, taken the same way in the same room.
+
+## Method
+
+- **Tool:** Live Map → **📏 Position test** (edge server, code `1151f4d`). The raw data are kept as CSV files in [data/](data/).
+- **Procedure:** the tester wears the wristband on the wrist, arm relaxed at the side, and stands on a spot taped on the floor. After a 10 s countdown the tool records the position shown by the system 4 times a second for 20 s (77–78 readings per run).
+- **Error:** the straight-line distance on the floor between the position shown and the taped spot.
+- **Zone:** DOOR (1 m into the room from the door), BED (the bed plus 0.3 m around it) or ROOM, from the ward layout. A reading is "zone correct" when the position shown is in the same zone as the spot.
+- **Spots:** P1–P7 standing, each facing north, east, south and west; one run each for sitting on the bed edge, lying on the bed and sitting at the table.
+- **Each reading also stores:** the Bluetooth-only position, the solver's raw result before smoothing, the motion state, and each anchor's filtered RSSI, raw RSSI and estimated distance.
+
+## Baseline: three Bluetooth anchors (20 November 2026)
+
+### Set-up
+
+| Item | Value |
+| :--- | :--- |
+| Date and time | 20 November 2026, 22:32–23:10 |
+| Tester | Project author |
+| Code | branch `fix/phase-10-ips`, `1151f4d` |
+| Ward | WARD-005: 2.29 m (west–east) × 3.39 m (south–north), ceiling 2.45 m. Origin at the south-west corner. Door on the east wall, 2.57–3.36 m from the south wall. Bed 1.10 × 2.00 m against the south wall, x 1.19–2.29 m, head at the south. |
+| Wristband | `TAG-002` |
+| Anchors | three ESP32-WROOM-32E, 2.40 m high, calibrated with 🎯 Calibrate Anchors |
+| LiDAR | not used (switched off) |
+| Session | `PT-20261120-223212`, 31 runs, 2,390 readings |
+
+| Anchor | Device | Position (x, y, height) | Calibrated RSSI at 1 m | Path-loss exponent |
+| :--- | :--- | :--- | :--- | :--- |
+| A | `anchor-001` | 1.89, 3.39, 2.40 m (north wall) | −48.4 dBm | 3.2 |
+| B | `anchor-002` | 2.29, 0.40, 2.40 m (east wall) | −50.1 dBm | 3.2 |
+| C | `anchor-003` | 0.00, 2.13, 2.40 m (west wall) | −62.8 dBm | 3.2 |
+
+### Results
+
+| Runs | Readings | Available | Mean error | Median | 95 % | Largest | Within 0.5 m | Within 1.0 m | Within 1.5 m | Zone correct |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| All | 2,390 | 100 % | 1.29 m | 1.35 m | 1.93 m | 2.04 m | 0 % | 35.5 % | 58.1 % | 80.6 % |
+| Standing | 2,159 | 100 % | 1.30 m | 1.35 m | 1.93 m | 2.04 m | 0 % | 35.8 % | 57.2 % | 85.7 % |
+| Sitting and lying | 231 | 100 % | 1.17 m | 1.21 m | 1.54 m | 1.54 m | 0 % | 33.3 % | 66.7 % | 33.3 % |
+
+Every reading came from Bluetooth (no LiDAR, no headset), with all three anchors heard.
+
+| Spot | True position (m) | True zone | Runs | Mean position shown (m) | Mean error | Zone correct |
+| :--- | :--- | :--- | ---: | :--- | ---: | ---: |
+| P1 standing | 0.70, 0.40 | ROOM | 4 | 0.17, 1.57 | 1.28 m | 100 % |
+| P2 standing | 0.70, 1.00 | ROOM | 4 | 0.15, 1.30 | 0.62 m | 100 % |
+| P3 standing | 0.70, 1.60 | ROOM | 4 | 0.20, 1.28 | 0.59 m | 100 % |
+| P4 standing | 0.60, 2.35 | ROOM | 4 | 0.15, 1.31 | 1.14 m | 100 % |
+| P5 standing | 1.20, 2.35 | ROOM | 4 | 0.15, 1.04 | 1.68 m | 100 % |
+| P6 standing | 1.90, 2.35 | ROOM | 4 | 0.21, 1.64 | 1.83 m | 100 % |
+| P7 standing | 1.90, 3.00 | DOOR | 4 | 0.21, 2.05 | 1.94 m | 0 % |
+| Bed edge, sitting | 1.35, 1.00 | BED | 1 | 0.24, 1.49 | 1.21 m | 0 % |
+| Bed, lying | 1.74, 1.00 | BED | 1 | 0.20, 1.11 | 1.54 m | 0 % |
+| Table, sitting | 0.80, 2.45 | ROOM | 1 | 0.19, 2.00 | 0.77 m | 100 % |
+
+Mean error by facing (standing): north 1.24 m, east 1.27 m, south 1.33 m, west 1.36 m.
+
+### Findings
+
+1. **The position shown did not follow the tester.** In all 2,390 readings it was within 0.26 m of the west wall (x between 0.15 and 0.24 m on average at every spot), wherever the tester stood. The smaller errors at P2 and P3 come from those spots lying close to where the estimate stayed, not from tracking. The raw solver result before smoothing behaved the same way: mean error 1.36 m, 95 % 2.62 m.
+2. **Cause: the distance estimates of anchors A and B were at their limit.** The server limits each anchor's distance estimate to the distance to that anchor's farthest room corner. A's estimate was at that limit in 79.1 % of readings, B's in 81.9 % and C's in 35.1 %. With A and B both reporting "as far away as possible", the solver puts the wristband where the room is farthest from both: along the west wall. With the calibration values above, any signal weaker than −67.8 dBm at A, or −69.1 dBm at B, already means "at the farthest corner or beyond". Most readings were weaker than that (per-run averages: A −64.6 to −81.4 dBm, B −66.1 to −91.1 dBm), often with the tester's body between the wristband and the anchor (finding 3).
+3. **Turning on the spot changed the signals as much as moving across the room.** At P1, turning from one direction to another changed an anchor's averaged signal by up to 15.2 dB. At the door spot (P7) anchor B changed by 22.5 dB. With the path-loss model used (exponent 3.2), 15 dB corresponds to a factor of about 3 in estimated distance. The body between the wristband and an anchor absorbs the 2.4 GHz signal, which no calibration value can correct for every direction.
+4. **Zones:** the system never placed the tester at the door or on the bed (0 % zone correct for P7 and both bed spots). The 80.6 % overall figure only reflects that the position shown was always in the general ROOM zone, where 7 of the 10 spots happen to be.
+5. **The position shown held still within each run.** The wristband reported STATIONARY in 97–100 % of the readings of each run, and the server's motion lock then holds the position. That is correct for someone standing still. It also meant the position shown hardly changed between spots.
+
+### Two references for the same room
+
+| Reference | Mean error | Median | 95 % | Within 1.0 m | Within 1.5 m |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| Baseline system (measured above) | 1.29 m | 1.35 m | 1.93 m | 35.5 % | 58.1 % |
+| A fixed guess: always the centre of the room (1.15, 1.70 m), scored on the same runs | 0.94 m | 0.85 m | 1.51 m | 74.2 % | 87.1 % |
+| Lower bound for these three anchors from the placement planner (expected error over the floor, `services/ips/placement.js`) | 0.96 m | 0.95 m | 1.02 m | – | – |
+
+- The baseline was worse than always showing the centre of this small room: it carried less information than none.
+- The planner's lower bound is what Bluetooth signal strength from these three anchors could reach at best (signal spread 6 dB). The measured 1.29 m is above it, as a real system's error must be.
+- Even at the bound, three anchors barely improve on knowing only the room (1.18 m expected error for the room alone). In a room 2.29 m wide, signal strength cannot place a patient much better than that.
+
+### Against the requirement
+
+The accuracy requirement (NFR-ACC-01) asks for a position within 1.0–1.5 m. The baseline has a mean error of 1.29 m, but only 58.1 % of readings were within 1.5 m (95 %: 1.93 m). It never recognised the door or the bed. In practice the baseline cannot tell where in WARD-005 the patient is. This is the reason for the LiDAR room sensor in Phase 10.
+
+## Six Bluetooth anchors (21 November 2026)
+
+The same spots, facings and postures, after three anchors were added where the placement planner put them. The position shown is still Bluetooth only: the LiDAR was mounted and its turns were recorded with every run, but it did not yet give positions.
+
+### Set-up
+
+| Item | Value |
+| :--- | :--- |
+| Date and time | 21 November 2026, 05:58–06:24 |
+| Tester | Project author |
+| Code | edge server `94c9863` (Phase 10 step 5a); anchor firmware V4 on A–D, V4.1 on E and F (`830ca38`) |
+| Ward | WARD-005, as in the baseline |
+| Wristband | `TAG-002` |
+| Anchors | A, B, C unchanged (2.40 m high); D, E, F added at 2.30 m where the placement planner put them. A–D are ESP32-WROOM-32E boards, E and F Seeed XIAO ESP32-C3. All six calibrated again with 🎯 Calibrate Anchors, the tester turning a full circle on the spot during the 10 s. |
+| LiDAR | RPLIDAR C1 on the east wall at 2.12, 2.12 m, base 0.92 m, ▲ 272.5° (from 🎯 Align to walls); empty room learned (201 turns). Turns recorded with every run; not used for the position shown. |
+| Session | `PT-20261121-055850` ("Re 6 anchors"), 31 runs, 2,417 readings. An earlier attempt the same morning (`PT-20261121-054324`, 14 runs) was stopped and is not used. |
+
+| Anchor | Device | Board | Position (x, y, height) | Calibrated RSSI at 1 m | Path-loss exponent |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| A | `anchor-001` | ESP32-WROOM-32E | 1.89, 3.39, 2.40 m (north wall) | −41.4 dBm | 3.2 |
+| B | `anchor-002` | ESP32-WROOM-32E | 2.29, 0.40, 2.40 m (east wall) | −51.1 dBm | 3.2 |
+| C | `anchor-003` | ESP32-WROOM-32E | 0.00, 2.13, 2.40 m (west wall) | −64.8 dBm | 3.2 |
+| D | `anchor-004` | ESP32-WROOM-32E | 0.80, 0.00, 2.30 m (south wall) | −48.9 dBm | 3.2 |
+| E | `anchor-005` | XIAO ESP32-C3 | 0.90, 3.39, 2.30 m (north wall) | −43.6 dBm | 3.2 |
+| F | `anchor-006` | XIAO ESP32-C3 | 2.29, 1.90, 2.30 m (east wall) | −56.4 dBm | 3.2 |
+
+### Results
+
+| Runs | Readings | Available | Mean error | Median | 95 % | Largest | Within 0.5 m | Within 1.0 m | Within 1.5 m | Zone correct |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| All | 2,417 | 100 % | 1.00 m | 0.95 m | 1.58 m | 1.71 m | 3.9 % | 57.5 % | 81.6 % | 20.1 % |
+| Standing | 2,183 | 100 % | 0.99 m | 0.91 m | 1.60 m | 1.71 m | 4.4 % | 63.2 % | 79.6 % | 15.1 % |
+| Sitting and lying | 234 | 100 % | 1.09 m | 1.09 m | 1.15 m | 1.21 m | 0 % | 4.3 % | 100 % | 66.7 % |
+
+Every reading came from Bluetooth, with all six anchors heard.
+
+| Spot | True position (m) | True zone | Runs | Mean position shown (m) | Mean error | Zone correct |
+| :--- | :--- | :--- | ---: | :--- | ---: | ---: |
+| P1 standing | 0.70, 0.40 | ROOM | 4 | 0.82, 1.86 | 1.50 m | 52 % |
+| P2 standing | 0.70, 1.00 | ROOM | 4 | 1.07, 1.47 | 0.88 m | 25 % |
+| P3 standing | 0.70, 1.60 | ROOM | 4 | 1.19, 1.78 | 0.54 m | 0 % |
+| P4 standing | 0.60, 2.35 | ROOM | 4 | 1.14, 1.62 | 0.90 m | 0 % |
+| P5 standing | 1.20, 2.35 | ROOM | 4 | 0.92, 1.81 | 0.64 m | 29 % |
+| P6 standing | 1.90, 2.35 | ROOM | 4 | 1.37, 1.63 | 0.94 m | 0 % |
+| P7 standing | 1.90, 3.00 | DOOR | 4 | 1.19, 1.61 | 1.56 m | 0 % |
+| Bed edge, sitting | 1.35, 1.00 | BED | 1 | 0.24, 1.17 | 1.13 m | 0 % |
+| Bed, lying | 1.74, 1.00 | BED | 1 | 1.19, 1.90 | 1.06 m | 100 % |
+| Table, sitting | 0.80, 2.45 | ROOM | 1 | 0.21, 1.54 | 1.08 m | 100 % |
+
+Mean error by facing (standing): north 0.98 m, east 1.04 m, south 0.98 m, west 0.97 m.
+
+### Compared with the baseline
+
+| | Baseline, 3 anchors | 6 anchors |
+| :--- | ---: | ---: |
+| Mean error | 1.29 m | 1.00 m |
+| Median | 1.35 m | 0.95 m |
+| 95 % | 1.93 m | 1.58 m |
+| Within 1.0 m | 35.5 % | 57.5 % |
+| Within 1.5 m | 58.1 % | 81.6 % |
+| Zone correct | 80.6 % | 20.1 % |
+| Raw solver result (before smoothing), mean | 1.36 m | 1.19 m |
+| A fixed guess at the centre of the room, same spots | 0.94 m | 0.94 m |
+| Lower bound from the placement planner | 0.96 m | 0.81 m |
+
+### Findings
+
+1. **Better than the baseline, but still no better than guessing the centre of the room.** The mean error fell from 1.29 m to 1.00 m and the share within 1.5 m rose from 58.1 % to 81.6 %. Always showing the centre of the room would score 0.94 m on the same runs. The positions shown no longer stay along the west wall. Instead they gather near the middle of the room (on average x 0.82–1.37 m, y 1.47–1.90 m at the standing spots), and still barely follow the tester: P1 at 0.70, 0.40 m was shown at 0.82, 1.86 m, and the door spot P7 at 1.90, 3.00 m was shown at 1.19, 1.61 m.
+2. **Cause: again, distance estimates at their limit.** Anchor A's estimate was at its limit (the distance to its farthest room corner) in 99.9 % of readings, E's in 91.1 %, D's in 65.1 % and B's in 58.9 %. C's (16.1 %) and F's (18.9 %) were mostly below it. With A calibrated at −41.4 dBm, any filtered signal weaker than about −61 dBm already means "4 m or more", and A's median raw signal was −69 dBm. With most anchors saying "as far as possible", the solver settles where it is farthest from all of them: the middle.
+3. **The calibration is not repeatable.** Anchor A's calibrated value was −48.4 dBm on 20 November, −61.1 dBm early on 21 November, and −41.4 dBm for this session. Each calibration is one 10-second reading at one spot. At P1, anchor A's averaged signal changed by 22.8 dB between facings, so a calibration taken while the body is on one side of the wristband or the other can differ by that much. A calibration fitted over several spots and facings would be steadier, but signal strength would still not place the patient much better in a room this size: the planner's lower bound for six anchors is 0.81 m.
+4. **Zone correct fell from 80.6 % to 20.1 %; this is not a loss of accuracy.**
+   - In the baseline the estimate never left the general ROOM zone along the west wall. 25 of the 31 runs are at ROOM spots, so "always ROOM" scores exactly 80.6 %.
+   - Now the estimate sits in the middle of the room, which lies inside the bed zone: the bed plus 0.3 m around it covers x 0.89–2.29 m, y 0–2.30 m, 41 % of the floor. So readings at ROOM spots are placed in the bed zone.
+   - With about 1 m of error in a room 2.29 m wide, Bluetooth cannot tell the bed zone from the floor beside it.
+5. **The XIAO ESP32-C3 anchors work as well as the others after the firmware fix.** With anchor firmware V4, E and F restarted about every 25 s and passed on about half as many readings. The core version used (3.3.13) runs a different Bluetooth stack (NimBLE) on the C3, and the scan's device list ran the memory out. V4.1 fixed this before the session. In this session E and F were heard in 100 % of readings, and the median age of their latest reading was 149–150 ms, the same as the WROOM-32E anchors (150–156 ms).
+6. **Motion state:** the wristband reported STATIONARY in 86 % of readings and HAND_MOVEMENT in 13 % (baseline: 99 % and 1 %), although the tester stood still in every run.
+
+### What the LiDAR saw in the same runs (offline check, preliminary)
+
+The LiDAR's turns were recorded with every run (6,208 turns while recording). This check is **not** the system's output: it was made before the person finder existed (the system's own result on the same turns is the replay in the next section). In each turn:
+- returns more than 10 cm closer than the learned empty room, inside the room, were grouped into clusters;
+- the cluster nearest the taped spot was taken, moved 0.10 m further from the LiDAR (it sees the front of the body);
+- its distance to the spot was measured.
+
+| Spot | Turns | Nearest cluster: median distance to the spot | 95 % | Within 0.5 m |
+| :--- | ---: | ---: | ---: | ---: |
+| P1 standing | 805 | 0.12 m | 0.17 m | 100 % |
+| P2 standing | 803 | 0.11 m | 0.15 m | 100 % |
+| P3 standing | 800 | 0.07 m | 0.12 m | 100 % |
+| P4 standing | 799 | 0.11 m | 0.19 m | 100 % |
+| P5 standing | 799 | 0.05 m | 0.09 m | 100 % |
+| P6 standing | 802 | 0.05 m | 0.09 m | 100 % |
+| P7 standing (door) | 799 | 0.05 m | 0.10 m | 96 % |
+| Bed edge, sitting | 201 | 0.07 m | 0.08 m | 100 % |
+| Bed, lying | 200 | not seen | – | 0 % |
+| Table, sitting | 200 | 0.13 m | 0.14 m | 100 % |
+| All standing | 5,607 | 0.08 m | 0.17 m | 99.4 % |
+
+- **Upper bound, not a result.** Taking the cluster nearest the true spot assumes the right cluster is chosen. The real finder must decide by itself which cluster is the patient and link it to the wristband.
+- **A lying patient is not seen:** the body is below the scan slice at 0.95 m.
+- **One other object was in the scan in 87 % of turns.** It was about 9 cm wide, near the west wall at about 0.3, 2.1 m, and was not there when the empty room was learned. The tester's body was 0.21 m wide on average (18 returns) and often appeared as two clusters (torso and an arm), so a person can be told from such clutter by size, after joining clusters that are close together.
+
+### Against the requirement
+
+With six anchors, 81.6 % of readings were within 1.5 m (mean 1.00 m), so Bluetooth now meets the 1.0–1.5 m band of NFR-ACC-01 most of the time. It does so no better than a fixed guess at the room centre (0.94 m), though: in WARD-005 the band is met because the room is small, not because the patient is located. The offline LiDAR check points to about 0.1 m for a standing or sitting patient, once the LiDAR's person is linked to the wristband.
+
+## Replay: the same runs through the LiDAR positioning (step 5b, 21 November 2026)
+
+The LiDAR positioning (find the people in each turn, follow them, link one to the wristband by position; `docs/protocol.md`, section 5) was run on the recorded turns and Bluetooth positions of all 31 runs, with `node tools/replay_lidar_runs.js PT-20261121-055850`. It uses the same code as the server. At each of the 2,417 readings the position scored is the one the maps would have shown: the LiDAR's when the wristband was linked (or held), else the Bluetooth position the test recorded.
+
+The limits of the person finder were chosen on these runs, so this is a check of the method, not an independent test. The live test (step 6) is the independent one.
+
+| Readings | Count | Mean | Median | 95 % | Within 0.25 m | Within 0.5 m | Within 1.0 m | Within 1.5 m | Zone correct |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Shown then (Bluetooth, six anchors) | 2,417 | 1.00 m | 0.95 m | 1.58 m | 0 % | 3.9 % | 57.5 % | 81.6 % | 20.1 % |
+| **Replay, all** | 2,417 | **0.13 m** | **0.08 m** | **0.28 m** | 94.4 % | 97.4 % | 97.4 % | 97.4 % | 94.2 % |
+| Replay, standing | 2,183 | 0.13 m | 0.08 m | 0.28 m | 93.8 % | 97.1 % | 97.1 % | 97.1 % | 93.6 % |
+| Replay, sitting | 156 | 0.10 m | 0.08 m | 0.14 m | 100 % | 100 % | 100 % | 100 % | 100 % |
+| Replay, lying (held position) | 78 | 0.03 m | 0.03 m | 0.03 m | 100 % | 100 % | 100 % | 100 % | 100 % |
+| Replay, LiDAR readings only | 2,354 | 0.09 m | 0.08 m | 0.17 m | 96.9 % | 100 % | 100 % | 100 % | – |
+
+Sources in the replay: LiDAR 94.2 %, LiDAR held 3.2 % (the lying run), Bluetooth 2.6 %.
+
+| Spot | Readings | Mean | 95 % | From the LiDAR | Zone correct | Shown then (mean) |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| P1 (0.7, 0.4) standing | 310 | 0.12 m | 0.17 m | 100 % | 100 % | 1.50 m |
+| P2 (0.7, 1.0) standing | 312 | 0.11 m | 0.15 m | 100 % | 100 % | 0.88 m |
+| P3 (0.7, 1.6) standing | 312 | 0.08 m | 0.11 m | 100 % | 100 % | 0.54 m |
+| P4 (0.6, 2.35) standing | 313 | 0.16 m | 0.30 m | 100 % | 100 % | 0.90 m |
+| P5 (1.2, 2.35) standing | 312 | 0.05 m | 0.09 m | 100 % | 76.6 % | 0.64 m |
+| P6 (1.9, 2.35) standing | 312 | 0.07 m | 0.09 m | 100 % | 99.0 % | 0.94 m |
+| P7 (1.9, 3.0) standing (door) | 312 | 0.35 m | 1.56 m | 79.8 % | 79.8 % | 1.56 m |
+| Bed edge (1.35, 1.0) sitting | 78 | 0.07 m | 0.08 m | 100 % | 100 % | 1.13 m |
+| Bed (1.74, 1.0) lying | 78 | 0.03 m | 0.03 m | 100 % (held) | 100 % | 1.06 m |
+| Table (0.8, 2.45) sitting | 78 | 0.13 m | 0.14 m | 100 % | 100 % | 1.08 m |
+
+Findings:
+1. **Every LiDAR reading was the tester.** No LiDAR reading was more than 0.31 m from the spot, so the wristband was never linked to the wrong person or to the chair. The chair (the object of the offline check) was left out by the size limit of 9 returns: the tester was found as a person in 99.7 % of standing turns, the chair in 2 of 5,607, never often enough to be followed (3 of 5 turns). With a limit of 6 returns it counted as a person in 55 % of turns.
+2. **30 of 31 runs linked during the countdown,** about 1–2 s after the replay started. Each run is replayed on its own, from the start of its countdown; live, the link made at the first spot carries over to the next ones, because the LiDAR follows the tester between spots.
+3. **Run 26 (P7, facing east) linked only after 16 s.** The Bluetooth position was 2.3 m from the tester for most of the run (at the west wall while the tester stood at the door), beyond the 2 m within which a person is linked. The Bluetooth readings of that run are the 2.6 %. Live, the earlier link would have carried over.
+4. **Lying: the held position.** When the tester lay down, the LiDAR lost them at the bed and kept their last position. It was 3 cm from the lying spot here, because the tester was last seen sitting up there. In general the held position is where the patient was last seen at the bed, which can be up to a body length from where they lie; it stays in the bed zone.
+5. **Zone misses at P5 are at the zone's edge.** P5 is 5 cm outside the bed zone (the bed plus 0.3 m); a LiDAR error of 5 cm puts some readings inside it. The zone result there says more about the 0.3 m margin than about the position.
+6. **The body's centre:** the LiDAR sees the front of the body at hip height; the position is the middle of the returns moved 0.10 m away from the LiDAR. P4 (0.16 m) and P1 (0.12 m) are the spots farthest from the LiDAR.
+
+The replay readings are in [data/ips-6anchors-2026-11-21_lidar-replay.csv](data/ips-6anchors-2026-11-21_lidar-replay.csv) (one row per reading: source, position, error and zone of the replay, and what the maps showed then).
+
+## After: six anchors and the LiDAR (step 6, 21 November 2026)
+
+The same spots, facings and postures, with the LiDAR positioning running live. The position shown is the LiDAR's while the wristband is linked to a person (or held at the bed), otherwise Bluetooth. Each reading also records the Bluetooth-only position and the raw solver result, so this one session gives both results.
+
+### Set-up
+
+| Item | Value |
+| :--- | :--- |
+| Date and time | 21 November 2026, 10:06–10:35 |
+| Tester | Project author |
+| Code | edge server `e221130` (Phase 10 step 5b); wristband firmware V5.1 (`9372084`); anchor firmware as in the six-anchor session |
+| Ward, wristband, anchors | As in the six-anchor session: WARD-005, `TAG-002`, anchors A–F at the same places with the same calibration (05:56). Six anchors heard in every reading. |
+| LiDAR | As in the six-anchor session: 2.12, 2.12 m, base 0.92 m, ▲ 272.5°, the same empty room (learned 04:39, 201 turns). The chair of the offline check had been removed and the C1's supply rewired (4.705 V at its plug while it spins). |
+| Session | `PT-20261121-100601` ("6 anchors with LiDAR"), 31 runs, 2,408 readings, 8,637 LiDAR turns recorded |
+
+### Results
+
+| Readings | Count | Mean | Median | 95 % | Largest | Within 0.25 m | Within 0.5 m | Within 1.0 m | Within 1.5 m | Zone correct |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **Shown (LiDAR), all** | 2,408 | **0.08 m** | **0.07 m** | **0.22 m** | 0.33 m | 96.8 % | **100 %** | 100 % | 100 % | **97.1 %** |
+| Shown, standing | 2,174 | 0.07 m | 0.07 m | 0.18 m | 0.25 m | 100 % | 100 % | 100 % | 100 % | 96.8 % |
+| Shown, sitting | 156 | 0.06 m | 0.06 m | 0.07 m | 0.08 m | 100 % | 100 % | 100 % | 100 % | 100 % |
+| Shown, lying (held position) | 78 | 0.33 m | 0.33 m | 0.33 m | 0.33 m | 0 % | 100 % | 100 % | 100 % | 100 % |
+| Bluetooth only, same readings | 2,408 | 1.02 m | 0.96 m | 1.74 m | 1.82 m | 0 % | 3.2 % | 60.8 % | 80.7 % | 9.7 % |
+| Raw solver result, same readings | 2,408 | 1.24 m | 1.19 m | 2.09 m | 2.43 m | 1.2 % | 3.5 % | 29.6 % | 72.6 % | – |
+
+Sources of the position shown: LiDAR 96.8 %, LiDAR held at the bed 3.2 % (the lying run), Bluetooth 0 %.
+
+| Spot | Readings | Mean | 95 % | From the LiDAR | Zone correct | Mean position shown (m) | Bluetooth only, mean | Bluetooth only, zone correct |
+| :--- | ---: | ---: | ---: | ---: | ---: | :--- | ---: | ---: |
+| P1 (0.7, 0.4) standing | 312 | 0.13 m | 0.24 m | 100 % | 100 % | 0.72, 0.50 | 1.49 m | 0 % |
+| P2 (0.7, 1.0) standing | 310 | 0.11 m | 0.19 m | 100 % | 100 % | 0.80, 0.99 | 0.76 m | 0 % |
+| P3 (0.7, 1.6) standing | 311 | 0.07 m | 0.10 m | 100 % | 100 % | 0.76, 1.61 | 0.71 m | 50.2 % |
+| P4 (0.6, 2.35) standing | 312 | 0.05 m | 0.08 m | 100 % | 100 % | 0.59, 2.36 | 0.98 m | 0 % |
+| P5 (1.2, 2.35) standing | 309 | 0.06 m | 0.09 m | 100 % | 78.0 % | 1.17, 2.33 | 0.58 m | 0 % |
+| P6 (1.9, 2.35) standing | 310 | 0.05 m | 0.11 m | 100 % | 99.4 % | 1.91, 2.38 | 0.98 m | 0 % |
+| P7 (1.9, 3.0) standing (door) | 310 | 0.04 m | 0.07 m | 100 % | 100 % | 1.91, 2.98 | 1.74 m | 0 % |
+| Bed edge (1.35, 1.0) sitting | 78 | 0.05 m | 0.06 m | 100 % | 100 % | 1.34, 1.05 | 0.70 m | 0 % |
+| Bed (1.74, 1.0) lying | 78 | 0.33 m | 0.33 m | 100 % (98.7 % held) | 100 % | 1.79, 0.67 | 1.09 m | 100 % |
+| Table (0.8, 2.45) sitting | 78 | 0.07 m | 0.08 m | 100 % | 100 % | 0.85, 2.40 | 0.71 m | 0 % |
+
+### Compared with the earlier sessions
+
+| | Baseline, 3 anchors | 6 anchors | 6 anchors, replay through the LiDAR positioning | **6 anchors + LiDAR, live** | Same session, Bluetooth only |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| Mean error | 1.29 m | 1.00 m | 0.13 m | **0.08 m** | 1.02 m |
+| Median | 1.35 m | 0.95 m | 0.08 m | **0.07 m** | 0.96 m |
+| 95 % | 1.93 m | 1.58 m | 0.28 m | **0.22 m** | 1.74 m |
+| Within 0.5 m | 0 % | 3.9 % | 97.4 % | **100 %** | 3.2 % |
+| Within 1.5 m | 58.1 % | 81.6 % | 97.4 % | **100 %** | 80.7 % |
+| Zone correct | 80.6 % | 20.1 % | 94.2 % | **97.1 %** | 9.7 % |
+
+### Findings
+
+1. **With the LiDAR the patient is placed to about 0.1 m.** The mean error was 0.08 m and every reading was within 0.5 m, against 1.02 m for Bluetooth on the same readings, about 13 times less. The wristband was linked to the tester in every run and never to anything else, and no reading fell back to Bluetooth. The link made at the first spot carried over to the next ones, because the LiDAR follows the tester between spots. So the late link of the replay's run 26 (door, Bluetooth 2.3 m off) did not occur live: P7 had 0.04 m.
+2. **The replay matches the live system.** Replaying this session's recorded turns (`node tools/replay_lidar_runs.js PT-20261121-100601`) gives 0.080 m mean and 0.216 m at 95 %, against 0.079 m and 0.22 m shown live. The six-anchor replay (0.13 m) came out a little worse mainly because each run is replayed from its own start, so a few readings came before the link (2.6 % Bluetooth).
+3. **Zone misses only at the bed zone's edge.** P5 (78 %) and P6 (99.4 %) are the only spots below 100 %. P5 is 5 cm outside the bed zone, as in finding 5 of the replay.
+4. **Lying: the held position is where the patient was last seen.** The tester was last seen at 1.79, 0.73 m while lying down, 0.33 m from the lying spot, and the position stayed there for the whole run, inside the bed zone.
+5. **Getting out of bed failed once, between runs 30 and 31** (this is not in the readings).
+   - What happened: after run 30 the tester got up, but the position stayed at the bed. The tester was shown as a grey "person (no wristband)". Only after lying down and getting up a second time did the position go with the tester. That is why run 31 started 5 minutes after run 30.
+   - Cause: a patient held in bed was picked up again only by a new person within 0.8 m of the held position. Getting out on the far side or at the foot end, the tester was first seen about 0.9 m or more from it. The other way out of the hold, Bluetooth more than 2 m from it for 5 s, almost never happens in a room 2.29 m wide.
+   - Fixed the same day (`services/room_sensor/lidar_linker.js`, `people_tracker.js`). While the patient is held in bed, a person first seen at that bed (within 0.6 m of it) after the patient lay down is the patient getting up, on whichever side they get out. A visitor who walks up to the bed was first seen where they came into view, so is no longer taken for the patient. With the 0.8 m rule, a visitor standing that close to the held position was taken for the patient.
+   - Unit tests cover getting out on the west side, at the foot end and by sitting up, a visitor walking from the door to the bedside, and someone getting out of another bed. Put back to the old rule, three of these tests fail.
+   - The replays of both sessions give the same results as before the fix, because no recorded run contains a getting-up.
+   - Live check: table below.
+6. **Bluetooth alone did not change with the six anchors:** 1.02 m mean, as in the morning (1.00 m). Zone correct was 9.7 %, because the estimates still gather in the middle of the room, inside the bed zone (finding 4 of the six-anchor section).
+7. **No fall alarm during the session** (wristband V5.1), against 2 in the 31 runs of the morning session (V5.0; Round 4 of `phase-3-bench-test.md`).
+8. **Motion state:** the wristband reported STATIONARY in 96.3 % of readings and HAND_MOVEMENT in 3.7 %. The LiDAR positions do not use it.
+
+### Live check of getting out of bed (after the fix)
+
+| Check | Result |
+| :--- | :--- |
+| Lie down until 🛏 shows, then get out on the west side (away from the LiDAR) and walk to the table: the violet 📡 dot goes with the tester within about 2 s | **2 / 2** |
+| The same, getting out at the foot end | **2 / 2** |
+| The same, sitting up on the bed for a few seconds first | **1 / 1** |
+| Optional, with a second person: while the tester lies (🛏), they walk in from the door and stand at the bedside for 10 s. The tester's dot stays at the bed (🛏) and the second person is a grey dot | not done |
+
+Session `PT-20261121-120830` ("Get-up check"), 21 November 2026, 12:08–12:21, edge server `f935f6f`. One run per get-up: the tester lay down during the 10 s countdown and, once recording had started, got up and walked to the table (0.8, 2.45). The 20 s of each run were read from the samples and replayed from the recorded LiDAR turns.
+
+| Run | Way out | Held at the bed until | Position goes with the tester from | Out of the bed zone | Within 0.25 m of the table | First seen, from the held position |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| 1 | west side | 4.7 s | 5.0 s | 7.0 s | 9.6 s | 0.70 m |
+| 2 | west side | 5.7 s | 6.0 s | 8.3 s | 10.9 s | 0.38 m |
+| 3 | foot end | 2.9 s | 3.1 s | 8.1 s | 9.1 s | 0.51 m |
+| 4 | foot end | 6.8 s | 7.0 s | 9.6 s | 10.4 s | 0.42 m |
+| 5 | sitting up first | 3.2 s | 3.4 s | 9.6 s | 9.9 s | 0.16 m |
+
+- In every run the position left the held spot at the first reading after the LiDAR saw the tester up (readings come every 0.26 s), then followed them to the table. It came from the LiDAR throughout; Bluetooth was never used.
+- In the replay, only one person was seen at a time during the 20 s of each run. No grey "person (no wristband)" appeared.
+- The replay gives the same result as the live session (0.712 m against 0.711 m). That error is the walk from the bed to the table, not positioning error: the spot of every run is the table. This session is therefore not part of the accuracy results above.
+- **What this check does not show.** In all five runs the tester was first seen sitting up on the bed, 0.16–0.70 m from the held position. The 0.8 m rule from before the fix would have picked them up too: replayed with the code before `f935f6f`, the five runs give the same result. The case that failed between runs 30 and 31 (first seen 0.9 m or more away) did not occur. It is covered by the unit tests only.
+
+To test that case live: lie down, roll to the west edge of the bed while staying low, and stand up beside the bed without sitting up first.
+
+### Against the requirement
+
+NFR-ACC-01 asks for an average error of 1.0–1.5 m. With the LiDAR, WARD-005 is far better than that: 0.08 m on average and 100 % of readings within 0.5 m, standing, sitting and lying.
+
+Limits of this result:
+- one room, one LiDAR and one tester, alone in the room;
+- taped spots, standing still at each;
+- lying gives the position where the patient was last seen at the bed;
+- several people in the room were tested only in simulation (unit tests).
+
+Bluetooth alone stays at about 1.0 m. That is within the band, but only because the room is small (finding 1 of the six-anchor section).
+
+## Raw data
+
+- [data/ips-baseline-2026-11-20_summary.csv](data/ips-baseline-2026-11-20_summary.csv): one row per run plus the session totals (the "ALL", "STANDING" and "SITTING+LYING" rows).
+- [data/ips-baseline-2026-11-20_samples.csv](data/ips-baseline-2026-11-20_samples.csv): every reading (time, position shown, error, zone, Bluetooth-only and raw positions, motion state, each anchor's RSSI and distance).
+- [data/ips-6anchors-2026-11-21_summary.csv](data/ips-6anchors-2026-11-21_summary.csv) and [data/ips-6anchors-2026-11-21_samples.csv](data/ips-6anchors-2026-11-21_samples.csv): the same for the six-anchor session, with the LiDAR turns recorded per run.
+- [data/ips-6anchors-2026-11-21_lidar-replay.csv](data/ips-6anchors-2026-11-21_lidar-replay.csv): the replay of that session through the LiDAR positioning (written by `tools/replay_lidar_runs.js --csv`).
+- [data/ips-lidar-2026-11-21_summary.csv](data/ips-lidar-2026-11-21_summary.csv) and [data/ips-lidar-2026-11-21_samples.csv](data/ips-lidar-2026-11-21_samples.csv): the session with six anchors and the LiDAR. The samples include the source of each reading, whether it was held, and the Bluetooth-only and raw positions.
+- [data/ips-getup-2026-11-21_summary.csv](data/ips-getup-2026-11-21_summary.csv) and [data/ips-getup-2026-11-21_samples.csv](data/ips-getup-2026-11-21_samples.csv): the live check of getting out of bed. The error columns there measure the walk to the table, not accuracy.
+
+The summary and samples files were downloaded from the Position test panel. The sessions themselves are `PT-20261120-223212.json`, `PT-20261121-055850.json`, `PT-20261121-100601.json` and `PT-20261121-120830.json` in `edge_server/data/position_tests/` on the edge server, together with the LiDAR turns of each run of the last three (`PT-…-run<n>.lidar.json.gz`, git-ignored).

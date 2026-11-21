@@ -9,7 +9,7 @@ const { actorLabel } = require('../services/auth/auth_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const { requireId, requireMac, requireOneOf, optionalOneOf, optionalText, optionalInt } = require('../utils/validate');
 
-const DEVICE_TYPES = ['WRISTBAND', 'ANCHOR', 'HEADSET'];
+const DEVICE_TYPES = ['WRISTBAND', 'ANCHOR', 'HEADSET', 'ROOM_SENSOR'];
 const DEVICE_STATUSES = ['ONLINE', 'STANDBY', 'OFFLINE', 'CHARGING'];
 const AVAILABILITY_STATUSES = ['AVAILABLE', 'IN_USE', 'UNAVAILABLE', 'MAINTENANCE'];
 const IP_PATTERN = /^[0-9A-Fa-f:.]{2,45}$/;

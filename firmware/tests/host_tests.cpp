@@ -4,7 +4,8 @@
  *
  *   Compiles the same fall_detector.h, shiro_packet.h and pulse_estimator.h that go
  *   into the firmware and checks them against synthetic traces and against the
- *   pulse recordings of the bench measurements (tests/data).
+ *   pulse recordings of the bench measurements (tests/data). Also checks the LiDAR
+ *   node's RPLIDAR decoding and scan message (rplidar_protocol.h, scan_frame.h).
  *
  *   Windows (Visual Studio C++ tools):   run_host_tests.bat
  *   Any system with g++ or clang++:      g++ -std=c++17 -Wall -Wextra host_tests.cpp -o host_tests && ./host_tests
@@ -24,6 +25,8 @@
 #include "../shiro_wristband_vitals/pulse_estimator.h"
 #include "../shiro_wristband_vitals/shiro_packet.h"
 #include "../shiro_wristband_vitals/vitals_filter.h"
+#include "../shiro_lidar_node/rplidar_protocol.h"
+#include "../shiro_lidar_node/scan_frame.h"
 
 static int g_checks = 0;
 static int g_failures = 0;
@@ -84,8 +87,10 @@ static void testSelfTest() {
   section("built-in self-test");
   const FallSelfTestResult r = runFallSelfTest();
   CHECK(r.fallDetected);
+  CHECK(r.softFallDetected);
   CHECK(r.shortDipIgnored);
   CHECK(r.movementIgnored);
+  CHECK(r.armDropIgnored);
   CHECK(r.passed());
 }
 
@@ -172,7 +177,7 @@ static void testImpactWindow() {
 }
 
 static void testStillness() {
-  section("post-impact stillness: mean motion below 0.20 g for 2 s, after 0.5 s settling");
+  section("post-impact stillness after a hard impact: mean motion below 0.20 g for 2 s, after 0.5 s settling");
   {
     Trace tr;  // lying still but breathing/trembling slightly
     tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.10f, 400, 3000);
@@ -331,6 +336,230 @@ static void testEverydayActivities() {
     Trace tr;  // wristband put down on a table: tiny knock at rest
     tr.hold(1.0f, 1000).hold(1.8f, 20).hold(1.0f, 5000);
     CHECK(tr.confirmations == 0);
+  }
+}
+
+static void testSoftImpact() {
+  section("after an impact below 4 g the wrist must be clearly still (below 0.08 g)");
+  {
+    // 21 Nov 2026, standing: the arm is lowered quickly, stops against the leg,
+    // then small hand movements (stored: free-fall 0.25 g, impact 2.67 g, motion 0.10 g)
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.25f, 200).hold(2.67f, 40).swing(0.16f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+    CHECK(!tr.detector.emergency());
+  }
+  {
+    Trace tr;  // 21 Nov 2026: 2.87 g, then 0.16 g
+    tr.hold(1.0f, 1000).hold(0.28f, 200).hold(2.87f, 40).swing(0.25f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // 16 Nov 2026: 3.47 g, then 0.13 g
+    tr.hold(1.0f, 1000).hold(0.26f, 200).hold(3.47f, 40).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // a soft impact followed by lying still is still a fall (the 2.88 g arm drop of 14 Nov)
+    tr.fall(300, 0.33f, 2.88f, 1.03f);
+    CHECK(tr.confirmations == 1);
+    CHECK(nearly(tr.detector.peakImpactG(), 2.88f));
+  }
+  {
+    Trace tr;  // at the limit: 0.07 g of motion counts as still
+    tr.fall(300, 0.15f, 3.0f, 1.07f);
+    CHECK(tr.confirmations == 1);
+  }
+  {
+    Trace tr;  // 0.09 g does not
+    tr.fall(300, 0.15f, 3.0f, 1.09f);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // a hard impact keeps the 0.20 g limit: a patient who falls hard and moves a little
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 1);
+    CHECK(tr.detector.stillnessG() > 0.08f);
+  }
+  {
+    Trace tr;  // the same movement after 3.99 g: a soft impact
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(3.99f, 40).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 0);
+  }
+  {
+    Trace tr;  // the peak of the whole impact decides, not its first sample
+    tr.hold(1.0f, 1000).hold(0.15f, 300).sample(3.0f).sample(9.0f).sample(5.0f).swing(0.21f, 400, 3000);
+    CHECK(tr.confirmations == 1);
+  }
+  {
+    FallDetector d;
+    CHECK(nearly(d.stillnessLimit(2.6f), 0.08f));
+    CHECK(nearly(d.stillnessLimit(3.99f), 0.08f));
+    CHECK(nearly(d.stillnessLimit(4.0f), 0.20f));
+    CHECK(nearly(d.stillnessLimit(24.0f), 0.20f));
+  }
+}
+
+// Values the edge server stored for real confirmed falls (tests/data/fall_values.csv)
+struct RecordedFall {
+  std::string kind;  // DROP or FALSE_ALARM
+  float freefallG;
+  float impactG;
+  float stillnessG;
+};
+
+static std::vector<RecordedFall> loadRecordedFalls() {
+  std::vector<RecordedFall> out;
+  std::ifstream in("data/fall_values.csv");
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#' || line.compare(0, 5, "time,") == 0) continue;
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (true) {
+      const size_t comma = line.find(',', start);
+      fields.push_back(line.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+      if (comma == std::string::npos) break;
+      start = comma + 1;
+    }
+    if (fields.size() < 5) continue;
+    RecordedFall r;
+    r.kind = fields[1];
+    r.freefallG = std::stof(fields[2]);
+    r.impactG = std::stof(fields[3]);
+    r.stillnessG = std::stof(fields[4]);
+    out.push_back(r);
+  }
+  return out;
+}
+
+// Would a detector with this configuration confirm a fall with these measured values?
+static bool confirms(const FallDetector& d, const RecordedFall& r) {
+  const FallConfig& c = d.config();
+  return r.freefallG < c.freefallG && r.impactG > c.impactG && r.stillnessG < d.stillnessLimit(r.impactG);
+}
+
+static void testRecordedFallValues() {
+  section("stored values: every deliberate arm drop still confirmed, the three false alarms not");
+  const std::vector<RecordedFall> falls = loadRecordedFalls();
+  const FallDetector now;
+  FallConfig beforeConfig = defaultFallConfig();
+  beforeConfig.softImpactG = 0.0f;  // the rule until 21 Nov 2026: 0.20 g after every impact
+  const FallDetector before(beforeConfig);
+  int drops = 0, dropsKept = 0, falseAlarms = 0, falseRaised = 0, falseRaisedBefore = 0;
+  for (const RecordedFall& r : falls) {
+    if (r.kind == "DROP") {
+      drops++;
+      if (confirms(now, r)) dropsKept++;
+    } else if (r.kind == "FALSE_ALARM") {
+      falseAlarms++;
+      if (confirms(now, r)) falseRaised++;
+      if (confirms(before, r)) falseRaisedBefore++;
+    }
+  }
+  std::printf("  %d arm drops: %d still confirmed. %d false alarms: %d still raised (before the change: %d)\n",
+              drops, dropsKept, falseAlarms, falseRaised, falseRaisedBefore);
+  CHECK(drops >= 50);
+  CHECK(falseAlarms == 3);
+  CHECK(dropsKept == drops);
+  CHECK(falseRaised == 0);
+  CHECK(falseRaisedBefore == falseAlarms);  // the stored values really exercise the change
+}
+
+// The fall-check report (V5.2): one record per drop-like event, with the reason
+static void testFallCheckReport() {
+  section("fall-check report: one record per drop-like event, saying how it ended");
+  {  // A fall
+    Trace tr;
+    tr.fall();
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_CONFIRMED);
+    CHECK(c.freefallMs == 300);
+    CHECK(nearly(c.lowestG, 0.15f));
+    CHECK(nearly(c.impactG, 4.0f));
+    CHECK(nearly(c.motionG, 0.02f));
+    CHECK(nearly(c.limitG, 0.20f));
+    CHECK(c.largestGapMs == 20);
+    // Nothing is checked during the 45 s hold
+    tr.fall();
+    CHECK(tr.detector.checkCount() == 1);
+  }
+  {  // Free-fall and impact, then moving
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40);
+    for (int i = 0; i < 150; i++) tr.sample(i % 2 == 0 ? 0.6f : 1.6f);
+    tr.hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 0);
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_MOVING);
+    CHECK(nearly(c.motionG, 0.5f));
+    CHECK(nearly(c.limitG, 0.20f));
+  }
+  {  // Arm dropped while standing: soft impact, then small hand movements
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.25f, 250).hold(3.0f, 40);
+    for (int i = 0; i < 150; i++) tr.sample(i % 2 == 0 ? 0.88f : 1.12f);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 0);
+    CHECK(c.outcome == FALL_CHECK_MOVING);
+    CHECK(c.freefallMs == 260);
+    CHECK(nearly(c.impactG, 3.0f));
+    CHECK(nearly(c.motionG, 0.12f));
+    CHECK(nearly(c.limitG, 0.08f));
+  }
+  {  // Free-fall long enough, no impact
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_NO_IMPACT);
+    CHECK(c.freefallMs == 300);
+    CHECK(nearly(c.impactG, 1.0f));
+  }
+  {  // Free-fall too short, then an impact
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.2f, 100).hold(4.0f, 40).hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 0);
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_FREEFALL_SHORT);
+    CHECK(c.freefallMs == 100);
+    CHECK(nearly(c.lowestG, 0.2f));
+    CHECK(nearly(c.impactG, 4.0f));
+  }
+  {  // A dip that never goes below 0.50 g, then an impact
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.6f, 200).hold(5.0f, 40).hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_FREEFALL_SHORT);
+    CHECK(c.freefallMs == 0);
+    CHECK(nearly(c.lowestG, 0.6f));
+    CHECK(nearly(c.impactG, 5.0f));
+  }
+  {  // Not drop-like, not recorded: a knock without a dip, a 40 ms dip, an arm swing
+    Trace knock;
+    knock.hold(1.0f, 1000).hold(3.0f, 40).hold(1.0f, 1000);
+    CHECK(knock.detector.checkCount() == 0);
+    Trace dip;
+    dip.hold(1.0f, 1000).hold(0.3f, 40).hold(1.0f, 1000);
+    CHECK(dip.detector.checkCount() == 0);
+    Trace swing;
+    swing.hold(1.0f, 1000).swing(0.3f, 1000, 5000);
+    CHECK(swing.detector.checkCount() == 0);
+  }
+  {  // The largest time between two samples (a busy loop)
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.15f, 100);
+    tr.t += 40;  // the next sample comes 60 ms after the previous one
+    tr.hold(0.15f, 100).hold(4.0f, 40).hold(1.02f, 3000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 1);
+    CHECK(c.outcome == FALL_CHECK_CONFIRMED);
+    CHECK(c.largestGapMs == 60);
+    CHECK(c.freefallMs == 240);
   }
 }
 
@@ -832,6 +1061,143 @@ static void testPulseRecordings() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// LiDAR node (Phase 10): RPLIDAR protocol and the scan message
+// ---------------------------------------------------------------------------
+static void testLidarDescriptors() {
+  section("LiDAR: answer descriptors, health and info");
+  rplidar::Descriptor d;
+  const uint8_t scan[7] = {0xA5, 0x5A, 0x05, 0x00, 0x00, 0x40, 0x81};
+  CHECK(rplidar::parseDescriptor(scan, d));
+  CHECK(d.length == 5);
+  CHECK(d.mode == 1);
+  CHECK(d.type == rplidar::TYPE_SCAN);
+  const uint8_t info[7] = {0xA5, 0x5A, 0x14, 0x00, 0x00, 0x00, 0x04};
+  CHECK(rplidar::parseDescriptor(info, d));
+  CHECK(d.length == 20);
+  CHECK(d.mode == 0);
+  CHECK(d.type == rplidar::TYPE_INFO);
+  const uint8_t wrong[7] = {0xA5, 0x00, 0x14, 0x00, 0x00, 0x00, 0x04};
+  CHECK(!rplidar::parseDescriptor(wrong, d));
+
+  const uint8_t healthBytes[3] = {0x02, 0x34, 0x12};
+  rplidar::Health health;
+  rplidar::parseHealth(healthBytes, health);
+  CHECK(health.status == rplidar::HEALTH_ERROR);
+  CHECK(health.errorCode == 0x1234);
+  CHECK(std::strcmp(rplidar::healthName(rplidar::HEALTH_GOOD), "OK") == 0);
+  CHECK(std::strcmp(rplidar::healthName(7), "UNKNOWN") == 0);
+
+  uint8_t raw[20];
+  for (int i = 0; i < 20; i++) raw[i] = (uint8_t)i;
+  rplidar::Info lidar;
+  rplidar::parseInfo(raw, lidar);
+  CHECK(lidar.model == 0 && lidar.firmwareMinor == 1 && lidar.firmwareMajor == 2 && lidar.hardware == 3);
+  CHECK(lidar.serial[0] == 4 && lidar.serial[15] == 19);
+}
+
+static void testLidarSamples() {
+  section("LiDAR: scan samples");
+  uint8_t b[5];
+  rplidar::Sample s;
+  // 90 degrees (angle_q6 5760), 1234.5 mm (distance_q2 4938), quality 47, start of a turn
+  rplidar::encodeSample(true, 47, 5760, 4938, b);
+  CHECK(rplidar::decodeSample(b, s));
+  CHECK(s.start);
+  CHECK(s.quality == 47);
+  CHECK(nearly(s.angleDeg, 90.0f));
+  CHECK(nearly(s.distanceMm, 1234.5f));
+  // Largest angle below 360 degrees, 12 m
+  rplidar::encodeSample(false, 0, 23039, 48000, b);
+  CHECK(rplidar::decodeSample(b, s));
+  CHECK(!s.start);
+  CHECK(nearly(s.angleDeg, 359.984f, 0.001f));
+  CHECK(nearly(s.distanceMm, 12000.0f));
+  // Check bits: S equal to not-S, or a check bit of 0, means the stream is out of step
+  rplidar::encodeSample(true, 10, 100, 100, b);
+  uint8_t bad[5];
+  std::memcpy(bad, b, 5);
+  bad[0] = (uint8_t)(bad[0] | 0x03);
+  CHECK(!rplidar::decodeSample(bad, s));
+  std::memcpy(bad, b, 5);
+  bad[0] = (uint8_t)(bad[0] & 0xFC);
+  CHECK(!rplidar::decodeSample(bad, s));
+  std::memcpy(bad, b, 5);
+  bad[1] = (uint8_t)(bad[1] & 0xFE);
+  CHECK(!rplidar::decodeSample(bad, s));
+}
+
+static void testLidarStream() {
+  section("LiDAR: byte stream gets back in step");
+  std::vector<uint8_t> bytes;
+  bytes.push_back(0x00);  // two stray bytes, as after starting in the middle of a sample
+  bytes.push_back(0x00);
+  uint8_t b[5];
+  for (int i = 0; i < 3; i++) {
+    rplidar::encodeSample(i == 0, 20, (uint16_t)(i * 640), (uint16_t)(4000 + i), b);
+    bytes.insert(bytes.end(), b, b + 5);
+  }
+  rplidar::SampleStream stream;
+  rplidar::Sample s;
+  int complete = 0;
+  int starts = 0;
+  float lastAngle = -1.0f;
+  for (uint8_t v : bytes) {
+    if (stream.push(v, s)) {
+      complete++;
+      if (s.start) starts++;
+      lastAngle = s.angleDeg;
+    }
+  }
+  CHECK(complete == 3);
+  CHECK(starts == 1);
+  CHECK(nearly(lastAngle, 20.0f));
+  CHECK(stream.badBytes() == 2);
+}
+
+static void testLidarTurn() {
+  section("LiDAR: a turn reduced to 720 directions");
+  CHECK(scanframe::binOf(0.0f) == 0);
+  CHECK(scanframe::binOf(0.49f) == 0);
+  CHECK(scanframe::binOf(0.5f) == 1);
+  CHECK(scanframe::binOf(359.9f) == 719);
+  CHECK(scanframe::binOf(360.0f) == 0);
+  CHECK(scanframe::binOf(-0.25f) == 719);
+  CHECK(scanframe::binOf(720.25f) == 0);
+
+  static scanframe::Turn turn;
+  turn.clear();
+  turn.add(10.1f, 3000.0f);
+  turn.add(10.3f, 1500.4f);   // same direction, nearer: kept (a person in front of a wall)
+  turn.add(10.4f, 2000.0f);   // same direction, farther: not kept
+  turn.add(20.0f, 0.0f);      // no return: counted, no distance
+  turn.add(30.0f, 70000.0f);  // out of range: counted, no distance
+  CHECK(turn.samples == 5);
+  CHECK(turn.valid == 3);
+  CHECK(turn.bins[20] == 1500);
+  CHECK(turn.bins[40] == 0);
+  CHECK(turn.bins[60] == 0);
+}
+
+static void testLidarFrame() {
+  section("LiDAR: scan message layout");
+  static scanframe::Turn turn;
+  turn.clear();
+  turn.add(0.0f, 1000.0f);
+  turn.add(359.75f, 4321.0f);
+  static uint8_t out[scanframe::FRAME_SIZE];
+  CHECK(scanframe::FRAME_SIZE == 1452);
+  CHECK(scanframe::pack(turn, 0x1234, 101, 0, out, sizeof(out)) == scanframe::FRAME_SIZE);
+  CHECK(out[0] == 'S' && out[1] == 'L' && out[2] == 1 && out[3] == 0);
+  CHECK(out[4] == 0x34 && out[5] == 0x12);
+  CHECK(out[6] == 101 && out[7] == 0);
+  CHECK(out[8] == 2 && out[9] == 0 && out[10] == 2 && out[11] == 0);
+  CHECK(out[12] == (1000 & 0xFF) && out[13] == (1000 >> 8));
+  const size_t last = scanframe::HEADER_SIZE + 719 * 2;
+  CHECK(out[last] == (4321 & 0xFF) && out[last + 1] == (4321 >> 8));
+  CHECK(scanframe::pack(turn, 0, 0, 0, out, scanframe::FRAME_SIZE - 1) == 0);
+}
+
 int main() {
   std::printf("SHIRO firmware logic tests\n");
   testSelfTest();
@@ -847,6 +1213,9 @@ int main() {
   testClockWrap();
   testBadSamples();
   testEverydayActivities();
+  testSoftImpact();
+  testRecordedFallValues();
+  testFallCheckReport();
   testPacketLayout();
   testPacketRoundTrip();
   testPacketFallFlag();
@@ -862,6 +1231,11 @@ int main() {
   testPulseSpo2();
   testPulseRecordings();
   testPacketHeaderCopies();
+  testLidarDescriptors();
+  testLidarSamples();
+  testLidarStream();
+  testLidarTurn();
+  testLidarFrame();
 
   std::printf("\n%d checks, %d failed\n", g_checks, g_failures);
   std::printf(g_failures == 0 ? "RESULT: PASS\n" : "RESULT: FAIL\n");

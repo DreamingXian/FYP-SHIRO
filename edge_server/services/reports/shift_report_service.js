@@ -89,7 +89,7 @@ async function buildShiftReport({ wardId, day = null, shiftKey = null, generated
 
   // 3. Incidents of the shift: in this ward, or of a patient of the ward when no ward was recorded
   const [incidentRows] = await pool.query(`
-    SELECT incident_id, patient_id, patient_name, ward_id, bed_id, incident_category, trigger_timestamp,
+    SELECT incident_id, patient_id, patient_name, ward_id, bed_id, incident_category, geofence_kind, trigger_timestamp,
            heart_rate, spo2, alert_message, is_simulated, acknowledgment_time, response_latency_seconds,
            attending_clinician, resolution_status, notes
     FROM emergency_incident_logs
@@ -188,6 +188,7 @@ async function buildShiftReport({ wardId, day = null, shiftKey = null, generated
         patient_name: i.patient_name,
         bed_id: i.bed_id,
         category: i.incident_category,
+        geofence_kind: i.geofence_kind || null,
         message: i.alert_message,
         simulated: Number(i.is_simulated) === 1,
         status: i.resolution_status,
