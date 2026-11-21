@@ -1,6 +1,5 @@
 <!-- =========================================================================
-     WARD LIVE 2D INDOOR POSITIONING SYSTEM (IPS) VIEW
-     Split Layout: Left Control & Patient Vitals Panel + Right Live 2D Canvas
+     WARD OVERVIEW (Phase 11): the live map of one ward with its patients
      ========================================================================= -->
 <div id="ward-live-map-view" style="display: none;">
   <!-- Top Navigation & Status Bar -->
@@ -29,202 +28,104 @@
     </div>
   </div>
 
-  <!-- Split Screen Layout -->
-  <div style="display: flex; gap: 18px; align-items: stretch; height: calc(100vh - 190px); min-height: 520px; box-sizing: border-box;">
-    <!-- LEFT PANEL: Controls, Patient Identity & Real-Time Vitals (410px) -->
-    <div id="live-map-control-panel" style="width: 410px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px; height: 100%; max-height: 100%; overflow-y: auto; padding-right: 6px; box-sizing: border-box;">
-      
-      <!-- Card 1: Active Tracked Subjects in this Ward -->
-      <div class="card" style="padding: 14px 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <strong style="font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-            <span>📍 Active Ward Beacons</span>
-          </strong>
-          <span class="badge badge-info" id="live-map-subject-count" style="font-size: 10px;">1 Subject</span>
-        </div>
-        <div id="live-map-subjects-container" style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto;">
-          <!-- Dynamically populated subject pills -->
-        </div>
-      </div>
+  <!-- Ward overview (Phase 11): patients on the left, the map on the right.
+       Big, separate cards for what a nurse needs; technical values only in
+       "Technician details" (admins). -->
+  <div class="wo-layout">
+    <aside class="wo-side" id="live-map-control-panel">
 
-      <!-- Card 2: Selected Subject Identity Card -->
-      <div class="card" id="live-map-patient-card" style="padding: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-          <strong style="font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-            <span>👤 Bound Patient Profile</span>
-          </strong>
-          <span class="badge badge-live" id="live-map-binding-badge">● BOUND TO PATIENT</span>
+      <!-- The patients of the ward -->
+      <section class="card wo-card">
+        <div class="wo-card-head">
+          <span class="wo-title">Patients</span>
+          <span class="badge badge-neutral" id="live-map-subject-count">0</span>
         </div>
+        <div id="live-map-subjects-container" class="wo-patient-list"></div>
+        <div id="live-map-people-note" class="wo-note"></div>
+      </section>
 
-        <div style="display: flex; gap: 14px; align-items: center; margin-bottom: 12px;">
-          <div id="live-map-patient-avatar" style="width: 52px; height: 52px; border-radius: 50%; background: #E2E8F0; display: flex; align-items: center; justify-content: center; font-size: 24px; border: 2px solid var(--primary); overflow: hidden; flex-shrink: 0;">
-            👤
-          </div>
+      <!-- The chosen patient -->
+      <section class="card wo-card" id="live-map-patient-card">
+        <div class="wo-patient-head">
+          <div id="live-map-patient-avatar" class="wo-avatar">?</div>
           <div style="flex: 1; min-width: 0;">
-            <div style="font-size: 15px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" id="live-map-patient-name">
-              Select a subject
-            </div>
-            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;" id="live-map-patient-subtext">
-              ID: -- · Bed: --
-            </div>
-            <div style="font-size: 11px; color: var(--primary); font-weight: 600; margin-top: 2px;" id="live-map-hardware-id">
-              Hardware Tag: --
-            </div>
+            <div id="live-map-patient-name" class="wo-name">Choose a patient</div>
+            <div id="live-map-patient-subtext" class="wo-sub">Click a patient in the list or on the map.</div>
+          </div>
+        </div>
+        <div id="live-map-alert-chip"></div>
+
+        <div class="wo-where" id="live-map-where">
+          <div class="wo-where-main" id="live-map-where-main">–</div>
+          <div class="wo-where-sub" id="live-map-where-sub"></div>
+        </div>
+
+        <div class="wo-vitals">
+          <div class="wo-vital wo-vital-hr">
+            <div class="wo-vital-label">♥ Heart rate</div>
+            <div class="wo-vital-value"><span id="live-map-val-bpm">--</span><span class="wo-vital-unit">bpm</span></div>
+            <div class="wo-vital-state" id="live-map-bpm-state">–</div>
+            <div class="wo-progress" id="live-map-bpm-progress" style="display: none;"><div class="wo-progress-fill" id="live-map-bpm-progress-fill"></div></div>
+          </div>
+          <div class="wo-vital wo-vital-spo2">
+            <div class="wo-vital-label" title="Indicative only: not calibrated, raises no alarm">SpO2 (indicative)</div>
+            <div class="wo-vital-value"><span id="live-map-val-spo2">--</span><span class="wo-vital-unit">%</span></div>
+            <div class="wo-vital-state" id="live-map-spo2-state">With the heart rate</div>
           </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11px; margin-bottom: 10px;">
-          <div>
-            <span style="color: var(--text-muted);">Assigned Bed:</span><br>
-            <strong id="live-map-bed-code" style="color: var(--text-primary);">--</strong>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Gender / Age:</span><br>
-            <strong id="live-map-patient-demographics" style="color: var(--text-primary);">--</strong>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Physical MAC:</span><br>
-            <span class="mono" id="live-map-tag-mac" style="font-size: 10px; color: var(--text-secondary);">--</span>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Tracking Mode:</span><br>
-            <span class="badge badge-info" id="live-map-tracking-mode" style="font-size: 10px;">Continuous BLE</span>
-          </div>
+        <div class="wo-facts">
+          <div><span>Battery</span><b id="live-map-val-battery">--</b></div>
+          <div><span>Wristband</span><b id="live-map-hardware-id">--</b></div>
+          <div><span>Last message</span><b id="live-map-val-updated">--</b></div>
         </div>
 
-        <div style="font-size: 11px; color: var(--text-muted); background: #FFFFFF; border: 1px dashed var(--border); border-radius: 6px; padding: 8px;" id="live-map-medical-note">
-          No medical history noted.
+        <div class="wo-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="live-map-btn-activate-stream" title="The wristband sends its vitals every second for 2 minutes">▶ Live vitals for 2 min</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="openSelectedPatientProfile()">Profile</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="openSelectedPatientIncidents()">Incidents</button>
         </div>
+
+        <!-- A wristband that stopped sending: take it off the map -->
+        <div id="live-map-offline-actions" style="display: none;" class="wo-note">
+          This wristband has not been heard for a while.
+          <button class="btn btn-outline btn-sm" id="btn-remove-offline-tag" onclick="removeSelectedOfflineTag()" style="margin-top: 6px;">Remove it from the map</button>
+        </div>
+
+        <!-- Technician details: admins only -->
+        <details class="admin-only wo-tech">
+          <summary>Technician details</summary>
+          <div class="wo-tech-grid">
+            <div><span>Position</span><b id="live-map-val-coords">--</b></div>
+            <div><span>Motion (not reliable)</span><b id="live-map-val-confidence">--</b></div>
+            <div><span>MAC address</span><b id="live-map-tag-mac" class="mono">--</b></div>
+            <div><span>Messages</span><b id="live-map-rate-text">--</b></div>
+          </div>
+          <div style="font-size: 12px; font-weight: 600; margin: 8px 0 4px;">Wall sensors that hear it</div>
+          <div id="live-map-anchors-breakdown" style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;"></div>
+          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 13px;">
+            <label><input type="checkbox" id="chk-show-rings" onchange="toggleIpsLayer('rings')"> Distance circles of the wall sensors</label>
+            <label><input type="checkbox" id="chk-show-labels" onchange="toggleIpsLayer('labels')"> Names of all patients and sensors</label>
+            <label><input type="checkbox" id="chk-show-grid" onchange="toggleIpsLayer('grid')"> 0.5 m grid</label>
+          </div>
+          <div class="mono" style="font-size: 12px; color: var(--text-muted); margin-top: 8px;">
+            <span id="live-map-cal-a">A = --</span> · <span id="live-map-cal-n">n = --</span>
+          </div>
+        </details>
+      </section>
+    </aside>
+
+    <!-- The map -->
+    <section class="wo-map">
+      <div class="wo-map-head">
+        <div style="display: flex; align-items: center; gap: 10px; min-width: 0;">
+          <span style="font-weight: 700; color: var(--text-primary);" id="live-map-canvas-title">Map</span>
+          <span style="font-size: 12px; color: var(--text-muted);" id="live-map-dimensions-pill"></span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="recenterLiveMap()" title="Fit the ward to the window">Fit to window</button>
       </div>
 
-      <!-- Card 3: Real-Time Physiological Telemetry -->
-      <div class="card" style="padding: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <strong style="font-size: 12px; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-            <span>❤️ Live Physiological Vitals</span>
-          </strong>
-          <span class="badge badge-live" id="live-map-vitals-status">● LIVE STREAM</span>
-        </div>
-
-        <div style="margin-bottom: 10px;">
-          <button id="live-map-btn-activate-stream" class="btn btn-outline btn-sm" style="width: 100%; font-size: 11px; padding: 5px 10px; font-weight: 600; border-color: #0284C7; color: #0284C7; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;" title="Send remote trigger to escalate wristband to 1 Hz active vitals mode for 60 seconds">
-            <span>⚡ Engage 1 Hz Active Stream</span>
-          </button>
-        </div>
-
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
-          <!-- Heart Rate -->
-          <div style="background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 12px; text-align: center;">
-            <div style="font-size: 11px; font-weight: 600; color: #DC2626; display: flex; align-items: center; justify-content: center; gap: 4px;">
-              <span class="heartbeat-anim">❤️</span> Heart Rate
-            </div>
-            <div style="font-size: 26px; font-weight: 800; color: #991B1B; margin: 4px 0;" id="live-map-val-bpm">
-              --
-            </div>
-            <div style="font-size: 10px; color: #DC2626;" id="live-map-label-bpm">BPM (Resting)</div>
-          </div>
-
-          <!-- SpO2 -->
-          <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 12px; text-align: center;">
-            <div style="font-size: 11px; font-weight: 600; color: #16A34A; display: flex; align-items: center; justify-content: center; gap: 4px;">
-              <span>🫁</span> Blood Oxygen
-            </div>
-            <div style="font-size: 26px; font-weight: 800; color: #166534; margin: 4px 0;" id="live-map-val-spo2">
-              --
-            </div>
-            <div style="font-size: 10px; color: #16A34A;" id="live-map-label-spo2">% SpO2 (Optimal)</div>
-          </div>
-        </div>
-
-        <!-- Telemetry Details Strip -->
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 11px; margin-bottom: 10px;">
-          <div>
-            <span style="color: var(--text-muted);">Current Location:</span><br>
-            <strong id="live-map-val-coords" class="mono" style="color: var(--primary);">Waiting signal...</strong>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Bed Proximity:</span><br>
-            <strong id="live-map-val-proximity" style="color: var(--text-primary);">--</strong>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Battery Level:</span><br>
-            <strong id="live-map-val-battery" style="color: var(--text-primary);">--</strong>
-          </div>
-          <div>
-            <span style="color: var(--text-muted);">Solver Confidence:</span><br>
-            <span class="badge badge-live" id="live-map-val-confidence" style="font-size: 10px;">3-Anchor 2D</span>
-          </div>
-        </div>
-
-        <!-- Anchor Reception Breakdown -->
-        <div style="border-top: 1px solid var(--border-light); padding-top: 10px;">
-          <div style="font-size: 11px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px; display: flex; justify-content: space-between;">
-            <span>📡 Wall Anchors Heard</span>
-            <span style="font-size: 10px; color: var(--text-muted);" id="live-map-rate-text">~6.7 Hz</span>
-          </div>
-          <div id="live-map-anchors-breakdown" style="display: flex; flex-direction: column; gap: 4px; font-size: 10px;">
-            <div style="color: var(--text-muted); text-align: center; padding: 6px;">Awaiting anchor packets...</div>
-          </div>
-        </div>
-
-        <!-- Offline Tag Removal Action -->
-        <div id="live-map-offline-actions" style="display: none; border-top: 1px solid var(--border-light); padding-top: 10px; margin-top: 10px;">
-          <button id="btn-remove-offline-tag" type="button" class="btn btn-secondary" style="width: 100%; background: #FEF2F2; color: #DC2626; border: 1px solid #FCA5A5; font-size: 11px; font-weight: 700; padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="removeSelectedOfflineTag()">
-            <span>🗑️</span> Remove from Ward Map
-          </button>
-        </div>
-      </div>
-
-      <!-- Card 4: Display & Layer Controls -->
-      <div class="card" style="padding: 14px 16px;">
-        <strong style="font-size: 12px; color: var(--text-primary); display: block; margin-bottom: 10px;">
-          ⚙️ IPS Visualization Layers
-        </strong>
-        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--text-secondary);">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="chk-show-rings" checked onchange="toggleIpsLayer('rings')">
-            <span>Show Multilateration Distance Radii (Circles)</span>
-          </label>
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="chk-show-labels" checked onchange="toggleIpsLayer('labels')">
-            <span>Show Bed, Anchor &amp; Patient Name Pills</span>
-          </label>
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="chk-show-grid" checked onchange="toggleIpsLayer('grid')">
-            <span>Show 0.5-Meter Spatial Metric Grid</span>
-          </label>
-        </div>
-        <div style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-light); font-size: 10px; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <span id="live-map-cal-a">Log-Distance Model: A = -52.0 dBm</span> · 
-            <span id="live-map-cal-n">Path Loss: n = 3.2</span>
-          </div>
-          <button type="button" class="btn btn-outline btn-sm" onclick="openCalibrationModal()" style="font-size: 10px; padding: 2px 8px; border-radius: 4px; border-color: var(--border);">
-            🎯 Calibrate
-          </button>
-        </div>
-      </div>
-
-    </div>
-
-    <!-- RIGHT PANEL: Live 2D Ward Canvas -->
-    <div style="flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; background: #FFFFFF; border: 1.5px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow-sm); position: relative; box-sizing: border-box;">
-      <!-- Canvas Header Bar -->
-      <div style="padding: 10px 16px; background: #F8FAFC; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 12px; flex-shrink: 0;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-weight: 700; color: var(--text-primary);" id="live-map-canvas-title">2D Architectural Digital Twin</span>
-          <span class="mono" style="font-size: 11px; color: var(--text-muted);" id="live-map-dimensions-pill">4.08m × 3.21m</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <span style="font-size: 11px; color: var(--text-muted);">📍 Origin (0,0) at South-West Wall Corner</span>
-          <button class="btn btn-outline btn-sm" onclick="recenterLiveMap()" style="padding: 4px 10px; font-size: 11px;">
-            🎯 Recenter View
-          </button>
-        </div>
-      </div>
-
-      <!-- Canvas Viewport -->
-      <div id="live-map-canvas-container" style="flex: 1; min-height: 0; position: relative; width: 100%; height: 100%; overflow: hidden; background: #FFFFFF;">
+      <div id="live-map-canvas-container" class="wo-map-body">
         <canvas id="ward-live-map-canvas" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;"></canvas>
 
         <!-- Position test (Phase 10): the error between the shown and the true position at marked spots -->
@@ -304,7 +205,16 @@
           </div>
         </div>
       </div>
-    </div>
+
+      <div class="wo-legend">
+        <span><i class="wo-dot wo-dot-alert"></i> Needs help now</span>
+        <span><i class="wo-dot wo-dot-warn"></i> Check (no signal, no skin contact, low battery)</span>
+        <span><i class="wo-dot wo-dot-ok"></i> OK</span>
+        <span><i class="wo-dot wo-dot-off"></i> Wristband off</span>
+        <span><i class="wo-dot wo-dot-person"></i> Person without a wristband</span>
+        <span>🛏 in bed · 🚪 at the door</span>
+      </div>
+    </section>
   </div>
 
   <!-- =========================================================================

@@ -648,12 +648,17 @@ Ward editor → the ward → Panel 3b. Under each LiDAR with a node assigned are
 
 Once a LiDAR is placed, aligned and has its empty room, the server finds the people it sees and links each to a wristband nearby (by position; `docs/protocol.md`, section 5). Nothing has to be switched on.
 
-On the **Live Map**:
-* **📡 before the patient's name**, violet dot: the position comes from the LiDAR (about ±0.1 m). The text under the map says "📡 seen by the LiDAR" and how far the Bluetooth estimate is from it; the faint teal circle is that estimate.
-* **🛏**: the patient was last seen at the bed and the LiDAR no longer sees them, normally because they lay down (a lying person is below the scan slice). The position stays there until they get up, or until Bluetooth clearly shows they left. Getting up, they are first seen at the bed, on whichever side they get out, and the violet dot goes with them within about 1 s.
-* **⏸**: the LiDAR lost the patient away from a bed (someone in front of them, or they went down). The last position is held for 10 s, then Bluetooth.
-* **Grey dot, "person (no wristband)"**: someone the LiDAR sees who is not linked to a wristband: a visitor, staff, or a patient whose Bluetooth position is still more than 2 m away.
-* No symbol (teal dot, 🔒 when still): Bluetooth only.
+On the **Ward overview** (Phase 11; the first page after sign-in):
+* **Left, the patients:** one tile each, with where they are in words ("🛏 In bed (Bed 1)", "🚪 At the door", "By Bed 3", "In the room", "Wristband not heard"), the heart rate, and why the tile is coloured. Click a tile (or a patient on the map) to see them below **and** to start their live vitals for 2 minutes. Opening the page alone never starts live vitals.
+* **The patient card:** an alert nobody has answered yet (red), where they are and how that was found ("Seen by the LiDAR (about ±0.1 m)", "Seen by a headset", "Estimated from Bluetooth (about ±1 m)"), the heart rate and SpO2 in large figures, battery, wristband, and the last message. The heart rate says what the wristband is doing:
+  * a number with "Live, every second" or "Just measured";
+  * "♥ Measuring… ready in about N s" with a bar: the sensor has skin contact, and the first value usually comes about 15 s later (13 s by design); after 30 s it says to keep the arm still and the strap snug;
+  * "No skin contact: make the strap snug" while live vitals run without contact;
+  * "Next automatic reading within 3 min" (or "in about N min") between the automatic measurements, with the last value in grey and its age;
+  * "No signal for N s" when the wristband has sent nothing for 5 s.
+* **▶ Live vitals for 2 min** starts them again; while they run, the button counts down ("● Live: 1:45 left").
+* **On the map:** each patient is a white disc with their initials and a coloured ring: **red, pulsing** = needs help now (an alert nobody has answered), **amber** = check (no signal, no skin contact, low battery, sensor fault), **blue** = OK, **grey dashed** = wristband off. A small badge: 🛏 in bed (the LiDAR lost them at the bed: lying down, below its scan), 🚪 at the door, ⏸ not seen just now (the position is held 10 s), 👁 seen by a headset. The name shows for the chosen patient and for the one under the mouse. Grey dots are people the LiDAR sees without a wristband (staff, visitors, or a patient not matched yet). Wall sensors are small grey squares, hollow and dashed when off. Bed names are always shown.
+* **Technician details** (admins, at the bottom of the card): position and source, the motion state, the MAC address, which wall sensors hear the wristband, and switches for the distance circles, all names and the 0.5 m grid.
 
 How linking behaves:
 * A patient who walks in is linked within about 1–2 s, when they are the only person near their wristband's Bluetooth position (within 2 m) or clearly the nearest one.

@@ -163,7 +163,7 @@ const SAFE_EXPRESSIONS = [
   // reports/shift_report.js: report sections built in code from escaped parts
   /^(tilesHtml|patientRowsHtml|deviceRowsHtml|vitalsNote|attnHtml|testTag)$/,
   // Phase 11: fixed markup only (empty-list texts), or a status badge of a fixed class with escaped text
-  /^(emptyHtml|healthNote|lidarStatusHtml)$/,
+  /^(emptyHtml|healthNote|lidarStatusHtml|flagHtml)$/,
   /^getRadar(Signal|Battery)Html\(d\)$/,
   /^statusBadge\(d\.status\)$/, // health_monitor.js: fixed class name, escaped text
   /^isBound \|\| isAssignedWard \? `<option value="IN_USE" selected>In Use \(Currently Deployed\)<\/option>` : ''$/,

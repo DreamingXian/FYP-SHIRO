@@ -35,13 +35,14 @@
   let ctx = null;
   let animationFrameId = null;
   let ripplePhase = 0;
+  let clockTimer = null;
   let lastRenderTime = 0;
 
   // Layer Visibility
   const layers = {
-    rings: true,
-    labels: true,
-    grid: true
+    rings: false,    // technician view only (Technician details)
+    labels: false,
+    grid: false
   };
 
   /**
@@ -81,8 +82,8 @@
       if (data.calibration) {
         const calA = document.getElementById('live-map-cal-a');
         const calN = document.getElementById('live-map-cal-n');
-        if (calA) calA.innerText = `Log-Distance Model: A = ${Number(data.calibration.A).toFixed(1)} dBm`;
-        if (calN) calN.innerText = `Path Loss: n = ${Number(data.calibration.n).toFixed(1)}`;
+        if (calA) calA.innerText = `A = ${Number(data.calibration.A).toFixed(1)} dBm`;
+        if (calN) calN.innerText = `n = ${Number(data.calibration.n).toFixed(1)}`;
       }
 
       // Update Top Status Bar
@@ -90,7 +91,9 @@
       if (wardBadge) wardBadge.innerText = `${activeWard.ward_id} (${activeWard.room_title || 'Ward'})`;
 
       const dimPill = document.getElementById('live-map-dimensions-pill');
-      if (dimPill) dimPill.innerText = `${Number(activeWard.length_x).toFixed(2)}m × ${Number(activeWard.width_y).toFixed(2)}m × ${Number(activeWard.height_z).toFixed(2)}m`;
+      if (dimPill) dimPill.innerText = `${Number(activeWard.length_x).toFixed(1)} × ${Number(activeWard.width_y).toFixed(1)} m`;
+      const titleEl = document.getElementById('live-map-canvas-title');
+      if (titleEl) titleEl.innerText = activeWard.room_title ? `${activeWard.ward_id} – ${activeWard.room_title}` : activeWard.ward_id;
 
       const anchorsBadge = document.getElementById('live-map-anchors-badge');
       if (anchorsBadge) {
@@ -103,16 +106,12 @@
       // Populate Tracked Subjects list on Left Panel
       renderSubjectsList();
 
-      // Focus on requested targetTagId if provided, else resident or first active tag
+      // Show the requested patient, else the first one; showing never starts live vitals
       if (targetTagId) {
-        selectSubject(targetTagId);
+        selectSubject(targetTagId, false);
       } else {
         const wardResident = trackedSubjects.find(s => s.is_ward_resident) || trackedSubjects[0];
-        if (wardResident) {
-          selectSubject(wardResident.device_id);
-        } else {
-          selectSubject('TAG-001');
-        }
+        selectSubject(wardResident ? wardResident.device_id : null, false);
       }
 
       // Initialize Canvas
@@ -167,133 +166,252 @@
   /**
    * Render active subject cards on Left Panel
    */
+  // ----- Phase 11: what a nurse needs to know, in words -----
+  const OFFLINE_AFTER_MS = 6000;
+  const FIRST_READING_S = 15;     // the wristband's first heart rate takes about 13 s (docs/protocol.md)
+  const PASSIVE_CYCLE_S = 180;    // when not live, a measurement every 3 minutes
+  const RING_COLOUR = { 'st-alert': '#DC2626', 'st-warn': '#D97706', 'st-ok': '#2563EB', 'st-off': '#94A3B8' };
+  let hoveredTagId = null;
+  let lastListHtml = '';
+
+  function isPosOffline(pos, now = Date.now()) {
+    return !pos || pos.status === 'OFFLINE' || (now - (pos.lastSeen || 0) > OFFLINE_AFTER_MS);
+  }
+
+  function initialsOf(name) {
+    return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('') || '?';
+  }
+
+  const agoText = (t, now) => (window.ShiroUI ? window.ShiroUI.ago(t, now) : '');
+
+  // Beds and the door as rectangles: the same zones as the server (services/ips/zones.js)
+  function bedRect(bed) {
+    const rot = ((parseInt(bed.rotation_deg, 10) || 0) % 360 + 360) % 360;
+    const along = rot === 90 || rot === 270;
+    const width = Number(bed.width) || 0.9;
+    const length = Number(bed.length) || 2.0;
+    return { x: Number(bed.x) || 0, y: Number(bed.y) || 0, w: along ? length : width, l: along ? width : length };
+  }
+
+  function doorRect(ward) {
+    const d = ward && ward.door;
+    if (!d) return null;
+    const span = (Number(d.width) || 0.9) + 0.2;
+    const start = (Number(d.x) || 0) - 0.1;
+    const L = Number(ward.length_x);
+    const W = Number(ward.width_y);
+    switch (String(d.wall || '').toUpperCase()) {
+      case 'NORTH': return { x: start, y: W - 1, w: span, l: 1 };
+      case 'EAST': return { x: L - 1, y: start, w: 1, l: span };
+      case 'WEST': return { x: 0, y: start, w: 1, l: span };
+      case 'SOUTH': return { x: start, y: 0, w: span, l: 1 };
+      default: return null;
+    }
+  }
+
+  const inRect = (r, x, y, m = 0) => !!r && x >= r.x - m && x <= r.x + r.w + m && y >= r.y - m && y <= r.y + r.l + m;
+  const bedName = (bed) => String(bed.bed_code || bed.bed_id || 'Bed');
+
+  /** The alerts of a patient that nobody has answered yet. */
+  function pendingAlertsFor(subject, tagId) {
+    const am = window.alertManager;
+    const list = am && Array.isArray(am.activeAlerts) ? am.activeAlerts : [];
+    const answered = am && am.acknowledgedIncidentIds ? am.acknowledgedIncidentIds : new Set();
+    return list.filter(a => (a.resolution_status || 'PENDING') === 'PENDING' && !answered.has(a.incident_id) &&
+      ((subject && a.patient_id && a.patient_id === subject.patient_id) || (a.device_id && a.device_id === tagId)));
+  }
+
+  function alertWords(a) {
+    if (a.incident_category === 'FALL_ACCIDENT') return 'Fall';
+    if (a.incident_category === 'CRITICAL_VITALS') return 'Critical vitals';
+    if (a.incident_category === 'GEOFENCE_BREACH') return a.geofence_kind === 'AT_DOOR' ? 'At the door' : 'Left the ward';
+    return 'Alert';
+  }
+
+  /** Where the patient is, in words, and how the position was found. */
+  function describeWhere(tagId, pos, subject, now = Date.now()) {
+    const left = pendingAlertsFor(subject, tagId).find(a => a.incident_category === 'GEOFENCE_BREACH' && a.geofence_kind !== 'AT_DOOR');
+    if (!pos || pos.x === undefined) return { main: left ? '🚪 Left the ward' : 'Not located yet', sub: 'No position from the wristband yet' };
+    if (isPosOffline(pos, now)) {
+      return { main: left ? '🚪 Left the ward' : 'Wristband not heard', sub: `Last heard ${agoText(pos.lastSeen, now)}` };
+    }
+    if (left) return { main: '🚪 Left the ward', sub: 'The dot is only a Bluetooth estimate now' };
+    const beds = (activeWard && activeWard.beds) || [];
+    const own = subject ? beds.find(b => b.bed_id === subject.assigned_bed_id || b.bed_code === subject.assigned_bed_id) : null;
+    let main;
+    if (pos.source === 'LIDAR' && pos.lidarHeld && pos.lidarInBed) {
+      const bed = beds.find(b => inRect(bedRect(b), pos.x, pos.y, 0.5));
+      main = `🛏 In bed${bed ? ` (${bedName(bed)})` : ''}`;
+    } else if (inRect(doorRect(activeWard), pos.x, pos.y)) {
+      main = '🚪 At the door';
+    } else {
+      const bed = beds.find(b => inRect(bedRect(b), pos.x, pos.y, 0.3));
+      main = bed ? `By ${bedName(bed)}${own && bed === own ? ' (own bed)' : ''}` : 'In the room';
+      if (pos.source === 'LIDAR' && pos.lidarHeld) main = `⏸ ${main}, not seen just now`;
+    }
+    const sub = pos.source === 'HEADSET' ? 'Seen by a headset'
+      : pos.source === 'LIDAR' ? (pos.lidarHeld ? 'Where the LiDAR last saw them' : 'Seen by the LiDAR (about ±0.1 m)')
+        : 'Estimated from Bluetooth (about ±1 m)';
+    return { main, sub };
+  }
+
+  /**
+   * The heart rate as a nurse should read it: a live value, measuring (with how long
+   * it usually takes), no skin contact, no signal, or the last value while the
+   * wristband rests between its automatic measurements.
+   */
+  function heartState(v, now = Date.now()) {
+    if (!v.lastSeen) return { value: '--', text: 'Waiting for the wristband…', cls: '' };
+    const silent = now - v.lastSeen;
+    if (silent > NO_SIGNAL_AFTER_MS) {
+      return { value: '--', text: `No signal for ${Math.round(silent / 1000)} s${v.lastBpmAt ? ` · last ${v.lastBpm} bpm, ${agoText(v.lastBpmAt, now)}` : ''}`, cls: 'is-warn' };
+    }
+    if (v.ppgFault) return { value: '--', text: 'Pulse sensor fault: check the wristband', cls: 'is-warn' };
+    if (v.bpm > 0) return { value: String(v.bpm), text: v.active ? 'Live, every second' : 'Just measured', cls: '' };
+    if (v.touch) {
+      const s = v.touchSince ? Math.max(0, (now - v.touchSince) / 1000) : 0;
+      if (s > 30) return { value: '--', text: 'Still measuring. Keep the arm still and the strap snug.', cls: 'is-measuring', progress: 1, beat: true };
+      const left = Math.max(1, Math.round(FIRST_READING_S - s));
+      return {
+        value: '--',
+        text: s < FIRST_READING_S ? `Measuring… ready in about ${left} s` : 'Measuring… almost ready',
+        cls: 'is-measuring', progress: Math.min(0.95, s / FIRST_READING_S), beat: true
+      };
+    }
+    if (v.active) return { value: '--', text: 'No skin contact: make the strap snug', cls: 'is-warn' };
+    // Resting between the automatic measurements
+    const next = v.burstEndAt ? Math.max(0, PASSIVE_CYCLE_S - (now - v.burstEndAt) / 1000) : null;
+    const nextText = next !== null && next > 30 ? `Next reading in about ${Math.ceil(next / 60)} min` : 'Next automatic reading within 3 min';
+    return {
+      value: v.lastBpmAt ? String(v.lastBpm) : '--',
+      text: `${nextText}${v.lastBpmAt ? ` · this value ${agoText(v.lastBpmAt, now)}` : ''}`,
+      cls: '', dim: Boolean(v.lastBpmAt)
+    };
+  }
+
+  /** The status colour of a patient: needs help, check, OK or off; with the reason. */
+  function tileStatus(s, pos, v, now = Date.now()) {
+    const alerts = pendingAlertsFor(s, s.device_id);
+    if (alerts.length) return { cls: 'st-alert', flag: `${alertWords(alerts[0])}: waiting for a response` };
+    const heard = v.lastSeen && now - v.lastSeen <= NO_SIGNAL_AFTER_MS;
+    if (!heard && isPosOffline(pos, now)) return { cls: 'st-off', flag: pos || v.lastSeen ? 'Wristband off or out of reach' : 'Wristband not heard yet' };
+    if (v.ppgFault || v.imuFault) return { cls: 'st-warn', flag: 'Sensor fault' };
+    if (v.active && !v.touch && !(v.bpm > 0)) return { cls: 'st-warn', flag: 'No skin contact' };
+    if (Number.isFinite(Number(v.battery)) && v.battery !== null && Number(v.battery) <= 20 && !v.charging) return { cls: 'st-warn', flag: `Battery low (${v.battery}%)` };
+    return { cls: 'st-ok', flag: '' };
+  }
+
+  /** The patient tiles. Redrawn every second; the list is only replaced when it changed. */
   function renderSubjectsList() {
     const container = document.getElementById('live-map-subjects-container');
     const countBadge = document.getElementById('live-map-subject-count');
     if (!container) return;
+    if (countBadge) countBadge.innerText = String(trackedSubjects.length);
 
-    container.innerHTML = '';
-
-    if (countBadge) {
-      countBadge.innerText = `${trackedSubjects.length} Subject${trackedSubjects.length === 1 ? '' : 's'}`;
-    }
-
+    let html;
     if (trackedSubjects.length === 0) {
-      container.innerHTML = `<div style="color:var(--text-muted); font-size:11px; padding:8px; text-align:center;">No patients currently bound to wristbands in this ward.</div>`;
-      return;
+      html = '<div class="empty-state"><strong>No patient wears a wristband in this ward.</strong>Give one on the Wristbands page.</div>';
+    } else {
+      const now = Date.now();
+      html = trackedSubjects.map(s => {
+        const pos = liveTagPositions.get(s.device_id);
+        const v = liveVitals.get(s.device_id) || {};
+        const st = tileStatus(s, pos, v, now);
+        const where = describeWhere(s.device_id, pos, s, now).main;
+        const hr = heartState(v, now);
+        const bed = s.bed_code || s.assigned_bed_id || '';
+        const avatarHtml = s.photo_url
+          ? `<img src="${escapeHtml(s.photo_url)}" alt=""${imgFallbackAttrs(initialsOf(s.full_name))}>`
+          : escapeHtml(initialsOf(s.full_name));
+        const flagHtml = st.flag ? `<span class="wo-tile-flag">${escapeHtml(st.flag)}</span>` : '';
+        return `<button type="button" class="wo-tile ${escapeHtml(st.cls)}${s.device_id === selectedTagId ? ' is-selected' : ''}"${actionAttrs('selectWardPatient', [s.device_id])}>
+          <span class="wo-initials">${avatarHtml}</span>
+          <span class="wo-tile-main">
+            <span class="wo-tile-name">${escapeHtml(s.full_name || s.device_id)}</span>
+            <span class="wo-tile-where">${escapeHtml(where)}${escapeHtml(bed ? ' · ' + bed : '')}</span>
+            ${flagHtml}
+          </span>
+          <span class="wo-tile-hr${hr.dim ? ' is-dim' : ''}"><b>${escapeHtml(hr.cls === 'is-measuring' ? '♥' : hr.value)}</b><small>${escapeHtml(hr.cls === 'is-measuring' ? 'measuring' : 'bpm')}</small></span>
+        </button>`;
+      }).join('');
+    }
+    if (html !== lastListHtml) {
+      container.innerHTML = html;
+      lastListHtml = html;
     }
 
-    trackedSubjects.forEach(s => {
-      const isSelected = (s.device_id === selectedTagId);
-      const isResident = s.is_ward_resident;
-      const bedLabel = s.assigned_bed_id ? s.assigned_bed_id : 'No Bed';
-      const pos = liveTagPositions.get(s.device_id);
-      const isTagOffline = pos ? (pos.status === 'OFFLINE' || (Date.now() - (pos.lastSeen || 0) > 6000)) : false;
-
-      const item = document.createElement('div');
-      item.className = 'live-map-subject-item';
-      item.style.cssText = `
-        padding: 8px 10px;
-        border-radius: 6px;
-        border: 1px solid ${isSelected ? 'var(--primary)' : 'var(--border)'};
-        background: ${isSelected ? '#EFF6FF' : '#FFFFFF'};
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        cursor: pointer;
-        transition: all 0.15s ease;
-      `;
-
-      item.onclick = () => selectSubject(s.device_id);
-
-      let statusBadge = '';
-      if (isTagOffline) {
-        statusBadge = `<span class="badge badge-alert" style="font-size:9px;">● OFFLINE</span>`;
-      } else if (pos && pos.motion_state === 'WALKING') {
-        statusBadge = `<span class="badge badge-live" style="font-size:9px;">🚶 WALKING</span>`;
-      } else if (pos && pos.motion_state === 'HAND_MOVEMENT') {
-        statusBadge = `<span class="badge badge-warning" style="font-size:9px; background:#FEF3C7; color:#B45309; border:1px solid #FCD34D;">👋 GESTURE</span>`;
-      } else if (pos && pos.motion_state === 'SETTLING') {
-        statusBadge = `<span class="badge badge-warning" style="font-size:9px;">🎯 SETTLING</span>`;
-      } else {
-        statusBadge = `<span class="badge badge-info" style="font-size:9px;">🔒 STILL</span>`;
-      }
-
-      item.innerHTML = `
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-size:16px;">${s.photo_url ? '👤' : '👤'}</span>
-          <div>
-            <div style="font-weight:700; font-size:12px; color:var(--text-primary);">${escapeHtml(s.full_name || 'Anonymous Patient')}</div>
-            <div style="font-size:10px; color:var(--text-muted); font-family:monospace;">${escapeHtml(s.device_id)} · ${escapeHtml(bedLabel)}</div>
-          </div>
-        </div>
-        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px;">
-          ${statusBadge}
-          <span style="font-size:9px; color:var(--text-muted);">
-            ${isResident ? 'Resident' : 'Visiting'}
-          </span>
-        </div>
-      `;
-
-      container.appendChild(item);
-    });
+    // People the LiDAR sees without a wristband
+    const note = document.getElementById('live-map-people-note');
+    if (note) {
+      const fresh = Date.now() - roomPeople.at <= ROOM_PEOPLE_FRESH_MS;
+      const n = fresh ? roomPeople.people.filter(p => !p.tag_id).length : 0;
+      note.innerText = n ? `${n} ${n === 1 ? 'person' : 'people'} without a wristband in the room (grey on the map): staff, a visitor, or a patient not yet matched.` : '';
+    }
   }
 
   /**
-   * Select a subject to focus on Left Panel and on Canvas
-   * @param {string} tagId 
+   * Shows a patient in the card. userChose: someone clicked them; only then does
+   * the wristband start live vitals (never just because the page opened).
    */
-  function selectSubject(tagId) {
+  function selectSubject(tagId, userChose = false) {
     selectedTagId = tagId;
+    lastListHtml = '';
     renderSubjectsList();
 
     const subject = trackedSubjects.find(s => s.device_id === tagId);
-
     const nameEl = document.getElementById('live-map-patient-name');
     const subtextEl = document.getElementById('live-map-patient-subtext');
     const hwIdEl = document.getElementById('live-map-hardware-id');
-    const bedEl = document.getElementById('live-map-bed-code');
-    const demoEl = document.getElementById('live-map-patient-demographics');
     const macEl = document.getElementById('live-map-tag-mac');
-    const noteEl = document.getElementById('live-map-medical-note');
     const avatarEl = document.getElementById('live-map-patient-avatar');
+
+    if (!tagId) {
+      if (nameEl) nameEl.innerText = 'Choose a patient';
+      if (subtextEl) subtextEl.innerText = 'Click a patient in the list or on the map.';
+      if (avatarEl) avatarEl.innerText = '?';
+      updateTelemetryCard();
+      return;
+    }
 
     if (subject) {
       if (nameEl) nameEl.innerText = subject.full_name || 'Patient';
-      if (subtextEl) subtextEl.innerText = `ID: ${subject.patient_id} · Bed: ${subject.assigned_bed_id || 'Not Assigned'}`;
-      if (hwIdEl) hwIdEl.innerText = `Hardware Tag: ${subject.device_id}`;
-      if (bedEl) bedEl.innerText = subject.assigned_bed_id || 'Unassigned';
-      if (demoEl) {
-        const gender = subject.gender || 'Unknown';
-        const dob = subject.dob ? new Date(subject.dob).getFullYear() : null;
-        const age = dob ? `${new Date().getFullYear() - dob} yrs` : '';
-        demoEl.innerText = `${gender} ${age}`.trim();
-      }
-      if (macEl) macEl.innerText = subject.mac_address || '--:--:--:--:--:--';
-      if (noteEl) noteEl.innerText = subject.medical_history || 'No medical precautions or clinical notes on file.';
-
-      if (avatarEl && subject.photo_url) {
-        avatarEl.innerHTML = `<img src="${escapeHtml(subject.photo_url)}" style="width:100%; height:100%; object-fit:cover;"${imgFallbackAttrs('👤')}>`;
-      } else if (avatarEl) {
-        avatarEl.innerText = '👤';
+      const bed = subject.bed_code || subject.assigned_bed_id;
+      const year = subject.dob ? new Date(subject.dob).getFullYear() : null;
+      const age = year ? `${new Date().getFullYear() - year} years` : '';
+      const sex = subject.gender ? String(subject.gender).charAt(0) + String(subject.gender).slice(1).toLowerCase() : '';
+      if (subtextEl) subtextEl.innerText = [subject.patient_id, bed || 'no bed', [age, sex].filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+      if (avatarEl) {
+        if (subject.photo_url) {
+          avatarEl.innerHTML = `<img src="${escapeHtml(subject.photo_url)}" alt=""${imgFallbackAttrs(initialsOf(subject.full_name))}>`;
+        } else {
+          avatarEl.innerText = initialsOf(subject.full_name);
+        }
       }
     } else {
-      if (nameEl) nameEl.innerText = `Hardware Tag (${tagId})`;
-      if (subtextEl) subtextEl.innerText = 'Unbound Wristband Device';
-      if (hwIdEl) hwIdEl.innerText = `Hardware Tag: ${tagId}`;
-      if (bedEl) bedEl.innerText = '--';
-      if (demoEl) demoEl.innerText = '--';
-      if (macEl) macEl.innerText = '--';
-      if (noteEl) noteEl.innerText = 'Wristband is active but not currently bound to an admitted patient in MySQL.';
-      if (avatarEl) avatarEl.innerText = '📡';
+      if (nameEl) nameEl.innerText = `Wristband ${tagId}`;
+      if (subtextEl) subtextEl.innerText = 'Not given to a patient';
+      if (avatarEl) avatarEl.innerText = '?';
     }
+    if (hwIdEl) hwIdEl.innerText = tagId;
+    if (macEl) macEl.innerText = (subject && subject.mac_address) || '--';
 
-    // Refresh telemetry displays
     updateTelemetryCard();
-
-    // Automatically trigger 1 Hz active stream for selected subject (debounced per tag)
-    triggerActiveModeForTag(tagId, false);
+    if (userChose) triggerActiveModeForTag(tagId, false);
   }
+
+  window.selectWardPatient = (tagId) => selectSubject(tagId, true);
+
+  window.openSelectedPatientProfile = function () {
+    const s = trackedSubjects.find(x => x.device_id === selectedTagId);
+    if (s && s.patient_id && typeof window.viewPatientProfileReadOnly === 'function') window.viewPatientProfileReadOnly(s.patient_id);
+    else if (window.showToast) window.showToast('Choose a patient first.', 'info');
+  };
+
+  window.openSelectedPatientIncidents = function () {
+    const s = trackedSubjects.find(x => x.device_id === selectedTagId);
+    if (s && s.patient_id && typeof window.openIncidentHistoryModal === 'function') window.openIncidentHistoryModal(s.patient_id, s.full_name);
+    else if (window.showToast) window.showToast('Choose a patient first.', 'info');
+  };
 
   // Active mode throttle cache per tag: tagId -> timestamp
   const lastActiveTriggers = new Map();
@@ -321,7 +439,7 @@
     }));
 
     if (force && window.showToast) {
-      window.showToast(`Engaging 1 Hz active vitals stream for ${subject?.full_name || tagId}...`, 'info');
+      window.showToast(`Starting live vitals for ${subject?.full_name || tagId}…`, 'info');
     }
     console.log(`[LIVE MAP] Triggered 1 Hz active mode for ${tagId} (${targetMac || 'auto'})`);
   }
@@ -329,179 +447,100 @@
   /**
    * Update Left Panel telemetry displays from live cache
    */
+  /** The card of the chosen patient: alert, where, heart rate with its state, SpO2, battery, live button. */
   function updateTelemetryCard() {
-    if (!selectedTagId) return;
+    const now = Date.now();
+    const tagId = selectedTagId;
+    const subject = tagId ? trackedSubjects.find(s => s.device_id === tagId) : null;
+    const vitals = (tagId && liveVitals.get(tagId)) || {};
+    const pos = (tagId && liveTagPositions.get(tagId)) || null;
+    const setText = (id, text) => { const el = document.getElementById(id); if (el) el.innerText = text; };
 
-    const vitals = liveVitals.get(selectedTagId) || {};
-    const pos = liveTagPositions.get(selectedTagId) || null;
-    const isOffline = pos ? (pos.status === 'OFFLINE' || (Date.now() - (pos.lastSeen || 0) > 6000)) : false;
-    // No telemetry packet for 5 seconds: the numbers on screen are no longer live
-    const silentMs = vitals.lastSeen ? Date.now() - vitals.lastSeen : null;
-    const noSignal = silentMs !== null && silentMs > NO_SIGNAL_AFTER_MS;
-    const sensorFault = [vitals.imuFault ? 'motion sensor' : null, vitals.ppgFault ? 'pulse sensor' : null].filter(Boolean);
+    // Alert of this patient that nobody has answered yet
+    const chip = document.getElementById('live-map-alert-chip');
+    if (chip) {
+      const alerts = tagId ? pendingAlertsFor(subject, tagId) : [];
+      if (alerts.length) {
+        const a = alerts[0];
+        const when = a.trigger_timestamp ? new Date(a.trigger_timestamp).toLocaleTimeString() : '';
+        const html = `<div class="wo-alert-chip"><span>🚨 ${escapeHtml(alertWords(a))}${escapeHtml(when ? ' at ' + when : '')}: waiting for a response</span></div>`;
+        if (chip.innerHTML !== html) chip.innerHTML = html;
+      } else if (chip.innerHTML) {
+        chip.innerHTML = '';
+      }
+    }
 
+    // Where
+    const where = tagId ? describeWhere(tagId, pos, subject, now) : { main: '–', sub: '' };
+    setText('live-map-where-main', where.main);
+    setText('live-map-where-sub', where.sub);
+
+    // Heart rate, with what the wristband is doing
+    const hr = tagId ? heartState(vitals, now) : { value: '--', text: '–', cls: '' };
     const bpmEl = document.getElementById('live-map-val-bpm');
-    const spo2El = document.getElementById('live-map-val-spo2');
-    const batteryEl = document.getElementById('live-map-val-battery');
-    const coordsEl = document.getElementById('live-map-val-coords');
-    const proximityEl = document.getElementById('live-map-val-proximity');
-    const confEl = document.getElementById('live-map-val-confidence');
-    const vitalsStatusEl = document.getElementById('live-map-vitals-status');
-
-    if (vitalsStatusEl) {
-      if (isOffline) {
-        vitalsStatusEl.innerText = '● OFFLINE (LAST KNOWN)';
-        vitalsStatusEl.className = 'badge badge-alert';
-        vitalsStatusEl.style.background = '';
-        vitalsStatusEl.style.color = '';
-        vitalsStatusEl.style.border = '';
-      } else if (noSignal) {
-        vitalsStatusEl.innerText = `● NO SIGNAL (${Math.round(silentMs / 1000)} s)`;
-        vitalsStatusEl.className = 'badge badge-alert';
-        vitalsStatusEl.style.background = '';
-        vitalsStatusEl.style.color = '';
-        vitalsStatusEl.style.border = '';
-      } else if (sensorFault.length > 0) {
-        vitalsStatusEl.innerText = `⚠ SENSOR FAULT (${sensorFault.join(', ')})`;
-        vitalsStatusEl.className = 'badge badge-alert';
-        vitalsStatusEl.style.background = '#FEF3C7';
-        vitalsStatusEl.style.color = '#B45309';
-        vitalsStatusEl.style.border = '1px solid #F59E0B';
-      } else if (vitals.motion === 'FALL_EMERGENCY') {
-        vitalsStatusEl.innerText = '🚨 1 Hz EMERGENCY STREAM';
-        vitalsStatusEl.className = 'badge badge-alert';
-        vitalsStatusEl.style.background = '#FEE2E2';
-        vitalsStatusEl.style.color = '#DC2626';
-        vitalsStatusEl.style.border = '1px solid #F87171';
-      } else if (vitals.active || (vitals.touch && vitals.bpm > 0)) {
-        vitalsStatusEl.innerText = '● 1 Hz ACTIVE STREAM';
-        vitalsStatusEl.className = 'badge badge-live';
-        vitalsStatusEl.style.background = '#DCFCE7';
-        vitalsStatusEl.style.color = '#15803D';
-        vitalsStatusEl.style.border = '1px solid #86EFAC';
-      } else {
-        vitalsStatusEl.innerText = '● 3-MIN POWER SAVING';
-        vitalsStatusEl.className = 'badge';
-        vitalsStatusEl.style.background = '#E0F2FE';
-        vitalsStatusEl.style.color = '#0369A1';
-        vitalsStatusEl.style.border = '1px solid #0EA5E9';
-      }
-    }
-
     if (bpmEl) {
-      bpmEl.innerText = vitals.bpm > 0 ? vitals.bpm : '--';
-      bpmEl.style.color = (vitals.bpm && (vitals.bpm < 50 || vitals.bpm > 110)) ? '#DC2626' : '#991B1B';
+      bpmEl.innerText = hr.value;
+      bpmEl.style.color = hr.dim ? '#94A3B8' : (vitals.bpm && (vitals.bpm < 50 || vitals.bpm > 110) ? '#DC2626' : '');
+    }
+    const stateEl = document.getElementById('live-map-bpm-state');
+    if (stateEl) {
+      stateEl.className = `wo-vital-state ${hr.cls || ''}`;
+      if (hr.beat) {
+        const html = `<span class="wo-beat">♥</span> ${escapeHtml(hr.text)}`;
+        if (stateEl.innerHTML !== html) stateEl.innerHTML = html;
+      } else {
+        stateEl.innerText = hr.text;
+      }
+    }
+    const bar = document.getElementById('live-map-bpm-progress');
+    const fill = document.getElementById('live-map-bpm-progress-fill');
+    if (bar && fill) {
+      bar.style.display = hr.progress !== undefined ? 'block' : 'none';
+      if (hr.progress !== undefined) fill.style.width = `${Math.round(hr.progress * 100)}%`;
     }
 
+    // SpO2: indicative only, comes with the heart rate
+    const spo2El = document.getElementById('live-map-val-spo2');
     if (spo2El) {
-      spo2El.innerText = vitals.spo2 > 0 ? vitals.spo2 : '--';
-      // SpO2 is indicative only (not calibrated, raises no alarms): shown in a
-      // neutral colour so the screen makes no "normal" or "low" claim about it.
-      spo2El.style.color = '#475569';
-      spo2El.title = 'Indicative only: the SpO2 measurement is not calibrated and does not raise alarms.';
+      const live = vitals.spo2 > 0 && hr.value !== '--' && !hr.dim;
+      spo2El.innerText = live ? String(vitals.spo2) : (hr.dim && vitals.lastSpo2 ? String(vitals.lastSpo2) : '--');
+      spo2El.style.color = hr.dim ? '#94A3B8' : '';
     }
+    setText('live-map-spo2-state', 'Not calibrated: for information only');
 
-    if (batteryEl) {
-      const bat = vitals.battery !== undefined ? vitals.battery : (vitals.bat !== undefined ? vitals.bat : null);
-      if (bat !== null) {
-        batteryEl.innerText = `${bat}%${vitals.charging ? ' ⚡' : ''}`;
-        batteryEl.style.color = vitals.charging ? 'var(--warning, #F59E0B)' : (bat <= 20 ? 'var(--danger, #DC2626)' : 'var(--text-primary)');
+    // Battery, last message
+    const bat = vitals.battery !== undefined && vitals.battery !== null ? Number(vitals.battery) : null;
+    const batEl = document.getElementById('live-map-val-battery');
+    if (batEl) {
+      batEl.innerText = bat === null ? '--' : `${bat}%${vitals.charging ? ' ⚡ charging' : ''}`;
+      batEl.style.color = bat !== null && bat <= 20 && !vitals.charging ? '#B45309' : '';
+    }
+    // Exact seconds for the last minute, so it never says "just now" next to "no signal for 5 s"
+    const sinceS = vitals.lastSeen ? Math.round((now - vitals.lastSeen) / 1000) : null;
+    setText('live-map-val-updated', sinceS === null ? '--' : sinceS < 2 ? 'now' : sinceS < 60 ? `${sinceS} s ago` : agoText(vitals.lastSeen, now));
+
+    // Live vitals button: how long live mode still runs
+    const btn = document.getElementById('live-map-btn-activate-stream');
+    if (btn) {
+      const left = vitals.activeUntil ? Math.round((vitals.activeUntil - now) / 1000) : 0;
+      if (vitals.active && left > 0) {
+        btn.innerText = `● Live: ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')} left`;
+      } else if (vitals.active || vitals.motion === 'FALL_EMERGENCY') {
+        btn.innerText = '● Live now';
       } else {
-        batteryEl.innerText = '--';
+        btn.innerText = '▶ Live vitals for 2 min';
       }
+      btn.disabled = !tagId;
     }
 
-    if (coordsEl) {
-      if (pos && pos.x !== undefined && pos.y !== undefined) {
-        const prefix = isOffline ? 'Last Known: ' : '';
-        let where = `${prefix}(${pos.x.toFixed(2)}m, ${pos.y.toFixed(2)}m)`;
-        if (!isOffline && pos.source === 'HEADSET') {
-          // Seen by a headset: say so, and how far off the Bluetooth estimate is
-          where += ` · 👁 seen by headset ${pos.seenBy || ''}${pos.seenManual ? ' (chosen by hand)' : ''}`;
-          if (pos.bleX !== undefined && pos.bleY !== undefined) {
-            const off = Math.hypot(pos.bleX - pos.x, pos.bleY - pos.y);
-            where += ` · Bluetooth estimate ${off.toFixed(1)} m away`;
-          }
-        } else if (!isOffline && pos.source === 'LIDAR') {
-          // Followed by the LiDAR, or held where it last saw the patient
-          where += pos.lidarHeld
-            ? (pos.lidarInBed ? ' · 🛏 LiDAR: last seen at the bed, probably lying down' : ' · ⏸ LiDAR: not seen just now, last position held')
-            : ' · 📡 seen by the LiDAR (about ±0.1 m)';
-          if (pos.bleX !== undefined && pos.bleY !== undefined) {
-            const off = Math.hypot(pos.bleX - pos.x, pos.bleY - pos.y);
-            where += ` · Bluetooth estimate ${off.toFixed(1)} m away`;
-          }
-        } else if (!isOffline) {
-          where += ' · Bluetooth estimate (about ±1 m)';
-        }
-        coordsEl.innerText = where;
-      } else {
-        coordsEl.innerText = 'Awaiting signal...';
-      }
-    }
-
+    // A wristband that stopped sending can be taken off the map
     const offlineActionEl = document.getElementById('live-map-offline-actions');
-    if (offlineActionEl) {
-      offlineActionEl.style.display = isOffline ? 'block' : 'none';
-    }
+    if (offlineActionEl) offlineActionEl.style.display = tagId && pos && isPosOffline(pos, now) ? 'block' : 'none';
 
-    if (confEl && pos) {
-      if (isOffline) {
-        confEl.innerText = 'OFFLINE (LAST KNOWN)';
-        confEl.className = 'badge badge-alert';
-        confEl.style.background = '';
-        confEl.style.color = '';
-      } else if (pos.motion_state === 'WALKING') {
-        confEl.innerText = '🚶 WALKING (ACTIVE)';
-        confEl.className = 'badge badge-live';
-        confEl.style.background = '';
-        confEl.style.color = '';
-      } else if (pos.motion_state === 'HAND_MOVEMENT') {
-        confEl.innerText = '👋 HAND MOVEMENT';
-        confEl.className = 'badge badge-warning';
-        confEl.style.background = '#FEF3C7';
-        confEl.style.color = '#B45309';
-      } else if (pos.motion_state === 'SETTLING') {
-        confEl.innerText = '🎯 SETTLING (2S WINDOW)';
-        confEl.className = 'badge badge-warning';
-        confEl.style.background = '';
-        confEl.style.color = '';
-      } else {
-        confEl.innerText = '🔒 STATIONARY (LOCKED)';
-        confEl.className = 'badge badge-info';
-        confEl.style.background = '';
-        confEl.style.color = '';
-      }
-    }
-
-    // Calculate proximity to assigned bed
-    if (proximityEl && pos && activeWard && activeWard.beds) {
-      const subject = trackedSubjects.find(s => s.device_id === selectedTagId);
-      if (subject && subject.assigned_bed_id) {
-        const bed = activeWard.beds.find(b => b.bed_id === subject.assigned_bed_id || b.bed_code === subject.assigned_bed_id);
-        if (bed) {
-          const rot = parseInt(bed.rotation_deg, 10) || 0;
-          const spanX = (rot === 90 || rot === 270) ? (bed.length || 2.00) : (bed.width || 0.90);
-          const spanY = (rot === 90 || rot === 270) ? (bed.width || 0.90) : (bed.length || 2.00);
-          const dx = pos.x - (bed.x + spanX / 2);
-          const dy = pos.y - (bed.y + spanY / 2);
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 0.85) {
-            proximityEl.innerHTML = `<span style="color:#16A34A; font-weight:700;">🛏️ In Bed (${dist.toFixed(2)}m)</span>`;
-          } else if (dist < 1.80) {
-            proximityEl.innerHTML = `<span style="color:#D97706; font-weight:700;">🚶 Bedside (${dist.toFixed(2)}m)</span>`;
-          } else {
-            proximityEl.innerHTML = `<span style="color:var(--text-primary);">📍 Ward Ambulatory (${dist.toFixed(2)}m)</span>`;
-          }
-        } else {
-          proximityEl.innerText = 'Bed unplaced in ward';
-        }
-      } else {
-        proximityEl.innerText = 'No assigned bed';
-      }
-    }
-
-    // Render Wall Anchors Heard breakdown
+    // Technician details
+    setText('live-map-val-coords', pos && pos.x !== undefined ? `(${pos.x.toFixed(2)} m, ${pos.y.toFixed(2)} m), ${pos.source || 'BLE'}` : '--');
+    setText('live-map-val-confidence', pos ? String(pos.motion_state || '--').toLowerCase() : '--');
+    setText('live-map-rate-text', vitals.lastSeen ? `last ${agoText(vitals.lastSeen, now)}` : '--');
     renderAnchorsBreakdown(pos);
   }
 
@@ -510,7 +549,7 @@
     if (!container) return;
 
     if (!pos || !Array.isArray(pos.anchors) || pos.anchors.length === 0) {
-      container.innerHTML = `<div style="color:var(--text-muted); text-align:center; padding:6px;">Awaiting anchor reception packets...</div>`;
+      container.innerHTML = '<div style="color:var(--text-muted);">No wall sensor hears it right now.</div>';
       return;
     }
 
@@ -539,6 +578,7 @@
 
     // Click handler to select wristband dots on canvas
     canvas.addEventListener('click', onCanvasClick);
+    canvas.addEventListener('mousemove', onCanvasHover);
 
     // Manual 1 Hz Active Monitoring button
     const btnActiveStream = document.getElementById('live-map-btn-activate-stream');
@@ -615,8 +655,7 @@
       const dist = Math.sqrt(dx * dx + dy * dy);
 
       if (dist <= hitRadius) {
-        selectSubject(tagId);
-        if (window.showToast) window.showToast(`Selected ${tagId}`, 'info', 1500);
+        selectSubject(tagId, true);
         return;
       }
     }
@@ -1021,12 +1060,11 @@
       ctx.stroke();
     }
 
-    if (layers.labels) {
-      ctx.fillStyle = '#334155';
-      ctx.font = 'bold 11px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(bed.bed_code || bed.bed_id, p.x + bw / 2, p.y + bl / 2 + 4);
-    }
+    // Bed names always: nurses find patients by bed
+    ctx.fillStyle = '#334155';
+    ctx.font = '600 13px Inter, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(bed.bed_code || bed.bed_id, p.x + bw / 2, p.y + bl / 2 + 4);
     ctx.restore();
   }
 
@@ -1058,23 +1096,21 @@
       }
     }
 
-    // 2. Pulsing Beacon Glow if Online
-    if (isOnline) {
-      const pulseSize = 8 + Math.sin(ripplePhase * 2) * 4;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, pulseSize, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(16, 185, 129, 0.25)';
-      ctx.fill();
-    }
-
-    // 3. Anchor Beacon Center
+    // 2. The sensor: a small square, grey-blue when on, hollow and dashed when off
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
-    ctx.fillStyle = isOnline ? '#10B981' : '#EF4444';
-    ctx.fill();
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 2;
-    ctx.stroke();
+    ctx.rect(p.x - 5, p.y - 5, 10, 10);
+    if (isOnline) {
+      ctx.fillStyle = '#64748B';
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fill();
+      ctx.setLineDash([2, 2]);
+      ctx.strokeStyle = '#94A3B8';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     // 4. Anchor Labels
     if (layers.labels) {
@@ -1120,148 +1156,153 @@
     }
   }
 
+  /** The status class of a marker: the same as the patient's tile. */
+  function markerStatus(tagId, pos, now) {
+    const subject = trackedSubjects.find(s => s.device_id === tagId);
+    if (subject) return tileStatus(subject, pos, liveVitals.get(tagId) || {}, now).cls;
+    return isPosOffline(pos, now) ? 'st-off' : 'st-ok';
+  }
+
+  /**
+   * Patients on the map (Phase 11): a white disc with the initials and a ring in
+   * the status colour (red needs help, pulsing; amber check; blue OK; grey dashed
+   * off), a small badge for in bed / at the door / not seen just now / headset.
+   * The name only for the chosen or pointed-at patient, so names never pile up.
+   */
   function drawWristbandDots(ctx, t) {
     const now = Date.now();
 
-    // 1. Reconcile and purge raw MAC ghost keys
+    // Raw MAC keys of known wristbands become their device IDs
     for (const [tagId, pos] of liveTagPositions.entries()) {
       if (tagId.includes(':')) {
         const canonical = trackedSubjects.find(s => s.mac_address && s.mac_address.toUpperCase() === tagId.toUpperCase());
         if (canonical) {
-          if (!liveTagPositions.has(canonical.device_id)) {
-            liveTagPositions.set(canonical.device_id, { ...pos });
-          }
+          if (!liveTagPositions.has(canonical.device_id)) liveTagPositions.set(canonical.device_id, { ...pos });
           liveTagPositions.delete(tagId);
-          continue;
         }
       }
     }
 
-    for (const [tagId, pos] of liveTagPositions.entries()) {
-      if (pos.x === undefined || pos.y === undefined) continue;
+    const door = doorRect(activeWard);
+    // The chosen patient last, on top
+    const entries = [...liveTagPositions.entries()]
+      .filter(([, pos]) => pos.x !== undefined && pos.y !== undefined)
+      .sort((a, b) => Number(a[0] === selectedTagId) - Number(b[0] === selectedTagId));
 
-      ctx.save();
+    for (const [tagId, pos] of entries) {
       const p = metricToCanvas(pos.x, pos.y, t);
-      const isSelected = (tagId === selectedTagId);
-      const isOffline = (pos.status === 'OFFLINE' || (now - (pos.lastSeen || 0) > 6000));
+      const isSelected = tagId === selectedTagId;
+      const status = markerStatus(tagId, pos, now);
+      const off = status === 'st-off';
+      const subject = trackedSubjects.find(s => s.device_id === tagId);
+      const r = Math.max(15, 0.225 * t.scale);
+      ctx.save();
 
-      // 45cm diameter human occupant footprint (radius = 0.225m in physical space)
-      const humanRadiusPx = Math.max(14, (0.45 / 2) * t.scale);
-      // Seen by a headset: the dot is where its depth sensor sees the patient
-      const seenByHeadset = pos.source === 'HEADSET' && !isOffline;
-      // Seen by the LiDAR (or held where it last saw them): the dot is the LiDAR's position
-      const seenByLidar = pos.source === 'LIDAR' && !isOffline;
-
-      // 1b. The Bluetooth estimate, faint, with a line to where the headset or LiDAR sees the patient
-      if ((seenByHeadset || seenByLidar) && pos.bleX !== undefined && pos.bleY !== undefined) {
+      // The Bluetooth estimate: only for the chosen patient, when the LiDAR or a headset gives the position
+      if (isSelected && !off && (pos.source === 'LIDAR' || pos.source === 'HEADSET') && pos.bleX !== undefined && pos.bleY !== undefined) {
         const b = metricToCanvas(pos.bleX, pos.bleY, t);
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(100, 116, 139, 0.5)';
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(b.x, b.y);
         ctx.lineTo(p.x, p.y);
-        ctx.strokeStyle = 'rgba(79, 70, 229, 0.45)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 4]);
         ctx.stroke();
         ctx.beginPath();
-        ctx.arc(b.x, b.y, humanRadiusPx * 0.6, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(13, 148, 136, 0.15)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(13, 148, 136, 0.55)';
+        ctx.arc(b.x, b.y, r * 0.5, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
-        if (isSelected) {
-          ctx.font = '10px sans-serif';
-          ctx.fillStyle = 'rgba(15, 118, 110, 0.9)';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'top';
-          ctx.fillText('Bluetooth estimate', b.x, b.y + humanRadiusPx * 0.6 + 3);
-        }
       }
 
-      // 2. Ripple Expanding Wave Animation (ONLY when ONLINE, disabled when OFFLINE)
-      if (!isOffline) {
-        const rippleR = humanRadiusPx + 4 + ((ripplePhase * 8) % 18);
-        const rippleOpacity = Math.max(0, 1 - (rippleR - humanRadiusPx - 4) / 18);
+      // Needs help: a pulsing red halo
+      if (status === 'st-alert') {
+        const k = (Math.sin(ripplePhase * 3) + 1) / 2;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, rippleR, 0, Math.PI * 2);
-        ctx.strokeStyle = isSelected 
-          ? `rgba(2, 132, 199, ${rippleOpacity})` 
-          : `rgba(13, 148, 136, ${rippleOpacity})`;
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
+        ctx.arc(p.x, p.y, r + 6 + k * 10, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(220, 38, 38, ${(0.12 + 0.2 * (1 - k)).toFixed(3)})`;
+        ctx.fill();
       }
 
-      // 3. Outer Selection Ring
+      // Chosen: a dark outer ring
       if (isSelected) {
         ctx.beginPath();
-        ctx.arc(p.x, p.y, humanRadiusPx + 5, 0, Math.PI * 2);
-        ctx.strokeStyle = isOffline ? 'rgba(100, 116, 139, 0.80)' : '#0284C7';
-        ctx.lineWidth = 3;
-        ctx.setLineDash([5, 3]);
+        ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.setLineDash([]);
       }
 
-      // 4. Core Human Scale Circle (~45cm true scale)
+      // The marker
       ctx.beginPath();
-      ctx.arc(p.x, p.y, humanRadiusPx, 0, Math.PI * 2);
-      ctx.fillStyle = isOffline ? '#64748B' : (isSelected ? '#0284C7' : (seenByHeadset ? '#4F46E5' : (seenByLidar ? '#7C3AED' : '#0D9488')));
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = off ? '#E2E8F0' : '#FFFFFF';
       ctx.fill();
-      ctx.strokeStyle = isOffline ? '#CBD5E1' : '#FFFFFF';
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = RING_COLOUR[status];
+      if (off) ctx.setLineDash([4, 3]);
       ctx.stroke();
-
-      // Person Icon / Avatar inside circle
-      const subject = trackedSubjects.find(s => s.device_id === tagId);
-      ctx.fillStyle = '#FFFFFF';
+      ctx.setLineDash([]);
+      ctx.fillStyle = off ? '#64748B' : '#0F172A';
+      ctx.font = `700 ${Math.max(12, Math.round(r * 0.72))}px Inter, "Segoe UI", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const iconSize = Math.max(12, Math.round(humanRadiusPx * 0.85));
-      ctx.font = `${iconSize}px sans-serif`;
-      ctx.fillText(isOffline ? '💤' : '👤', p.x, p.y);
+      ctx.fillText(initialsOf(subject ? subject.full_name : tagId), p.x, p.y + 1);
 
-      // 5. Floating Name Badge above Dot
-      if (layers.labels) {
-        const baseName = subject ? subject.full_name : tagId;
-        let nameText = baseName;
-        if (isOffline) {
-          nameText = `${baseName} [OFFLINE]`;
-        } else if (pos.motion_state === 'WALKING') {
-          nameText = `🚶 ${baseName}`;
-        } else if (pos.motion_state === 'HAND_MOVEMENT') {
-          nameText = `👋 ${baseName}`;
-        } else if (seenByHeadset || seenByLidar) {
-          nameText = baseName;   // settling and the lock (🔒) belong to the Bluetooth position only
-        } else if (pos.motion_state === 'SETTLING') {
-          nameText = `🎯 ${baseName} (Settling)`;
-        } else {
-          nameText = `${baseName} 🔒`;
-        }
-        if (seenByHeadset) nameText = `👁 ${nameText}`;
-        else if (seenByLidar) nameText = `${pos.lidarHeld ? (pos.lidarInBed ? '🛏' : '⏸') : '📡'} ${nameText}`;
-
-        ctx.font = 'bold 11px sans-serif';
-        const textW = ctx.measureText(nameText).width;
-
-        // Pill background positioned above the top of the human circle
-        const pillX = p.x - textW / 2 - 8;
-        const pillY = p.y - humanRadiusPx - 26;
-        ctx.fillStyle = isOffline 
-          ? 'rgba(100, 116, 139, 0.90)' 
-          : (isSelected ? '#0284C7' : 'rgba(30, 41, 59, 0.85)');
+      // Badge: in bed, at the door, not seen just now, seen by a headset
+      let badge = '';
+      if (pos.source === 'LIDAR' && pos.lidarHeld) badge = pos.lidarInBed ? '🛏' : '⏸';
+      else if (inRect(door, pos.x, pos.y)) badge = '🚪';
+      else if (pos.source === 'HEADSET') badge = '👁';
+      if (badge && !off) {
+        const bx = p.x + r * 0.85;
+        const by = p.y - r * 0.85;
         ctx.beginPath();
-        ctx.roundRect(pillX, pillY, textW + 16, 18, 9);
+        ctx.arc(bx, by, 11, 0, Math.PI * 2);
+        ctx.fillStyle = '#FFFFFF';
         ctx.fill();
-
-        // Pill text
-        ctx.fillStyle = isOffline ? '#F1F5F9' : '#FFFFFF';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText(nameText, p.x, pillY + 13);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#CBD5E1';
+        ctx.stroke();
+        ctx.font = '13px "Segoe UI Emoji", sans-serif';
+        ctx.fillStyle = '#0F172A';
+        ctx.fillText(badge, bx, by + 1);
       }
 
+      // Name: the chosen or pointed-at patient (everyone's in technician view)
+      if (isSelected || tagId === hoveredTagId || layers.labels) {
+        const name = subject ? subject.full_name : `Wristband ${tagId}`;
+        ctx.font = '600 13px Inter, "Segoe UI", sans-serif';
+        const tw = ctx.measureText(name).width;
+        const y = p.y + r + 9;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.beginPath();
+        ctx.roundRect(p.x - tw / 2 - 8, y, tw + 16, 22, 11);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(name, p.x, y + 11);
+      }
       ctx.restore();
     }
+  }
+
+  /** The patient under the mouse: shows their name and a pointer. */
+  function onCanvasHover(evt) {
+    if (!canvas || !activeWard) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const x = (evt.clientX - rect.left) * dpr;
+    const y = (evt.clientY - rect.top) * dpr;
+    const t = getCanvasTransform(canvas.width, canvas.height, activeWard.length_x, activeWard.width_y);
+    const hit = Math.max(22, (0.225 * t.scale + 8));
+    let found = null;
+    for (const [tagId, pos] of liveTagPositions.entries()) {
+      if (pos.x === undefined) continue;
+      const p = metricToCanvas(pos.x, pos.y, t);
+      if (Math.hypot(x - p.x, y - p.y) <= hit) { found = tagId; break; }
+    }
+    hoveredTagId = found;
+    canvas.style.cursor = found ? 'pointer' : 'default';
   }
 
   /**
@@ -1340,9 +1381,14 @@
   function updateClock() {
     const el = document.getElementById('live-map-clock');
     if (el) el.innerText = new Date().toLocaleTimeString();
-    // Refresh the status card every second so "NO SIGNAL" appears even when no packet arrives
-    if (isLiveMapActive) updateTelemetryCard();
-    if (isLiveMapActive) setTimeout(updateClock, 1000);
+    // Every second: "no signal", the measuring countdown and the live countdown change
+    // even when no message arrives. One timer only, however often the map is opened.
+    if (isLiveMapActive) {
+      updateTelemetryCard();
+      renderSubjectsList();
+    }
+    if (clockTimer) clearTimeout(clockTimer);
+    clockTimer = isLiveMapActive ? setTimeout(updateClock, 1000) : null;
   }
 
   // --- Layer Toggles ---
@@ -1986,8 +2032,8 @@
           // Update Card 4 text on main screen
           const calA = document.getElementById('live-map-cal-a');
           const calN = document.getElementById('live-map-cal-n');
-          if (calA) calA.innerText = 'Log-Distance Model: A = -52.0 dBm';
-          if (calN) calN.innerText = 'Path Loss: n = 3.2';
+          if (calA) calA.innerText = 'A = -52.0 dBm';
+          if (calN) calN.innerText = 'n = 3.2';
 
           // Update modal display if open
           updateCalibrationTargetDisplay();
@@ -2029,14 +2075,20 @@
     // 0. 1 Hz activation: which anchor carries it, or why it was refused
     window.wsClient.on('ACTIVE_MODE_ENGAGED', (msg) => {
       if (window.showToast && msg.tag_id === selectedTagId) {
-        window.showToast(`1 Hz vitals stream requested for ${msg.tag_id} through anchor ${msg.via_anchor || msg.anchor_mac}.`, 'success');
+        window.showToast(`Live vitals for ${Math.round((Number(msg.duration) || 120) / 60)} minutes asked for (through ${msg.via_anchor || msg.anchor_mac}).`, 'success');
+      }
+      // How long live mode runs: the button counts down
+      if (msg.tag_id) {
+        const v = liveVitals.get(msg.tag_id) || {};
+        v.activeUntil = Date.now() + (Number(msg.duration) || 120) * 1000;
+        liveVitals.set(msg.tag_id, v);
       }
     });
     window.wsClient.on('ERROR', (msg) => {
       if (msg.action !== 'SET_ACTIVE_MODE') return;
       // Refused: allow the next selection to try again at once
       lastActiveTriggers.clear();
-      if (window.showToast) window.showToast(`1 Hz vitals stream not started: ${msg.error}`, 'warning');
+      if (window.showToast) window.showToast(`Live vitals not started: ${msg.error}`, 'warning');
     });
 
     // 1. Ghost Tag / Deleted Tag Purge event
@@ -2155,6 +2207,15 @@
       }
       current.imuFault = data.imu_fault === true;
       current.ppgFault = data.ppg_fault === true;
+      // Skin contact: when it began (measuring) and when it ended (the sensor rests)
+      if (data.touch !== undefined) {
+        const touch = data.touch === 1 || data.touch === true || data.touch === '1';
+        if (touch && !current.touch) current.touchSince = Date.now();
+        if (!touch && current.touch) current.burstEndAt = Date.now();
+        current.touch = touch;
+      }
+      if (Number(data.bpm) > 0) { current.lastBpm = Number(data.bpm); current.lastBpmAt = Date.now(); }
+      if (Number(data.spo2) > 0) { current.lastSpo2 = Number(data.spo2); }
       current.lastSeen = Date.now();
       liveVitals.set(tagId, current);
 
@@ -2222,8 +2283,8 @@
         }
         const calA = document.getElementById('live-map-cal-a');
         const calN = document.getElementById('live-map-cal-n');
-        if (calA) calA.innerText = 'Log-Distance Model: A = -52.0 dBm';
-        if (calN) calN.innerText = 'Path Loss: n = 3.2';
+        if (calA) calA.innerText = 'A = -52.0 dBm';
+        if (calN) calN.innerText = 'n = 3.2';
         updateCalibrationTargetDisplay();
       }
     });
