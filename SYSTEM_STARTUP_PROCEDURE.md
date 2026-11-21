@@ -203,14 +203,18 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
 
    **Stopping the server:** press **Ctrl+C** once in its terminal. It disconnects the anchors and dashboards, writes the device status and InfluxDB points still in memory, closes the database and ends with `[SHUTDOWN] Done.` Closing the terminal window instead skips these steps; at most the last 5 seconds of "last seen" and battery values are then lost.
 
-3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The dashboard offers:
-   * **Ward Configuration Editor:** Room dimensions, obstacle cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), the LiDAR room sensor, and **📐 Plan Anchors & LiDAR**: where to mount each anchor and the LiDAR, which way each faces, and a printable installation sheet (Section 4.5).
-   * **Live Ward Map:** 2D real-time bird's-eye canvas with a scaled patient marker, movement trail, bed docking detection, and landmark calibration of each anchor ($A$ and $n$ parameters).
-   * **Device Provisioning Radar:** Lists nearby anchors, wristbands and headsets that are not yet enrolled, with one-click enrollment.
-   * **Patient Admissions Directory:** Patient profiles, fall risk scores, bed allocation, wristband binding and discharge.
-   * **Live Telemetry & Diagnostics Lab:** Live heart rate, SpO2 (indicative), motion and sensor contact from the wristband, raw versus Kalman-filtered RSSI per anchor, and an MQTT telemetry inspector. The raw pulse waveform is not shown: the wristband sends only computed results.
-   * **System Health:** live server state (uptime, memory, response delay, database queries per second) and the status of every enrolled anchor and headset, refreshed every 5 s.
-   * **Admin** (admins only): clinician accounts, headset pairing and the audit log.
+3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The menu follows the role of the person signed in (Phase 11):
+   * **Ward** (the first page): the ward overview, a live map of one ward with its patients and their vitals. Choose the ward at the top; the dashboard opens the same ward next time on that computer. Admins also see 🎯 Calibrate and 📏 Position test there.
+   * **Patients:** the admitted patients, 8 a page (Discharged and All on the filter). **＋ Admit patient** opens the admission form. Each row: vitals history, incidents, edit, give a bed or discharge. 🚨 Incident log lists the incidents of every patient.
+   * **Wristbands:** give a patient a wristband, take it off, and the wristband history.
+   * **Shift report ↗:** the handover report, in a new tab.
+   * **⚙ Setup** (admins only):
+     * **Wards & layout:** room size, door, furniture, wall sensors, the LiDAR and beds, and **📐 Plan Anchors & LiDAR**: where to mount each anchor and the LiDAR, which way each faces, and a printable installation sheet (Section 4.5).
+     * **Devices:** new devices that are switched on but not added yet (**🔍 Search again** shows a spinner, then how many it found), and every added device.
+     * **System status:** the server, the database, and every wall sensor, LiDAR and headset, refreshed every 5 s.
+     * **Accounts & headsets:** sign-in accounts, headset pairing and the activity log.
+     * **Test tools:** live values of the wristband and two wall sensors, raw and smoothed signal strength, the messages from the wall sensors, and test alarms.
+   * Every table shows 8 rows a page: Previous, the first two and last two pages, the current page with its neighbours, and Next (for example `1 2 … 4 5 6 … 9 10`).
 
 ### 3.6 Clinician Accounts and Sign-in
 
@@ -224,11 +228,11 @@ The dashboard and every API address need a signed-in clinician. Two roles exist:
 **First start (once):**
 1. On the **server PC itself**, open `http://localhost:3000`. While no account exists, the sign-in page shows **Create the first admin account**. This form works only on the server PC.
 2. Enter your full name, a username (lowercase, for example `admin`) and a password of at least 10 characters. You are then signed in as admin.
-3. Open the **ADMIN** tab and create an account for each clinician (role `CLINICIAN`). Give each person their initial password in person.
+3. Open **⚙ Setup → Accounts & headsets** and create an account for each clinician (role `CLINICIAN`). Give each person their initial password in person.
 
 **Every day:** sign in with your username and password. A session lasts 12 hours; **Log out** (top right) ends it. After 5 wrong passwords an account is locked for 5 minutes.
 
-**Audit log:** ADMIN tab → Audit Log. Every change (admission, discharge, binding, acknowledgement, device, ward, calibration), every sign-in and failed sign-in, and every account and pairing change is listed with who did it, when and from which address. Filter by actor (`CLN-002`, `QUEST3-…`), action (`PATIENT_ADMIT`) or target (`P-001`).
+**Activity log (audit log):** ⚙ Setup → Accounts & headsets → Activity log. Every change (admission, discharge, wristband, acknowledgement, device, ward, calibration), every sign-in and failed sign-in, and every account and pairing change is listed in words with who did it, when and from which address. Filter by period (today, 7 or 30 days, any time), by person, by action, or by patient or device (`P-001`, `TAG-001`). Hover over an entry for all its details.
 
 **Forgotten admin password:** on the server PC, in `edge_server`, run `node tools/reset_password.js <username>` and type the new password twice (it is not shown). Every session of that account ends.
 
@@ -715,8 +719,8 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 6. **Pair the headset (once per headset).** Press Play. The hand slate's **System** tab shows `Edge Server: 🔑 NOT PAIRED`.
    1. On the dashboard (signed in as admin): **ADMIN** tab → **Headset Pairing** → **Create pairing code**. A 6-digit code appears, valid for 5 minutes and usable once.
    2. On the headset: System tab → **🔑 Pair headset (code)** → type the code on the number pad → **✓ Pair**.
-   3. The headset is enrolled automatically (as `QUEST3-…`, shown in the Unity Console as `[SHIRO NET] This headset is QUEST3-…`) and connects. It stays paired until an admin presses **Revoke** on the ADMIN tab.
-   4. On the ADMIN tab, choose the clinician who uses the headset in its **Used by** column. What the headset does (for example acknowledging an alert) is recorded as `QUEST3-… (name, CLN-…)`; without an assignment it is recorded as `QUEST3-… (no clinician assigned)`. The hand slate header shows the assignment. Pairing again clears it.
+   3. The headset is enrolled automatically (as `QUEST3-…`, shown in the Unity Console as `[SHIRO NET] This headset is QUEST3-…`) and connects. It stays paired until an admin presses **Revoke** on ⚙ Setup → Accounts & headsets.
+   4. On ⚙ Setup → Accounts & headsets, choose the clinician who uses the headset in its **Used by** column. What the headset does (for example acknowledging an alert) is recorded as `QUEST3-… (name, CLN-…)`; without an assignment it is recorded as `QUEST3-… (no clinician assigned)`. The hand slate header shows the assignment. Pairing again clears it.
    The Unity editor on a PC and the app installed on the Quest have different IDs, so each is paired once.
 
 ### 6.3 Running the Client (Two Methods)
@@ -908,10 +912,10 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | An old firmware still runs after uploading (the banner shows the old version) | The upload came from a copy of the sketch with old files, or from another folder than the one edited. | Open the `.ino` in the repository folder, or copy **all** `.h` files of the repository folder into your copy again (4.1, "Opening a sketch"). |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | One persistent connection per headset, with heartbeats. Ensure only one Unity instance is playing. |
-| Hand slate shows `Edge Server: 🔑 NOT PAIRED` | The headset has no pairing, or its pairing was revoked, or the database was recreated. | Section 6.2 step 6: create a code on the ADMIN tab and enter it on the System tab. |
+| Hand slate shows `Edge Server: 🔑 NOT PAIRED` | The headset has no pairing, or its pairing was revoked, or the database was recreated. | Section 6.2 step 6: create a code on ⚙ Setup → Accounts & headsets and enter it on the System tab. |
 | Hand slate says "Pairing refused: The pairing code is wrong or has expired" | The code was mistyped, older than 5 minutes or already used. | Create a new code. After 5 wrong codes the headset's address is locked for 5 minutes. |
 | The dashboard always returns to the sign-in page | The session ended: 12 hours passed, you logged out elsewhere, or an admin deactivated the account or reset its password. | Sign in again; ask an admin if the account is deactivated. |
-| "Too many failed sign-ins for this account" | 5 wrong passwords in a row. | Wait 5 minutes. A forgotten password is reset by an admin (ADMIN tab), or for the last admin with `node tools/reset_password.js <username>` on the server PC. |
+| "Too many failed sign-ins for this account" | 5 wrong passwords in a row. | Wait 5 minutes. A forgotten password is reset by an admin (⚙ Setup → Accounts & headsets), or for the last admin with `node tools/reset_password.js <username>` on the server PC. |
 | "Your account does not have permission for this" | The action needs an admin (accounts, devices, wards, calibration). | Ask an admin, or sign in with an admin account. |
 | Depth view status says "Depth NOT SUPPORTED here"; no panel is ever linked | Over Quest Link, the depth sensor's data is not passed to the PC. | Meta Quest Link app → **Settings → Developer → Spatial Data over Meta Quest Link** on, then restart Quest Link and Play. |
 | Panel stays on "📶 BLUETOOTH POSITION": "nobody within 0.5 m of the wristband" | The Bluetooth estimate is more than 0.5 m from the person (positioning accuracy, F-2), or the person has not moved since the headset came on (still, yellow in the depth view). | **🎯 Re-Attach**, aim at the patient and pinch. **🔄 Auto** returns to automatic linking. |

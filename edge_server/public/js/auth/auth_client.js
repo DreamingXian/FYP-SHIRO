@@ -45,8 +45,9 @@
     if (nameEl) nameEl.textContent = `${user.full_name} (${user.clinician_id})`;
     if (roleEl) roleEl.textContent = user.role === 'ADMIN' ? 'Admin' : 'Clinician';
     if (avatarEl) avatarEl.textContent = initials(user.full_name);
-    const adminTab = document.getElementById('nav-tab-admin');
-    if (adminTab) adminTab.style.display = user.role === 'ADMIN' ? '' : 'none';
+    // What only admins see is marked .admin-only; the CSS hides it for everyone else,
+    // also in pages loaded later
+    document.body.setAttribute('data-role', user.role === 'ADMIN' ? 'ADMIN' : 'CLINICIAN');
   }
 
   async function logout() {

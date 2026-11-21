@@ -13,7 +13,7 @@
       let bindingSearchQuery = '';
       let bindingStatusFilter = 'ALL'; // 'ALL' | 'ONLINE' | 'OFFLINE'
       let currentBindingPage = 1;
-      const BINDING_PAGE_SIZE = 10;
+      let bindingHistoryPage = 1;
 
       let isBindingsInitialized = false;
       let isBindingsWsRegistered = false;
@@ -36,6 +36,28 @@
           fetchActiveBindings(),
           fetchBindingHistory()
         ]);
+      }
+
+      /** Refresh with a visible answer: spinner on the button, then what was found. */
+      async function refreshBindings(button) {
+        const done = window.ShiroUI.busy(button, 'Refreshing…');
+        const started = Date.now();
+        await loadBindingsData();
+        const wait = 600 - (Date.now() - started);
+        if (wait > 0) await new Promise(r => setTimeout(r, wait));
+        done();
+        const n = cachedActiveBindings.length;
+        if (window.showToast) window.showToast(`Up to date: ${n} patient${n === 1 ? '' : 's'} wearing a wristband.`, 'success', 2500);
+      }
+
+      async function refreshBindingHistory(button) {
+        const done = window.ShiroUI.busy(button, 'Refreshing…');
+        const started = Date.now();
+        await fetchBindingHistory();
+        const wait = 600 - (Date.now() - started);
+        if (wait > 0) await new Promise(r => setTimeout(r, wait));
+        done();
+        if (window.showToast) window.showToast('Wristband history is up to date.', 'success', 2500);
       }
 
       /**
@@ -217,13 +239,9 @@
                 ? `<img src="${escapeHtml(p.photo_url)}" style="width: 34px; height: 34px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--border);"${imgFallbackAttrs(initials, { replaceClass: 'patient-thumb', replaceStyle: 'width:34px;height:34px;font-size:11px;' })}>`
                 : `<div class="patient-thumb" style="width: 34px; height: 34px; font-size: 11px;">${escapeHtml(initials)}</div>`;
 
-              const riskBadge = p.fall_risk_score === 'HIGH'
-                ? '<span class="badge badge-alert" style="font-size: 10px;">● HIGH RISK</span>'
-                : p.fall_risk_score === 'MEDIUM'
-                  ? '<span class="badge badge-warning" style="font-size: 10px;">● MED RISK</span>'
-                  : '<span class="badge badge-live" style="font-size: 10px;">● LOW RISK</span>';
+              const riskBadge = '';
 
-              const bedText = p.bed_code ? `${p.bed_code} (${p.ward_title || 'Ward'})` : 'No Bed Assigned';
+              const bedText = p.bed_code ? `${p.bed_code} (${p.ward_title || 'Ward'})` : 'No bed';
               const ageGender = `${p.age || '-'} yrs / ${p.gender ? p.gender[0] : '-'}`;
 
               return `
@@ -296,13 +314,9 @@
               ? `<img src="${escapeHtml(p.photo_url)}" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--border);"${imgFallbackAttrs(initials, { replaceClass: 'patient-thumb', replaceStyle: 'width:48px;height:48px;font-size:16px;' })}>`
               : `<div class="patient-thumb" style="width: 48px; height: 48px; font-size: 16px;">${escapeHtml(initials)}</div>`;
 
-            const riskBadge = p.fall_risk_score === 'HIGH'
-              ? '<span class="badge badge-alert">● HIGH FALL RISK</span>'
-              : p.fall_risk_score === 'MEDIUM'
-                ? '<span class="badge badge-warning">● MEDIUM FALL RISK</span>'
-                : '<span class="badge badge-live">● LOW FALL RISK</span>';
+            const riskBadge = '';
 
-            const bedText = p.bed_code ? `${p.bed_code} (${p.ward_title || 'Ward'})` : 'No Bed Assigned';
+            const bedText = p.bed_code ? `${p.bed_code} (${p.ward_title || 'Ward'})` : 'No bed';
             const ageGender = `${p.age || '-'} yrs / ${p.gender || 'Unknown'}`;
 
             preview.innerHTML = `
@@ -599,6 +613,7 @@
 
         function handleBindingHistorySearch(query) {
           bindingHistoryQuery = (query || '').toLowerCase().trim();
+          bindingHistoryPage = 1;
           renderBindingHistory();
         }
 
@@ -616,7 +631,7 @@
           const tbody = document.getElementById('binding-history-body');
           if (!tbody) return;
           const countBadge = document.getElementById('binding-history-count');
-          if (countBadge) countBadge.innerText = `${cachedBindingHistory.length} binding${cachedBindingHistory.length === 1 ? '' : 's'}`;
+          if (countBadge) countBadge.innerText = String(cachedBindingHistory.length);
 
           const q = bindingHistoryQuery;
           const list = !q ? cachedBindingHistory : cachedBindingHistory.filter(b =>
@@ -626,28 +641,35 @@
           const info = document.getElementById('binding-history-info');
           if (info) {
             info.innerText = cachedBindingHistory.length >= BINDING_HISTORY_LIMIT
-              ? `Showing the latest ${BINDING_HISTORY_LIMIT} bindings${q ? ` (${list.length} match the search)` : ''}`
-              : `${list.length} of ${cachedBindingHistory.length} binding${cachedBindingHistory.length === 1 ? '' : 's'}`;
+              ? `Only the latest ${BINDING_HISTORY_LIMIT} are shown.`
+              : '';
           }
+
+          const pageData = window.ShiroUI.paginate(list, bindingHistoryPage);
+          bindingHistoryPage = pageData.page;
+          window.ShiroUI.renderPager(document.getElementById('binding-history-pager'), {
+            total: pageData.total, page: pageData.page, noun: 'entries',
+            onPage: (n) => { bindingHistoryPage = n; renderBindingHistory(); }
+          });
 
           if (list.length === 0) {
             tbody.innerHTML = `
       <tr>
-        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">
-          ${cachedBindingHistory.length === 0 ? 'No bindings yet.' : 'No binding matches the search.'}
+        <td colspan="6" class="empty-state">
+          ${cachedBindingHistory.length === 0 ? 'No wristband has been given yet.' : 'Nothing matches the search.'}
         </td>
       </tr>`;
             return;
           }
 
-          tbody.innerHTML = list.map(b => {
+          tbody.innerHTML = pageData.items.map(b => {
             const statusBadge = b.status === 'ACTIVE'
               ? '<span class="badge badge-live" style="font-size: 10px;">● Active now</span>'
               : b.status === 'DISCHARGED'
                 ? '<span class="badge badge-info" style="font-size: 10px;">Discharged</span>'
-                : '<span class="badge badge-neutral" style="font-size: 10px;">Unbound</span>';
+                : '<span class="badge badge-neutral" style="font-size: 10px;">Taken off</span>';
             const deletedNote = b.device_deleted
-              ? '<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">wristband deleted from the registry</div>'
+              ? '<div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">wristband since deleted</div>'
               : '';
             return `
       <tr>
@@ -717,30 +739,28 @@
 
           const countBadge = document.getElementById('active-binding-count');
           if (countBadge) {
-            countBadge.innerText = `${cachedActiveBindings.length} Active Stream${cachedActiveBindings.length === 1 ? '' : 's'}`;
+            countBadge.innerText = String(cachedActiveBindings.length);
           }
 
           const filtered = getFilteredBindings();
           const totalItems = filtered.length;
-          const totalPages = Math.max(1, Math.ceil(totalItems / BINDING_PAGE_SIZE));
-
-          // Clamp current page
-          if (currentBindingPage > totalPages) currentBindingPage = totalPages;
-          if (currentBindingPage < 1) currentBindingPage = 1;
-
-          const startIndex = (currentBindingPage - 1) * BINDING_PAGE_SIZE;
-          const pageItems = filtered.slice(startIndex, startIndex + BINDING_PAGE_SIZE);
+          const pageData = window.ShiroUI.paginate(filtered, currentBindingPage);
+          currentBindingPage = pageData.page;
+          const pageItems = pageData.items;
+          window.ShiroUI.renderPager(document.getElementById('bindings-pager'), {
+            total: pageData.total, page: pageData.page, noun: 'patients',
+            onPage: (n) => { currentBindingPage = n; renderBindingsTable(); }
+          });
 
           if (pageItems.length === 0) {
             tbody.innerHTML = `
       <tr>
-        <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 32px;">
+        <td colspan="7" class="empty-state">
           ${totalItems === 0 && cachedActiveBindings.length === 0
-                ? 'No active patient-to-wristband bindings. Use the wizard above to pair a patient.'
-                : 'No matching paired records found matching your search filter.'}
+                ? 'No patient wears a wristband yet. Give one above.'
+                : 'Nothing matches the search.'}
         </td>
       </tr>`;
-            renderPaginationControls(0, 0, 0, 1);
             return;
           }
 
@@ -750,25 +770,19 @@
               ? `<img src="${escapeHtml(b.photo_url)}" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1.5px solid var(--border);"${imgFallbackAttrs(initials, { replaceClass: 'patient-thumb', replaceStyle: 'width:32px;height:32px;font-size:11px;' })}>`
               : `<div class="patient-thumb" style="width: 32px; height: 32px; font-size: 11px;">${escapeHtml(initials)}</div>`;
 
-            const riskBadge = b.fall_risk_score === 'HIGH'
-              ? '<span class="badge badge-alert" style="font-size: 10px;">● HIGH RISK</span>'
-              : b.fall_risk_score === 'MEDIUM'
-                ? '<span class="badge badge-warning" style="font-size: 10px;">● MED RISK</span>'
-                : '<span class="badge badge-live" style="font-size: 10px;">● LOW RISK</span>';
-
             const statusUpper = (b.device_status || 'OFFLINE').toUpperCase();
-            let statusBadge = '<span class="badge badge-neutral" style="font-size: 11px;">○ Device Offline</span>';
+            let statusBadge = '<span class="badge badge-neutral">○ Off</span>';
             if (statusUpper === 'CHARGING') {
               statusBadge = '<span class="badge" style="background:#FEF3C7; color:#92400E; border:1px solid #F59E0B; font-size: 11px; font-weight: 600;">⚡ Charging</span>';
             } else if (statusUpper === 'ONLINE') {
               if (b.telemetry_mode === 'ACTIVE') {
-                statusBadge = '<span class="badge badge-live" style="font-size: 11px;">● 1 Hz Active Stream</span>';
+                statusBadge = '<span class="badge badge-live" title="Vitals every second">● Live</span>';
               } else {
-                statusBadge = '<span class="badge" style="background:#E0F2FE; color:#0369A1; border:1px solid #0EA5E9; font-size: 11px; font-weight: 600;">● 3-Min Power Saving</span>';
+                statusBadge = '<span class="badge badge-info" title="Vitals measured every 3 minutes to save battery">● On (every 3 min)</span>';
               }
             }
 
-            const bedText = b.bed_code ? `${b.bed_code}` : 'Unassigned Bed';
+            const bedText = b.bed_code ? `${b.bed_code}` : 'No bed';
             const wardText = b.ward_title || 'Ward';
 
             return `
@@ -787,9 +801,6 @@
           </div>
         </td>
         <td>
-          ${riskBadge}
-        </td>
-        <td>
           <span class="mono" style="color: var(--text-secondary); font-size: 12px; font-weight: 600;">${escapeHtml(b.mac_address)}</span>
           <span class="badge badge-neutral" style="margin-left: 6px; font-size: 10px;">${escapeHtml(b.device_id)}</span>
           <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">${escapeHtml(b.hardware_model || 'XIAO ESP32-C6')}</div>
@@ -805,63 +816,13 @@
         </td>
         <td>
           <button class="btn btn-danger-outline btn-sm"${actionAttrs('unbindTag', [b.binding_id, b.patient_name, b.device_id])}>
-            🔓 Unbind Tag
+            Take off
           </button>
         </td>
       </tr>
     `;
           }).join('');
 
-          renderPaginationControls(startIndex + 1, Math.min(startIndex + pageItems.length, totalItems), totalItems, totalPages);
-        }
-
-        /**
-         * Renders the numbered pagination bar and info counter.
-         */
-        function renderPaginationControls(startItem, endItem, totalItems, totalPages) {
-          const infoEl = document.getElementById('binding-pagination-info');
-          if (infoEl) {
-            if (totalItems === 0) {
-              infoEl.innerText = 'Showing 0 records';
-            } else {
-              infoEl.innerText = `Showing ${startItem} to ${endItem} of ${totalItems} paired record${totalItems === 1 ? '' : 's'}`;
-            }
-          }
-
-          const container = document.getElementById('binding-pagination-controls');
-          if (!container) return;
-
-          if (totalItems <= BINDING_PAGE_SIZE) {
-            container.innerHTML = '';
-            return;
-          }
-
-          let html = `
-    <button class="btn btn-outline btn-sm" style="padding: 4px 10px; font-size: 12px;"
-      ${currentBindingPage <= 1 ? 'disabled style="opacity:0.4; cursor:not-allowed;"' : `onclick="changeBindingPage(${currentBindingPage - 1})"`}>
-      « Previous
-    </button>
-  `;
-
-          for (let p = 1; p <= totalPages; p++) {
-            const isActive = p === currentBindingPage;
-            html += `
-      <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm"
-        style="min-width: 32px; padding: 4px 8px; font-size: 12px; font-weight: ${isActive ? '700' : '500'};"
-        onclick="changeBindingPage(${p})">
-        ${p}
-      </button>
-    `;
-          }
-
-          html += `
-    <button class="btn btn-outline btn-sm" style="padding: 4px 10px; font-size: 12px;"
-      ${currentBindingPage >= totalPages ? 'disabled style="opacity:0.4; cursor:not-allowed;"' : `onclick="changeBindingPage(${currentBindingPage + 1})"`}>
-      Next »
-    </button>
-  `;
-
-          container.innerHTML = html;
         }
 
         function changeBindingPage(newPage) {
@@ -913,6 +874,8 @@
 
         window.initBindingsModule = initBindingsModule;
         window.loadBindingsData = loadBindingsData;
+        window.refreshBindings = refreshBindings;
+        window.refreshBindingHistory = refreshBindingHistory;
         window.openPatientCombobox = openPatientCombobox;
         window.closePatientCombobox = closePatientCombobox;
         window.filterPatientCombobox = filterPatientCombobox;

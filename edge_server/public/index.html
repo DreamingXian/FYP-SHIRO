@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shiro Central Ward Admin | Clinical Modern IoT Dashboard</title>
+  <title>SHIRO Ward Dashboard</title>
 
   <!-- Google Fonts: Inter & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -24,35 +24,45 @@
 <body>
 
   <!-- =========================================================================
-       GLOBAL NAVIGATION HEADER (Section 4.4 Global Navigation Header)
+       HEADER: the menu follows the work of the person signed in (Phase 11).
+       Everyone: Ward, Patients, Wristbands, Shift report.
+       Admins also: Setup (wards, devices, system status, accounts, test tools).
        ========================================================================= -->
   <header class="global-header">
     <div class="brand-section">
       <div class="brand-logo">🏥</div>
       <div class="brand-title">
-        <h1>SHIRO <span class="sub-title">| Central Ward Admin</span></h1>
+        <h1>SHIRO <span class="sub-title">Ward dashboard</span></h1>
       </div>
-      <div class="server-status-pill">
+      <div class="server-status-pill" id="global-status-pill" title="Connection to the SHIRO server. Alarms arrive only while it is connected.">
         <div class="status-dot" id="global-status-dot"></div>
-        <span id="global-server-text">Connecting to Edge Server...</span>
+        <span id="global-server-text">Connecting…</span>
       </div>
     </div>
 
-    <!-- Center Navigation Tabs -->
-    <nav class="nav-tabs">
-      <button class="nav-tab-btn active" data-tab="tab-patients">📋 PATIENTS</button>
-      <button class="nav-tab-btn" data-tab="tab-devices">📡 DEVICES</button>
-      <button class="nav-tab-btn" data-tab="tab-bindings">🔗 BINDINGS</button>
-      <button class="nav-tab-btn" data-tab="tab-ward-config">📐 WARD CONFIG</button>
-      <button class="nav-tab-btn" data-tab="tab-health">❤️ SYSTEM HEALTH</button>
-      <button class="nav-tab-btn tab-lab" data-tab="tab-live-lab">🧪 LIVE TEST LAB</button>
-      <button class="nav-tab-btn" data-tab="tab-admin" id="nav-tab-admin" style="display: none;">🔐 ADMIN</button>
+    <nav class="nav-tabs" aria-label="Main menu">
+      <button class="nav-tab-btn active" data-tab="tab-ward">Ward</button>
+      <button class="nav-tab-btn" data-tab="tab-patients">Patients</button>
+      <button class="nav-tab-btn" data-tab="tab-bindings">Wristbands</button>
+      <a class="nav-tab-btn" href="/shift_report.html" target="_blank" rel="noopener" title="Shift summary for handover; opens in a new tab">Shift report ↗</a>
+
+      <!-- Admins only (auth_client.js shows it) -->
+      <div class="nav-setup admin-only" id="nav-setup">
+        <button class="nav-tab-btn" id="nav-setup-toggle" type="button" aria-haspopup="true" aria-expanded="false">⚙ Setup ▾</button>
+        <div class="nav-setup-menu" id="nav-setup-menu" role="menu">
+          <button class="nav-menu-item" role="menuitem" data-tab="tab-ward-config">Wards &amp; layout<small>Room size, door, beds, sensors</small></button>
+          <button class="nav-menu-item" role="menuitem" data-tab="tab-devices">Devices<small>Wristbands, wall sensors, headsets, LiDAR</small></button>
+          <button class="nav-menu-item" role="menuitem" data-tab="tab-health">System status<small>Server, database, connections</small></button>
+          <button class="nav-menu-item" role="menuitem" data-tab="tab-admin" id="nav-tab-admin">Accounts &amp; headsets<small>Sign-in accounts, headset pairing, activity log</small></button>
+          <button class="nav-menu-item" role="menuitem" data-tab="tab-live-lab">Test tools<small>Live sensor values, test alarms</small></button>
+        </div>
+      </div>
     </nav>
 
     <!-- Signed-in clinician (filled in by /js/auth/auth_client.js) -->
     <div class="user-session-badge">
       <div class="user-info">
-        <div class="user-name" id="session-user-name">Signing in...</div>
+        <div class="user-name" id="session-user-name">Signing in…</div>
         <div class="user-role" id="session-user-role"></div>
       </div>
       <div class="user-avatar" id="session-user-avatar">?</div>
@@ -61,46 +71,44 @@
   </header>
 
   <!-- =========================================================================
-       MAIN TAB CONTENT CONTAINER (Hydrated dynamically by /js/app.js)
+       PAGES (filled in by /js/app.js)
        ========================================================================= -->
   <main class="app-content">
-    <section class="tab-pane active" id="tab-patients">
-      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Patients
-        Directory...</div>
+    <section class="tab-pane active" id="tab-ward">
+      <div class="page-loading">Loading the ward…</div>
     </section>
 
-    <section class="tab-pane" id="tab-devices">
-      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Devices
-        Registry...</div>
+    <section class="tab-pane" id="tab-patients">
+      <div class="page-loading">Loading patients…</div>
     </section>
 
     <section class="tab-pane" id="tab-bindings">
-      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Bindings
-        Manager...</div>
+      <div class="page-loading">Loading wristbands…</div>
     </section>
 
     <section class="tab-pane" id="tab-ward-config">
-      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Ward
-        Architecture...</div>
+      <div class="page-loading">Loading wards…</div>
+    </section>
+
+    <section class="tab-pane" id="tab-devices">
+      <div class="page-loading">Loading devices…</div>
     </section>
 
     <section class="tab-pane" id="tab-health">
-      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading System
-        Diagnostics...</div>
+      <div class="page-loading">Loading system status…</div>
     </section>
 
     <section class="tab-pane" id="tab-live-lab">
-      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Live Telemetry
-        Lab...</div>
+      <div class="page-loading">Loading test tools…</div>
     </section>
 
     <section class="tab-pane" id="tab-admin">
-      <div style="padding: 40px; text-align: center; color: var(--text-muted); font-size: 14px;">Loading Admin...</div>
+      <div class="page-loading">Loading accounts…</div>
     </section>
   </main>
 
   <!-- =========================================================================
-       CUSTOM CLINICAL MODAL DIALOG & TOAST NOTIFICATION ROOT
+       DIALOG AND NOTIFICATIONS
        ========================================================================= -->
   <div class="modal-backdrop" id="custom-modal-backdrop">
     <div class="modal-box" id="custom-modal-box">
@@ -125,28 +133,29 @@
   <div class="toast-container" id="custom-toast-container"></div>
 
   <!-- =========================================================================
-       MODULAR SCRIPTS (MVC Client Controllers & SPA Router)
+       SCRIPTS
        ========================================================================= -->
   <script src="/js/html_safety.js?v=1.0"></script>
-  <script src="/js/auth/auth_client.js?v=1.0"></script>
+  <script src="/js/ui_kit.js?v=1.0"></script>
+  <script src="/js/auth/auth_client.js?v=1.1"></script>
   <script src="/js/modal.js?v=4.1"></script>
-  <script src="/js/ws_client.js?v=4.0"></script>
-  <script src="/js/alerts/alert_manager.js?v=1.1"></script>
-  <script src="/js/ward_config/ward_canvas.js?v=5.3"></script>
-  <script src="/js/ward_config/ward_controller.js?v=5.2"></script>
-  <script src="/js/ward_config/room_sensor_panel.js?v=1.1"></script>
+  <script src="/js/ws_client.js?v=4.1"></script>
+  <script src="/js/alerts/alert_manager.js?v=1.2"></script>
+  <script src="/js/ward_config/ward_canvas.js?v=5.4"></script>
+  <script src="/js/ward_config/ward_controller.js?v=5.3"></script>
+  <script src="/js/ward_config/room_sensor_panel.js?v=1.2"></script>
   <script src="/js/ward_config/room_sensor_live.js?v=1.0"></script>
   <script src="/js/ward_config/placement_planner.js?v=1.0"></script>
-  <script src="/js/ward_config/ward_live_map.js?v=5.3"></script>
+  <script src="/js/ward_config/ward_live_map.js?v=5.4"></script>
   <script src="/js/ward_config/position_test_panel.js?v=1.1"></script>
-  <script src="/js/patients/patients_controller.js?v=4.2"></script>
-  <script src="/js/patients/incident_history.js?v=1.0"></script>
-  <script src="/js/devices/devices_controller.js?v=4.2"></script>
-  <script src="/js/bindings/bindings_controller.js?v=4.0"></script>
-  <script src="/js/live_lab/live_lab_charts.js?v=4.0"></script>
-  <script src="/js/health/health_monitor.js?v=1.0"></script>
-  <script src="/js/admin/admin_controller.js?v=1.0"></script>
-  <script src="/js/app.js?v=4.0"></script>
+  <script src="/js/patients/patients_controller.js?v=4.3"></script>
+  <script src="/js/patients/incident_history.js?v=1.1"></script>
+  <script src="/js/devices/devices_controller.js?v=4.3"></script>
+  <script src="/js/bindings/bindings_controller.js?v=4.1"></script>
+  <script src="/js/live_lab/live_lab_charts.js?v=4.1"></script>
+  <script src="/js/health/health_monitor.js?v=1.1"></script>
+  <script src="/js/admin/admin_controller.js?v=1.1"></script>
+  <script src="/js/app.js?v=4.1"></script>
 </body>
 
 </html>

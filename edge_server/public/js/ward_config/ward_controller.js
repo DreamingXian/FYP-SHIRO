@@ -242,7 +242,7 @@
       isDirty = false;
       const dbBadge = document.getElementById('db-sync-badge');
       if (dbBadge) {
-        dbBadge.innerText = '● MySQL Synchronized';
+        dbBadge.innerText = '● Saved';
         dbBadge.className = 'badge badge-live';
       }
     }
@@ -297,43 +297,59 @@
 
       const countBadge = document.getElementById('ward-total-count');
       if (countBadge) {
-        countBadge.innerText = `${wards.length} Ward${wards.length === 1 ? '' : 's'} Configured`;
+        countBadge.innerText = `${wardsList.length} ward${wardsList.length === 1 ? '' : 's'}`;
       }
 
+      const pageData = window.ShiroUI.paginate(wards, window.wardDirectoryPage || 1);
+      window.wardDirectoryPage = pageData.page;
+      window.ShiroUI.renderPager(document.getElementById('wards-pager'), {
+        total: pageData.total, page: pageData.page, noun: 'wards',
+        onPage: (n) => { window.wardDirectoryPage = n; renderWardDirectoryTable(wards); }
+      });
+
       if (wards.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px;">No wards found in database. Click "➕ Create New Ward" above to configure your first room.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${wardsList.length ? 'No ward matches the search.' : '<strong>No wards yet.</strong>Press "＋ New ward" to draw the first room.'}</td></tr>`;
         return;
       }
 
-      wards.forEach(w => {
+      pageData.items.forEach(w => {
         const updated = w.updated_at ? new Date(w.updated_at).toLocaleString() : 'Recently';
-        const uuidShort = w.spatial_anchor_uuid ? `${escapeHtml(w.spatial_anchor_uuid.substring(0, 8))}...` : '<span style="color:var(--text-muted);">None</span>';
         const isLiveMapReady = (w.anchor_count >= 3 && w.assigned_anchor_count >= w.anchor_count);
         const liveMapBtn = isLiveMapReady
-          ? `<button class="btn btn-primary btn-sm"${actionAttrs('openWardLiveMap', [w.ward_id], { stop: true })} style="background:#0EA5E9; border-color:#0284C7;">🗺️ View Live Map</button>`
-          : `<button class="btn btn-outline btn-sm" disabled style="opacity:0.45; cursor:not-allowed;" title="Please complete anchor registration &amp; assignment for all anchor slots to enable the live map function." onclick="event.stopPropagation();">🗺️ View Live Map</button>`;
+          ? `<button class="btn btn-outline btn-sm"${actionAttrs('navigateToWardLiveMap', [w.ward_id], { stop: true })}>🗺️ Open map</button>`
+          : `<button class="btn btn-outline btn-sm" disabled style="opacity:0.45; cursor:not-allowed;" title="The map needs at least 3 wall sensors, each linked to a device." onclick="event.stopPropagation();">🗺️ Open map</button>`;
+        const sensorsOk = w.anchor_count >= 3;
 
-        const row = `<tr class="table-row-clickable"${actionAttrs('viewWardDetailsReadOnly', [w.ward_id])} title="Click to view layout &amp; specifications for ${escapeHtml(w.room_title || w.ward_id)}">
-          <td><b style="color: var(--primary);">${escapeHtml(w.ward_id)}</b></td>
-          <td><b style="color: var(--text-primary);">${escapeHtml(w.room_title || 'Ward')}</b></td>
-          <td><span class="mono">${Number(w.length_x).toFixed(2)}m × ${Number(w.width_y).toFixed(2)}m × ${Number(w.height_z).toFixed(2)}m</span></td>
-          <td><span class="badge badge-neutral">${escapeHtml(w.door_wall || 'SOUTH')} @ ${Number(w.door_x).toFixed(2)}m (${Number(w.door_width).toFixed(2)}m w)</span></td>
-          <td><span class="badge badge-info">${escapeHtml(w.bed_count)} Beds</span></td>
-          <td><span class="badge ${w.anchor_count >= 3 ? 'badge-live' : 'badge-warning'}">${escapeHtml(w.anchor_count)} Nodes</span></td>
-          <td><span class="badge badge-neutral">${escapeHtml(w.obstacle_count)} Cutout${w.obstacle_count === 1 ? '' : 's'}</span></td>
-          <td class="mono" style="font-size: 11px;" title="${escapeHtml(w.spatial_anchor_uuid)}">${uuidShort}</td>
-          <td style="color: var(--text-muted); font-size: 12px;">${escapeHtml(updated)}</td>
-          <td>
-            <div style="display: flex; gap: 6px;">
+        const row = `<tr class="table-row-clickable"${actionAttrs('viewWardDetailsReadOnly', [w.ward_id])} title="Show the layout of ${escapeHtml(w.room_title || w.ward_id)}">
+          <td><b style="color: var(--text-primary);">${escapeHtml(w.ward_id)}</b></td>
+          <td>${escapeHtml(w.room_title || '–')}</td>
+          <td>${Number(w.length_x).toFixed(1)} × ${Number(w.width_y).toFixed(1)} m</td>
+          <td>${escapeHtml(w.bed_count)}</td>
+          <td><span class="badge ${sensorsOk ? 'badge-live' : 'badge-warning'}" title="${sensorsOk ? '' : 'At least 3 are needed to locate the wristbands'}">${escapeHtml(w.anchor_count)}${sensorsOk ? '' : ' (need 3)'}</span></td>
+          <td style="color: var(--text-muted);">${escapeHtml(updated)}</td>
+          <td style="text-align: right;">
+            <div style="display: inline-flex; gap: 6px;">
               ${liveMapBtn}
-              <button class="btn btn-outline btn-sm"${actionAttrs('openWardEditor', [w.ward_id], { stop: true })}>✏️ Configure Layout</button>
-              <button class="btn btn-danger-outline btn-sm"${actionAttrs('deleteWardRecord', [w.ward_id], { stop: true })}>🗑 Delete</button>
+              <button class="btn btn-outline btn-sm"${actionAttrs('openWardEditor', [w.ward_id], { stop: true })}>✏️ Edit layout</button>
+              <button class="btn btn-danger-outline btn-sm"${actionAttrs('deleteWardRecord', [w.ward_id], { stop: true })} title="Delete this ward">🗑</button>
             </div>
           </td>
         </tr>`;
         tbody.insertAdjacentHTML('beforeend', row);
       });
     }
+
+    /** Refresh with a visible answer. */
+    async function refreshWardDirectory(button) {
+      const done = window.ShiroUI.busy(button, 'Refreshing…');
+      const started = Date.now();
+      await loadWardDirectory();
+      const wait = 600 - (Date.now() - started);
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      done();
+      if (window.showToast) window.showToast(`Up to date: ${wardsList.length} ward${wardsList.length === 1 ? '' : 's'}.`, 'success', 2500);
+    }
+    window.refreshWardDirectory = refreshWardDirectory;
 
     function filterWardDirectory() {
       const q = (document.getElementById('ward-search-input').value || '').toLowerCase().trim();
@@ -774,7 +790,7 @@
       }
       const badge = document.getElementById('db-sync-badge');
       if (badge) {
-        badge.innerText = '● Unsaved Changes';
+        badge.innerText = '● Not saved yet';
         badge.className = 'badge badge-warning';
       }
     }
@@ -1039,7 +1055,7 @@
       const tbody = document.getElementById('anchors-table-body');
       tbody.innerHTML = '';
       const list = currentWard.anchors || [];
-      document.getElementById('anchor-count-badge').innerText = `${list.length} Mounted (3–12)`;
+      document.getElementById('anchor-count-badge').innerText = `${list.length} (3 to 12)`;
       const addBtn = document.getElementById('btn-add-anchor');
       if (addBtn) {
         addBtn.disabled = list.length >= MAX_ANCHORS;
@@ -1198,8 +1214,8 @@
 
       if (grossEl) grossEl.innerText = `${grossArea.toFixed(2)} m²`;
       if (usableEl) usableEl.innerText = `${usableArea.toFixed(2)} m²`;
-      if (bedsEl) bedsEl.innerText = `${currentWard.beds ? currentWard.beds.length : 0} Cubicles`;
-      if (anchorsEl) anchorsEl.innerText = `${currentWard.anchors ? currentWard.anchors.length : 0} Nodes`;
+      if (bedsEl) bedsEl.innerText = `${currentWard.beds ? currentWard.beds.length : 0}`;
+      if (anchorsEl) anchorsEl.innerText = `${currentWard.anchors ? currentWard.anchors.length : 0}`;
     }
 
     // --- Presets, Persistence & Import/Export ---

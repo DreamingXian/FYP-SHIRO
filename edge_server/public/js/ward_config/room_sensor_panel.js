@@ -43,7 +43,7 @@
     if (!tbody || !w) return;
     const list = w.room_sensors;
     const badge = document.getElementById('room-sensor-count-badge');
-    if (badge) badge.innerText = `${list.length} Placed`;
+    if (badge) badge.innerText = `${list.length}`;
     if (list.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 14px;">No LiDAR placed. Add one, or let 📐 Plan Anchors &amp; LiDAR suggest a spot.</td></tr>';
       if (window.onRoomSensorsRendered) window.onRoomSensorsRendered();

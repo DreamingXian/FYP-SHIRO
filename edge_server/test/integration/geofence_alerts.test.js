@@ -79,6 +79,23 @@ describe('geofence alerts in the incident log', () => {
     assert.deepEqual(await rowsFor(SPARE_MAC), []);
   });
 
+  // Found 22 Nov 2026: a fall of a patient without a bed was stored with a position but no ward
+  test('a patient without a bed: the incident takes the ward the wristband is in', async () => {
+    const ips = require('../../services/ips_service');
+    const original = ips.getTagPosition;
+    ips.getTagPosition = (tagId) => (tagId === SPARE_TAG ? { x: 0.83, y: 2.45, ward_id: 'WARD-001' } : null);
+    try {
+      await alertService.recordIncident({ incident_category: 'FALL_ACCIDENT', device_id: SPARE_TAG, wristband_mac: SPARE_MAC });
+    } finally {
+      ips.getTagPosition = original;
+    }
+    const rows = await rowsFor(SPARE_MAC);
+    assert.equal(rows.length, 1);
+    assert.deepEqual([rows[0].ward_id, rows[0].pos_x, rows[0].pos_y], ['WARD-001', 0.83, 2.45]);
+    assert.match(rows[0].alert_message, /WARD-001/);
+    await pool.query('DELETE FROM emergency_incident_logs WHERE wristband_mac = ?', [SPARE_MAC]);
+  });
+
   test('the incident history gives the kind; other incidents have none', async () => {
     await alertService.recordIncident({ incident_category: 'FALL_ACCIDENT', device_id: TAG, wristband_mac: MAC, geofence_kind: 'AT_DOOR' });
     const { history, summary } = await alertService.getIncidentHistory({ patientId: PATIENT, limit: 10 });

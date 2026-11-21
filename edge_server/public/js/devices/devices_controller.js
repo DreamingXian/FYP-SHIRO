@@ -8,6 +8,8 @@ let cachedUnprovisioned = [];
 let currentDeviceTypeFilter = 'ALL';
 let currentStatusFilter = null; // null | 'ONLINE' | 'OFFLINE'
 let currentAvailFilter = null;  // null | 'AVAILABLE' | 'IN_USE' | 'UNAVAILABLE'
+let devicesPage = 1;           // pages of 8 (ui_kit.js)
+let discoveryPage = 1;
 let isWsListenersRegistered = false;
 // Live picture of the LiDAR room sensors (Phase 10), by device ID and by MAC address
 const roomSensorLive = new Map();
@@ -182,11 +184,11 @@ function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
         const statusCell = row.querySelector('.device-status-cell');
         if (statusCell) {
           if (dev.status === 'ONLINE') {
-            statusCell.innerHTML = `<span class="badge badge-live">● ONLINE</span>`;
+            statusCell.innerHTML = `<span class="badge badge-live">● On</span>`;
           } else if (dev.status === 'OFFLINE') {
-            statusCell.innerHTML = `<span class="badge badge-alert">● OFFLINE</span>`;
+            statusCell.innerHTML = `<span class="badge badge-neutral" title="Off, or out of reach">○ Off</span>`;
           } else if (dev.status === 'CHARGING') {
-            statusCell.innerHTML = `<span class="badge badge-warning">⚡ CHARGING</span>`;
+            statusCell.innerHTML = `<span class="badge badge-warning">⚡ Charging</span>`;
           } else {
             statusCell.innerHTML = `<span class="badge badge-neutral">● ${escapeHtml(dev.status)}</span>`;
           }
@@ -231,11 +233,11 @@ async function loadDevicesFleet() {
       filterDevicesTable();
       updateFleetCounts();
     } else {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--danger); padding:24px;">Failed to load fleet: ${escapeHtml(data.error || 'Server error')}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--danger);">The devices could not be loaded: ${escapeHtml(data.error || 'server error')}</td></tr>`;
     }
   } catch (err) {
     console.error('loadDevicesFleet error:', err);
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--danger); padding:24px;">Network error loading hardware fleet from edge server.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--danger);">The server does not answer. Check that it is running, then reload the page.</td></tr>`;
   }
 }
 
@@ -262,17 +264,27 @@ async function loadUnprovisionedDiscovery() {
 /**
  * Triggers manual scan / refresh for nearby devices.
  */
-async function refreshDiscoveryRadar() {
+async function refreshDiscoveryRadar(button) {
   const badge = document.getElementById('radar-status-badge');
-  if (badge) badge.innerText = '● Scanning Spectrum...';
+  const done = window.ShiroUI.busy(button || document.getElementById('btn-refresh-radar'), 'Searching…');
+  if (badge) badge.innerText = '● Searching…';
+  const before = new Set(cachedUnprovisioned.map(d => d.mac));
+  const started = Date.now();
 
   await loadUnprovisionedDiscovery();
+  // Long enough to be seen, even when the answer is instant
+  const wait = 700 - (Date.now() - started);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  done();
+  if (badge) badge.innerText = '● Listening';
 
-  safeShowToast(`Discovery radar refreshed. ${cachedUnprovisioned.length} unprovisioned node(s) detected.`, 'info');
-
-  setTimeout(() => {
-    if (badge) badge.innerText = '● MQTT Scanner Active';
-  }, 1000);
+  const found = cachedUnprovisioned.length;
+  const fresh = cachedUnprovisioned.filter(d => !before.has(d.mac)).length;
+  if (found === 0) {
+    safeShowToast('No new devices found. Switch the device on near a wall sensor, then search again.', 'info', 5000);
+  } else {
+    safeShowToast(`${found} device${found === 1 ? '' : 's'} waiting to be added${fresh ? ` (${fresh} new)` : ''}.`, 'success');
+  }
 }
 
 /**
@@ -284,7 +296,7 @@ function getRadarSignalHtml(d) {
     return `
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="badge ${isTracking ? 'badge-live' : 'badge-neutral'}" style="font-size:11px;">
-          📡 ${isTracking ? 'Active Tracking' : 'Standby (Scanning)'}
+          📡 ${isTracking ? 'Heard now' : 'Waiting'}
         </span>
       </div>
     `;
@@ -342,12 +354,26 @@ function getRadarBatteryHtml(d) {
  * Never destroys buttons on live updates to prevent jitter, page lag, and unclickable buttons.
  */
 function renderDiscoveryTable(items) {
+  const pagerEl = document.getElementById('unprovisioned-pager');
+  const list = items || [];
+  const pageData = window.ShiroUI.paginate(list, discoveryPage);
+  discoveryPage = pageData.page;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'devices',
+      onPage: (n) => { discoveryPage = n; renderDiscoveryTable(cachedUnprovisioned); }
+    });
+  }
+  renderDiscoveryRows(pageData.items);
+}
+
+function renderDiscoveryRows(items) {
   const tbody = document.getElementById('unprovisioned-table-body');
   if (!tbody) return;
 
   if (!items || items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:24px;">
-      No unprovisioned hardware currently broadcasting. Power on a physical node (Anchor, Gateway, or Wristband) to discover it live.
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">
+      <strong>No new devices.</strong>Switch a wristband or sensor on near a wall sensor; it appears here within a few seconds.
     </td></tr>`;
     return;
   }
@@ -431,6 +457,7 @@ function getEffectiveAvailability(d) {
  * Mutually exclusive within Operating group. Clicking active button deactivates it.
  */
 function toggleStatusFilter(status) {
+  devicesPage = 1;
   currentStatusFilter = (currentStatusFilter === status) ? null : status;
   updateFilterButtonsUI();
   filterDevicesTable();
@@ -441,6 +468,7 @@ function toggleStatusFilter(status) {
  * Mutually exclusive within Availability group. Clicking active button deactivates it.
  */
 function toggleAvailFilter(avail) {
+  devicesPage = 1;
   currentAvailFilter = (currentAvailFilter === avail) ? null : avail;
   updateFilterButtonsUI();
   filterDevicesTable();
@@ -494,13 +522,13 @@ function updateFleetCounts() {
   const inUse = cachedFleet.filter(d => getEffectiveAvailability(d) === 'IN_USE').length;
   const unavailable = cachedFleet.filter(d => getEffectiveAvailability(d) === 'UNAVAILABLE').length;
 
-  if (pillAll) pillAll.innerText = `All Nodes (${total})`;
-  if (pillWristband) pillWristband.innerText = `🛏️ Wristbands (${wristbands})`;
-  if (pillAnchor) pillAnchor.innerText = `📡 Anchors (${anchors})`;
-  if (pillHeadset) pillHeadset.innerText = `🥽 Headsets (${headsets})`;
-  if (pillRoomSensor) pillRoomSensor.innerText = `🌀 LiDAR (${roomSensors})`;
+  if (pillAll) pillAll.innerText = `All (${total})`;
+  if (pillWristband) pillWristband.innerText = `Wristbands (${wristbands})`;
+  if (pillAnchor) pillAnchor.innerText = `Wall sensors (${anchors})`;
+  if (pillHeadset) pillHeadset.innerText = `Headsets (${headsets})`;
+  if (pillRoomSensor) pillRoomSensor.innerText = `LiDAR (${roomSensors})`;
 
-  if (countBadge) countBadge.innerText = `${total} Device${total === 1 ? '' : 's'}`;
+  if (countBadge) countBadge.innerText = `${total} device${total === 1 ? '' : 's'}`;
 
   if (elOnlineCount) elOnlineCount.innerText = online;
   if (elOfflineCount) elOfflineCount.innerText = offline;
@@ -514,6 +542,7 @@ function updateFleetCounts() {
  */
 function setDeviceTypeFilter(type, btn) {
   currentDeviceTypeFilter = type;
+  devicesPage = 1;
   document.querySelectorAll('.filter-pills .filter-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   filterDevicesTable();
@@ -583,8 +612,18 @@ function renderDevicesTable(filtered) {
   const tbody = document.getElementById('devices-table-body');
   if (!tbody) return;
 
+  const pagerEl = document.getElementById('devices-pager');
+  const pageData = window.ShiroUI.paginate(filtered, devicesPage);
+  devicesPage = pageData.page;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'devices',
+      onPage: (n) => { devicesPage = n; renderDevicesTable(filtered); }
+    });
+  }
+
   if (filtered.length === 0) {
-    let msg = 'No registered hardware devices in MySQL yet. Power on your physical hardware to discover and enroll them above, or click "➕ Manually Add Device".';
+    let msg = 'No devices added yet. Switch a device on: it appears under "New devices nearby", ready to add. Or use "＋ Add device by hand".';
     if (cachedFleet.length > 0) {
       const activeFilters = [];
       if (currentDeviceTypeFilter !== 'ALL') activeFilters.push(`Category: ${currentDeviceTypeFilter}`);
@@ -594,20 +633,20 @@ function renderDevicesTable(filtered) {
       const q = input ? input.value.trim() : '';
       if (q) activeFilters.push(`Search: "${q}"`);
 
-      msg = `No registered hardware matches the active filters (${activeFilters.join(', ')}).`;
+      msg = `No device matches the filters (${activeFilters.join(', ')}).`;
     }
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:32px;">${escapeHtml(msg)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${escapeHtml(msg)}</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = filtered.map(d => {
+  tbody.innerHTML = pageData.items.map(d => {
     const typeBadge = deviceTypeBadge(d.device_type);
 
-    let statusBadge = `<span class="badge badge-live">● ONLINE</span>`;
+    let statusBadge = `<span class="badge badge-live">● On</span>`;
     if (d.status === 'CHARGING') {
-      statusBadge = `<span class="badge badge-warning">⚡ CHARGING</span>`;
+      statusBadge = `<span class="badge badge-warning">⚡ Charging</span>`;
     } else if (d.status === 'OFFLINE' || (!d.status || d.status === 'STANDBY')) {
-      statusBadge = `<span class="badge badge-alert">● OFFLINE</span>`;
+      statusBadge = `<span class="badge badge-neutral" title="Off, or out of reach">○ Off</span>`;
     }
 
     let powerDisplay = `<span style="color:var(--text-muted); font-size:11px;">⚡ Mains / USB</span>`;
@@ -749,7 +788,7 @@ async function openEnrollModal(mac, model, type, battery, ip) {
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Live Connectivity</span>
-          <span class="badge badge-live">● ONLINE</span>
+          <span class="badge badge-live">● On</span>
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Initial Availability</span>

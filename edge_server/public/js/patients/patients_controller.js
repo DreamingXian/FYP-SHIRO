@@ -1,9 +1,13 @@
 // =============================================================================
-// SHIRO Hospital Edge Admin - Patients Controller
-// Client-side Controller for Inpatient Admissions, Photo Upload, Bed Sync & Census
+// SHIRO Dashboard - Patients
+// The list of patients (admitted ones first, 8 a page), admitting, the profile,
+// beds, vitals history. Phase 11: the admission form opens on demand; the fall
+// risk score is no longer asked or shown (it changed nothing in the system; the
+// database keeps the column).
 // =============================================================================
 
-let currentPatientFilter = 'ALL';
+let currentPatientFilter = 'ADMITTED';
+let currentPatientPage = 1;
 let cachedPatients = [];
 let cachedWards = [];
 let cachedAvailableBeds = [];
@@ -25,6 +29,20 @@ async function initPatientsModule() {
     loadPatientsDirectory()
   ]);
   handleNameOrDobChange();
+}
+
+/** Opens or closes the "Admit a patient" form above the list. */
+function toggleAdmissionForm(open) {
+  const card = document.getElementById('admission-card');
+  if (!card) return;
+  card.style.display = open ? 'block' : 'none';
+  const btn = document.getElementById('btn-open-admission');
+  if (btn) btn.style.display = open ? 'none' : '';
+  if (open) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const name = document.getElementById('adm-name');
+    if (name) setTimeout(() => name.focus(), 250);
+  }
 }
 
 /**
@@ -260,7 +278,7 @@ function populateWardDropdown() {
   if (!wardSelect) return;
 
   const currentVal = wardSelect.value;
-  let optionsHtml = `<option value="">-- None / Unassigned --</option>`;
+  let optionsHtml = `<option value="">Not yet</option>`;
 
   if (cachedWards && cachedWards.length > 0) {
     optionsHtml += cachedWards.map(w => 
@@ -287,7 +305,7 @@ function handleWardSelectionChange() {
 
   const selectedWardId = wardSelect.value;
   if (!selectedWardId) {
-    bedSelect.innerHTML = `<option value="">-- None / Unassigned --</option>`;
+    bedSelect.innerHTML = `<option value="">Not yet</option>`;
     bedSelect.disabled = true;
     return;
   }
@@ -312,19 +330,20 @@ async function loadPatientsDirectory() {
   if (!tbody) return;
 
   try {
-    const res = await fetch(`/api/patients/list?status=${encodeURIComponent(currentPatientFilter)}`);
+    // Every patient once; the filter and the counts work on this list
+    const res = await fetch('/api/patients/list?status=ALL');
     const data = await res.json();
 
     if (data.success) {
       cachedPatients = data.patients || [];
-      renderPatientsTable(cachedPatients);
       updateCensusCounts();
+      filterPatientTable(true);
     } else {
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--danger); padding:24px;">Failed to load patients: ${escapeHtml(data.error || 'Server error')}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--danger);">The patients could not be loaded: ${escapeHtml(data.error || 'server error')}</td></tr>`;
     }
   } catch (err) {
     console.error('Failed to load patients directory:', err);
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--danger); padding:24px;">Network error loading patients from edge server.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--danger);">The server does not answer. Check that it is running, then reload the page.</td></tr>`;
   }
 }
 
@@ -338,8 +357,8 @@ function updateCensusCounts() {
   const admittedCount = cachedPatients.filter(p => p.status === 'ADMITTED').length;
   const dischargedCount = cachedPatients.filter(p => p.status === 'DISCHARGED').length;
 
-  if (admittedBadge) admittedBadge.innerText = `${admittedCount} Admitted`;
-  if (dischargedBadge) dischargedBadge.innerText = `${dischargedCount} Discharged`;
+  if (admittedBadge) admittedBadge.innerText = String(admittedCount);
+  if (dischargedBadge) dischargedBadge.innerText = String(dischargedCount);
 }
 
 /**
@@ -349,29 +368,39 @@ function renderPatientsTable(patients) {
   const tbody = document.getElementById('patients-table-body');
   if (!tbody) return;
 
+  const pagerEl = document.getElementById('patients-pager');
   if (!patients || patients.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:32px; color:var(--text-muted);">
-      No inpatient records found matching current criteria.
-    </td></tr>`;
+    const searching = (document.getElementById('patient-search-input')?.value || '').trim() !== '';
+    const emptyHtml = searching
+      ? '<strong>No patient matches the search.</strong>Check the spelling, or search by ID, IC, ward or bed.'
+      : currentPatientFilter === 'DISCHARGED'
+        ? '<strong>No discharged patients.</strong>'
+        : '<strong>No patients admitted.</strong>Press "＋ Admit patient" to add the first one.';
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${emptyHtml}</td></tr>`;
+    if (pagerEl) window.ShiroUI.renderPager(pagerEl, { total: 0, page: 1, noun: 'patients' });
     return;
   }
 
-  tbody.innerHTML = patients.map(p => {
+  const pageData = window.ShiroUI.paginate(patients, currentPatientPage);
+  currentPatientPage = pageData.page;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'patients',
+      onPage: (n) => { currentPatientPage = n; renderPatientsTable(patients); }
+    });
+  }
+
+  tbody.innerHTML = pageData.items.map(p => {
     // Photo or initials fallback
     const initials = p.full_name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
     const photoImg = p.photo_url 
       ? `<img src="${escapeHtml(p.photo_url)}" alt="${escapeHtml(p.full_name)}"${imgFallbackAttrs(initials)}>`
       : escapeHtml(initials);
 
-    // Fall risk badge
-    let riskBadge = `<span class="badge badge-live">● LOW RISK</span>`;
-    if (p.fall_risk_score === 'MEDIUM') riskBadge = `<span class="badge badge-warning">● MEDIUM</span>`;
-    if (p.fall_risk_score === 'HIGH') riskBadge = `<span class="badge badge-alert">● HIGH RISK</span>`;
-
     // Bed and Ward info
     const bedInfo = p.status === 'ADMITTED' && p.assigned_bed_id
       ? `<span class="badge badge-info">${escapeHtml(p.assigned_ward_id)} · ${escapeHtml(p.bed_code || p.assigned_bed_id)}</span>`
-      : `<span class="badge badge-neutral">No Active Bed</span>`;
+      : `<span class="badge badge-neutral">No bed</span>`;
 
     // Status pill
     const statusBadge = p.status === 'ADMITTED'
@@ -383,13 +412,15 @@ function renderPatientsTable(patients) {
     if (p.status === 'ADMITTED' && p.assigned_bed_id) {
       secondaryActionBtn = `<button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDischargePatient', [p.patient_id, p.full_name, p.assigned_ward_id ? p.assigned_ward_id + ' · ' + (p.bed_code || p.assigned_bed_id) : 'assigned bed'], { stop: true })}>Discharge</button>`;
     } else {
-      secondaryActionBtn = `<button class="btn btn-primary btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })}>Assign Bed</button>`;
+      secondaryActionBtn = p.status === 'ADMITTED'
+        ? `<button class="btn btn-primary btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })}>Assign bed</button>`
+        : '';
     }
 
     const genderLabel = p.gender === 'FEMALE' ? 'Female' : p.gender === 'MALE' ? 'Male' : 'Other';
 
     return `
-      <tr class="table-row-clickable"${actionAttrs('viewPatientProfileReadOnly', [p.patient_id])} title="Click to view full clinical profile for ${escapeHtml(p.full_name)}">
+      <tr class="table-row-clickable"${actionAttrs('viewPatientProfileReadOnly', [p.patient_id])} title="Open the profile of ${escapeHtml(p.full_name)}">
         <td>
           <div class="patient-cell">
             <div class="patient-thumb" title="${escapeHtml(p.full_name)}">
@@ -397,23 +428,21 @@ function renderPatientsTable(patients) {
             </div>
             <div>
               <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(p.full_name)}</div>
-              <div class="mono" style="font-size: 11px; color: var(--primary); font-weight: 600;">${escapeHtml(p.patient_id)}</div>
+              <div class="mono" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">${escapeHtml(p.patient_id)}</div>
             </div>
           </div>
         </td>
-        <td class="mono">${escapeHtml(p.nric_passport)}</td>
-        <td>${escapeHtml(p.age !== null ? p.age + ' yrs' : '-')}</td>
-        <td><span class="badge badge-neutral" style="font-size: 11px;">${genderLabel}</span></td>
+        <td>${escapeHtml(p.age !== null ? p.age + ' years' : '–')}</td>
+        <td>${genderLabel}</td>
         <td>${bedInfo}</td>
-        <td>${riskBadge}</td>
-        <td style="color: var(--text-secondary); font-size: 12px;">${escapeHtml(p.admission_date || '-')}</td>
+        <td style="color: var(--text-secondary);">${escapeHtml(p.admission_date || '–')}</td>
         <td>${statusBadge}</td>
         <td style="text-align: right; white-space: nowrap;">
-          <button class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="View InfluxDB Historical Vitals" style="margin-right: 4px;">📈 Vitals</button>
-          <button class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Falls and other incidents of this patient" style="margin-right: 4px;">🚨 Incidents</button>
-          <button class="btn btn-outline btn-sm"${actionAttrs('editPatientInfo', [p.patient_id], { stop: true })} style="margin-right: 4px;">Edit Infos</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Heart rate and SpO2 over time" style="margin-right: 4px;">📈 Vitals</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Falls, critical vitals and door alerts of this patient" style="margin-right: 4px;">🚨 Incidents</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('editPatientInfo', [p.patient_id], { stop: true })} style="margin-right: 4px;">Edit</button>
           ${secondaryActionBtn}
-          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeletePatient', [p.patient_id, p.full_name], { stop: true })} title="Delete record" style="margin-left: 4px;">🗑️</button>
+          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeletePatient', [p.patient_id, p.full_name], { stop: true })} title="Delete this patient's record" style="margin-left: 4px;">🗑️</button>
         </td>
       </tr>
     `;
@@ -425,26 +454,30 @@ function renderPatientsTable(patients) {
  */
 function setPatientFilter(filter, btn) {
   currentPatientFilter = filter;
-  document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+  currentPatientPage = 1;
+  document.querySelectorAll('#patient-filter-pills .filter-pill').forEach(b => b.classList.toggle('active', b.getAttribute('data-filter') === filter));
   if (btn) btn.classList.add('active');
-
-  loadPatientsDirectory();
+  filterPatientTable(true);
 }
 
 /**
  * Real-time search filter across patient name, ID, NRIC, bed, or ward.
  */
-function filterPatientTable() {
+function filterPatientTable(keepPage = false) {
   const input = document.getElementById('patient-search-input');
-  if (!input) return;
-  const q = input.value.trim().toLowerCase();
+  const q = input ? input.value.trim().toLowerCase() : '';
+  if (keepPage !== true) currentPatientPage = 1;
+
+  const byStatus = currentPatientFilter === 'ALL'
+    ? cachedPatients
+    : cachedPatients.filter(p => p.status === currentPatientFilter);
 
   if (!q) {
-    renderPatientsTable(cachedPatients);
+    renderPatientsTable(byStatus);
     return;
   }
 
-  const filtered = cachedPatients.filter(p => {
+  const filtered = byStatus.filter(p => {
     return (
       p.full_name.toLowerCase().includes(q) ||
       p.patient_id.toLowerCase().includes(q) ||
@@ -595,7 +628,6 @@ async function handlePatientAdmission(event) {
   const phone = document.getElementById('adm-phone').value.trim();
   const wardId = document.getElementById('adm-ward').value;
   const bedId = document.getElementById('adm-bed').value;
-  const risk = document.querySelector('input[name="fall_risk"]:checked').value;
   const history = document.getElementById('adm-history').value.trim();
   let photoUrl = document.getElementById('adm-photo-url').value;
   const body = readBodyMeasurements('adm-height', 'adm-weight');
@@ -615,13 +647,13 @@ async function handlePatientAdmission(event) {
     const wardTitle = wardOption ? wardOption.innerText : wardId;
     const bedTitle = bedOption ? bedOption.innerText : bedId;
 
-    confirmTitle = 'Confirm Patient Admission';
-    confirmMessage = `Admit patient "${name}" (${id}, NRIC: ${nric}) to:\n\n• Unit: ${wardTitle}\n• Bed: ${bedTitle}\n• Fall Risk Level: ${risk}\n\nThis will mark the cubicle bed as OCCUPIED in MySQL.`;
-    confirmButtonText = '➕ Confirm Admission to Bed';
+    confirmTitle = 'Admit this patient?';
+    confirmMessage = `${name} (${id})\n\n• Ward: ${wardTitle}\n• Bed: ${bedTitle}\n\nThe bed will show as occupied.`;
+    confirmButtonText = 'Admit';
   } else {
-    confirmTitle = 'Register Patient Without Bed Assignment';
-    confirmMessage = `Admit patient "${name}" (${id}, NRIC: ${nric}) WITHOUT an assigned hospital bed cubicle?\n\nThis patient will be registered as an Inpatient / Observation case without an active bed reservation. A bed can be assigned later via the census table.`;
-    confirmButtonText = '➕ Register Without Bed Assignment';
+    confirmTitle = 'Admit without a bed?';
+    confirmMessage = `${name} (${id}) will be admitted without a ward and bed.\n\nYou can give a bed later with "Assign bed" in the list.`;
+    confirmButtonText = 'Admit without a bed';
   }
 
   // Show Confirmation Modal
@@ -660,7 +692,6 @@ async function handlePatientAdmission(event) {
             phone_number: phone,
             assigned_ward_id: wardId || null,
             assigned_bed_id: bedId || null,
-            fall_risk_score: risk,
             height_cm: body.height_cm,
             weight_kg: body.weight_kg,
             medical_history: history,
@@ -676,9 +707,11 @@ async function handlePatientAdmission(event) {
           const result = await res.json();
           if (result.success) {
             if (window.showToast) {
-              window.showToast(`Patient ${name} (${result.patient_id}) registered successfully!`, 'success');
+              window.showToast(`${name} (${result.patient_id}) admitted.`, 'success');
             }
             resetAdmissionForm();
+            toggleAdmissionForm(false);
+            setPatientFilter('ADMITTED');
             // Refresh data
             await Promise.all([
               fetchNextPatientId(),
@@ -688,8 +721,8 @@ async function handlePatientAdmission(event) {
           } else {
             if (window.showModal) {
               window.showModal({
-                title: 'Registration Failed',
-                message: result.error || 'Failed to admit patient into MySQL.',
+                title: 'The patient was not admitted',
+                message: result.error || 'The server could not save the patient. Try again.',
                 type: 'danger',
                 confirmText: 'OK',
                 cancelText: null
@@ -698,7 +731,7 @@ async function handlePatientAdmission(event) {
           }
         } catch (err) {
           console.error('Admission error:', err);
-          if (window.showToast) window.showToast('Network error during patient admission.', 'danger');
+          if (window.showToast) window.showToast('The server does not answer. The patient was not admitted; try again.', 'danger');
         }
       }
     });
@@ -750,10 +783,10 @@ function confirmDischargePatient(patientId, patientName, bedInfo) {
 function confirmDeletePatient(patientId, patientName) {
   if (window.showModal) {
     window.showModal({
-      title: 'Delete Patient Record',
-      message: `Are you sure you want to permanently delete patient "${patientName}" (${patientId}) from MySQL database?\n\nIf the patient is currently assigned to a bed, the bed will automatically be released back to AVAILABLE. This action cannot be undone.`,
+      title: 'Delete this patient\'s record?',
+      message: `${patientName} (${patientId}) and their record will be deleted for good. Their bed becomes free.\n\nThis cannot be undone. To end a stay normally, use "Discharge" instead.`,
       type: 'danger',
-      confirmText: '🗑️ Delete Permanently',
+      confirmText: 'Delete for good',
       cancelText: 'Cancel',
       onConfirm: async () => {
         try {
@@ -936,10 +969,6 @@ async function viewPatientProfileReadOnly(patientId) {
           <strong style="color:var(--text-primary);">${escapeHtml(bedDesc)}</strong>
         </div>
         <div>
-          <span style="color:var(--text-muted);">Fall Risk Level:</span><br>
-          <strong style="color:${p.fall_risk_score === 'HIGH' ? 'var(--danger)' : p.fall_risk_score === 'MEDIUM' ? 'var(--warning)' : 'var(--success)'};">● ${escapeHtml(p.fall_risk_score)} RISK</strong>
-        </div>
-        <div>
           <span style="color:var(--text-muted);">Height / Weight:</span><br>
           <strong style="color:var(--text-primary);">${escapeHtml(bodySummary(p))}</strong>
         </div>
@@ -954,15 +983,15 @@ async function viewPatientProfileReadOnly(patientId) {
       </div>
 
       <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px;">
-        <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">Medical History, Chronic Conditions &amp; Drug Allergies:</div>
-        <div style="color:var(--text-secondary); line-height:1.5; white-space:pre-wrap;">${escapeHtml(p.medical_history || 'No recorded chronic illnesses or known drug allergies.')}</div>
+        <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">Medical history and allergies</div>
+        <div style="color:var(--text-secondary); line-height:1.5; white-space:pre-wrap;">${escapeHtml(p.medical_history || 'Nothing recorded.')}</div>
       </div>
 
       <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; color:var(--primary); border-color:var(--primary);">
-        📈 <span>View InfluxDB Historical Vitals Trends (Table 4.10: 30-Day Retention)</span>
+        📈 <span>Vitals history (heart rate, SpO2)</span>
       </button>
       <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; margin-top:8px; color:var(--danger); border-color:var(--danger);">
-        🚨 <span>Incident History (falls, critical vitals, ward exits)</span>
+        🚨 <span>Incidents (falls, critical vitals, door alerts)</span>
       </button>
 
       <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:12px;">
@@ -1124,23 +1153,6 @@ async function editPatientInfo(patientId) {
           <input type="text" class="form-control" id="edit-patient-phone" value="${escapeHtml(p.phone_number || '')}" placeholder="+6012-3456789">
         </div>
 
-        <div class="form-group">
-          <label class="form-label" style="font-weight:600;">Clinical Fall Risk Stratification *</label>
-          <div class="radio-pills">
-            <label class="radio-pill-item">
-              <input type="radio" name="edit_fall_risk" value="LOW" ${p.fall_risk_score === 'LOW' ? 'checked' : ''}>
-              <span class="radio-pill-label risk-low">● LOW RISK</span>
-            </label>
-            <label class="radio-pill-item">
-              <input type="radio" name="edit_fall_risk" value="MEDIUM" ${p.fall_risk_score === 'MEDIUM' ? 'checked' : ''}>
-              <span class="radio-pill-label risk-med">● MEDIUM</span>
-            </label>
-            <label class="radio-pill-item">
-              <input type="radio" name="edit_fall_risk" value="HIGH" ${p.fall_risk_score === 'HIGH' ? 'checked' : ''}>
-              <span class="radio-pill-label risk-high">● HIGH RISK</span>
-            </label>
-          </div>
-        </div>
 
         <div class="form-row" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div class="form-group">
@@ -1169,7 +1181,6 @@ async function editPatientInfo(patientId) {
         cancelText: 'Cancel',
         onConfirm: () => {
           const updatedPhone = document.getElementById('edit-patient-phone')?.value.trim();
-          const updatedRisk = document.querySelector('input[name="edit_fall_risk"]:checked')?.value || p.fall_risk_score;
           const updatedHistory = document.getElementById('edit-patient-history')?.value.trim();
           let updatedPhoto = document.getElementById('edit-patient-photo-url')?.value || photoSrc;
           const updatedBody = readBodyMeasurements('edit-patient-height', 'edit-patient-weight');
@@ -1186,10 +1197,10 @@ async function editPatientInfo(patientId) {
 
           // Confirmation prompt before saving notes / changes
           window.showModal({
-            title: 'Confirm Changes',
-            message: `Save updated clinical information for "${p.full_name}" (${p.patient_id})?\n\n• Phone: ${updatedPhone}\n• Fall Risk: ${updatedRisk}\n• Height / Weight: ${bodySummary(updatedBody)}\n• Photo: ${updatedPhoto !== photoSrc ? 'Updated' : 'Unchanged'}`,
+            title: 'Save the changes?',
+            message: `${p.full_name} (${p.patient_id})\n\n• Phone: ${updatedPhone}\n• Height / weight: ${bodySummary(updatedBody)}\n• Photo: ${updatedPhoto !== photoSrc ? 'new photo' : 'unchanged'}`,
             type: 'info',
-            confirmText: '💾 Save Changes',
+            confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: async () => {
               try {
@@ -1214,7 +1225,6 @@ async function editPatientInfo(patientId) {
                   body: JSON.stringify({
                     patient_id: p.patient_id,
                     phone_number: updatedPhone,
-                    fall_risk_score: updatedRisk,
                     height_cm: updatedBody.height_cm,
                     weight_kg: updatedBody.weight_kg,
                     medical_history: updatedHistory,
@@ -1276,10 +1286,6 @@ function resetAdmissionForm() {
     if (el) el.value = '';
   }
 
-  // Reset Fall Risk radio to LOW
-  const lowRiskRadio = document.querySelector('input[name="fall_risk"][value="LOW"]');
-  if (lowRiskRadio) lowRiskRadio.checked = true;
-
   handleNameOrDobChange();
 
   // Restore next patient ID & Ward
@@ -1305,9 +1311,8 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
           <span>📈 ${escapeHtml(safeName)}</span>
           <span class="mono" style="font-size: 12px; color: var(--primary); font-weight: 600;">(${escapeHtml(patientId)})</span>
         </div>
-        <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-          InfluxDB Engine · Bucket: <span class="mono">shiro_telemetry</span> · 
-          <span class="badge badge-info" style="font-size: 10px; padding: 2px 6px;">Table 4.10: 30-Day Vitals Retention</span>
+        <div style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
+          Heart rate and SpO2 measured by the wristband. Kept for 30 days.
         </div>
       </div>
       
@@ -1317,7 +1322,7 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
         <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-6h"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-6h'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">6h</button>
         <button type="button" class="btn btn-primary btn-sm range-btn" data-range="-24h"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-24h'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">24h</button>
         <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-7d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-7d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">7d</button>
-        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-30d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-30d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;" title="Full 30-Day InfluxDB Table 4.10 Retention">30d</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-30d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-30d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;" title="The last 30 days">30d</button>
       </div>
     </div>
 
@@ -1325,14 +1330,14 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
     <div id="vitals-history-dynamic-container" style="min-height: 380px;">
       <div style="text-align: center; padding: 48px; color: var(--text-muted);">
         <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
-        <div>Querying InfluxDB time-series records for ${escapeHtml(safeName)}...</div>
+        <div>Loading the vitals of ${escapeHtml(safeName)}…</div>
       </div>
     </div>
   `;
 
   if (window.showModal) {
     window.showModal({
-      title: `Patient Physiological Telemetry (InfluxDB)`,
+      title: 'Vitals history',
       customHtml: modalHtml,
       isWide: true,
       type: 'info',
@@ -1366,7 +1371,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
   container.innerHTML = `
     <div style="text-align: center; padding: 48px; color: var(--text-muted);">
       <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
-      <div>Loading InfluxDB records for range ${escapeHtml(range)}...</div>
+      <div>Loading…</div>
     </div>
   `;
 
@@ -1378,14 +1383,13 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
       container.innerHTML = `
         <div style="background: #F8FAFC; border: 1px dashed var(--border); border-radius: 8px; padding: 36px 20px; text-align: center; margin-top: 10px;">
           <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
-          <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;">No InfluxDB Vitals Recorded for Selected Range (${escapeHtml(range)})</div>
-          <div style="font-size: 12px; color: var(--text-muted); max-width: 520px; margin: 8px auto 14px auto; line-height: 1.5;">
-            Telemetry is automatically ingested into bucket <span class="mono">shiro_telemetry</span> when this patient's wristband is bound and streaming (either in scheduled 3-min passive bursts or active 1 Hz inspection).
+          <div style="font-weight: 700; color: var(--text-primary); font-size: 15px;">No vitals in this period</div>
+          <div style="font-size: 13px; color: var(--text-muted); max-width: 520px; margin: 8px auto 14px auto; line-height: 1.5;">
+            Vitals are saved while the patient wears a linked wristband: one measurement every 3 minutes, or every second in live mode.
           </div>
           <div style="display: flex; gap: 8px; justify-content: center; font-size: 11px;">
             <span class="badge badge-info">Patient: ${escapeHtml(patientId)}</span>
-            <span class="badge badge-neutral">Device: ${escapeHtml(data.device_id || 'Standby')}</span>
-            <span class="badge badge-neutral">MAC: ${escapeHtml(data.wristband_mac || 'Pending')}</span>
+            <span class="badge badge-neutral">Wristband: ${escapeHtml(data.device_id || 'none linked')}</span>
           </div>
         </div>
       `;
@@ -1505,7 +1509,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
   } catch (err) {
     container.innerHTML = `
       <div style="padding: 24px; text-align: center; color: var(--danger);">
-        Error loading InfluxDB vitals: ${escapeHtml(err.message)}
+        The vitals could not be loaded: ${escapeHtml(err.message)}
       </div>
     `;
   }
@@ -1591,6 +1595,7 @@ function generateVitalsSvg(points, field, minAxis, maxAxis, normalLow, normalHig
 
 // Global exports for inline HTML event handlers and SPA router
 window.initPatientsModule = initPatientsModule;
+window.toggleAdmissionForm = toggleAdmissionForm;
 window.handlePatientAdmission = handlePatientAdmission;
 window.handlePhotoFileUpload = handlePhotoFileUpload;
 window.selectAvatarPreset = selectAvatarPreset;

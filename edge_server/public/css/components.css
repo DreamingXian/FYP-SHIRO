@@ -577,3 +577,116 @@ table.data-table tbody tr:hover {
   font-weight: 700;
 }
 
+
+/* =============================================================================
+   Phase 11: readability. Body text 14 px, labels 13 px, nothing below 12 px;
+   table headings in sentence case with enough contrast.
+   ============================================================================= */
+.nav-tab-btn { font-size: 14px; letter-spacing: 0; padding: 0 14px; }
+.form-label { font-size: 13px; }
+.btn { font-size: 14px; }
+.btn-sm { font-size: 13px; padding: 6px 12px; }
+table.data-table { font-size: 14px; }
+table.data-table th {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.card-title { font-size: 16px; }
+.card-subtitle { font-size: 14px; line-height: 1.5; }
+.badge { font-size: 12px; }
+.user-role { font-size: 12px; }
+.server-status-pill { font-size: 12px; }
+
+/* =============================================================================
+   Phase 11: pager (ui_kit.js renderPager), busy buttons, empty states
+   ============================================================================= */
+.pager {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 4px 2px;
+}
+.pager-info { font-size: 13px; color: var(--text-muted); }
+.pager-buttons { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.pager-btn {
+  min-width: 36px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  background: #FFFFFF;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pager-btn:hover:not(:disabled) { border-color: var(--primary-border); color: var(--primary); }
+.pager-btn.current { background: var(--primary); border-color: var(--primary); color: #FFFFFF; cursor: default; }
+.pager-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.pager-gap { min-width: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+@keyframes shiroSpin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: shiroSpin 0.7s linear infinite;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+.btn.is-busy { cursor: progress; opacity: 0.85; }
+
+.empty-state {
+  text-align: center;
+  padding: 28px 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.empty-state strong { display: block; color: var(--text-primary); font-size: 15px; margin-bottom: 4px; }
+
+.ward-picker { width: auto; min-width: 220px; font-weight: 600; padding: 7px 12px; }
+
+/* Phase 11: sentence case everywhere (capitals only where the words have them) */
+.form-label,
+.card-title,
+.badge,
+.filter-pill,
+.badge-filter-btn,
+.radio-pill-label {
+  text-transform: none;
+  letter-spacing: 0;
+}
+.filter-pill { font-size: 13px; }
+
+/* Phase 11: red is only for a patient who needs help. A device that is off is grey;
+   a device taken out of use is amber. */
+.badge-filter-offline {
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral-text);
+  border-color: var(--status-neutral-border);
+}
+.badge-filter-offline.active {
+  background: #475569 !important;
+  color: #FFFFFF !important;
+  border-color: #334155 !important;
+  box-shadow: 0 0 0 2px rgba(71, 85, 105, 0.3) !important;
+}
+.badge-filter-unavailable {
+  background: var(--status-warning-bg);
+  color: #92400E;
+  border-color: var(--status-warning-border);
+}
+.badge-filter-unavailable.active {
+  background: #D97706 !important;
+  color: #FFFFFF !important;
+  border-color: #B45309 !important;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.3) !important;
+}

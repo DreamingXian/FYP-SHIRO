@@ -7,24 +7,23 @@
   <div class="card" style="margin-bottom: 18px; padding: 14px 22px;">
     <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
       <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-        <span style="font-size: 17px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-          <span>🗺️ Live Ward Indoor Positioning (IPS)</span>
-        </span>
-        <span class="badge badge-info" id="live-map-ward-badge" style="font-weight: 700;">WARD-004</span>
-        <span class="badge badge-live" id="live-map-anchors-badge">● 3/3 Anchors Active</span>
-        <span class="badge badge-neutral" id="live-map-tags-badge">● 0 Tags Localized</span>
+        <span class="page-title">Ward overview</span>
+        <select class="form-control ward-picker" id="live-map-ward-select" title="Choose the ward to show" onchange="openWardLiveMap(this.value)">
+          <option value="">Loading wards…</option>
+        </select>
+        <span class="badge badge-info" id="live-map-ward-badge" style="display: none;"></span>
+        <span class="badge badge-live" id="live-map-anchors-badge" title="Wall sensors that locate the wristbands">● Sensors</span>
+        <span class="badge badge-neutral" id="live-map-tags-badge">● 0 wristbands</span>
       </div>
 
       <div style="display: flex; align-items: center; gap: 10px;">
-        <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;" id="live-map-clock">Live Stream</span>
-        <button class="btn btn-primary btn-sm" onclick="openCalibrationModal()" style="padding: 7px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;">
-          <span>🎯</span> Calibrate Anchors
+        <span style="font-size: 12px; color: var(--text-muted);" id="live-map-clock"></span>
+        <!-- Technician tools: admins only (auth_client.js) -->
+        <button class="btn btn-outline btn-sm admin-only" onclick="openCalibrationModal()" title="Teach the wall sensors this room's signal strength (technician)">
+          🎯 Calibrate
         </button>
-        <button class="btn btn-outline btn-sm" onclick="openPositionTestPanel()" style="padding: 7px 14px; font-size: 12px; display: flex; align-items: center; gap: 6px;" title="Measure how far the shown position is from where the wristband really is">
-          <span>📏</span> Position test
-        </button>
-        <button class="btn btn-outline btn-sm" onclick="closeWardLiveMap()" style="padding: 7px 14px; font-size: 12px;">
-          ← Return to Ward Directory
+        <button class="btn btn-outline btn-sm admin-only" onclick="openPositionTestPanel()" title="Measure how far the shown position is from where the wristband really is (technician)">
+          📏 Position test
         </button>
       </div>
     </div>

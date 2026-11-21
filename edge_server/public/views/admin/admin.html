@@ -9,7 +9,7 @@
   <div class="card" style="margin-bottom: 24px;">
     <div class="card-header">
       <div>
-        <div class="card-title"><span>👩‍⚕️ Clinician Accounts</span></div>
+        <div class="card-title"><span>Sign-in accounts</span></div>
         <div class="card-subtitle" style="margin-top: 4px;">
           Every action on the dashboard is recorded with the account that did it. Admins also manage devices, wards and accounts.
         </div>
@@ -54,17 +54,18 @@
           </tr>
         </thead>
         <tbody id="admin-accounts-body">
-          <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading accounts...</td></tr>
+          <tr><td colspan="7" class="empty-state">Loading accounts…</td></tr>
         </tbody>
       </table>
     </div>
+    <div id="admin-accounts-pager"></div>
   </div>
 
   <!-- Section 2: Headset pairing -->
   <div class="card" style="margin-bottom: 24px;">
     <div class="card-header">
       <div>
-        <div class="card-title"><span>🥽 Headset Pairing</span></div>
+        <div class="card-title"><span>Headsets</span></div>
         <div class="card-subtitle" style="margin-top: 4px;">
           A headset is paired once: on its hand slate (System tab) set the server address shown below, then create a code here
           and enter it on the headset within 5 minutes. The headset keeps its access until it is revoked here.
@@ -99,24 +100,35 @@
           </tr>
         </thead>
         <tbody id="admin-headsets-body">
-          <tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading pairings...</td></tr>
+          <tr><td colspan="6" class="empty-state">Loading headsets…</td></tr>
         </tbody>
       </table>
     </div>
+    <div id="admin-headsets-pager"></div>
   </div>
 
   <!-- Section 3: Audit log -->
   <div class="card">
     <div class="card-header" style="flex-wrap: wrap; gap: 12px;">
       <div>
-        <div class="card-title"><span>🧾 Audit Log</span></div>
-        <div class="card-subtitle" style="margin-top: 4px;">Who did what and when. Newest first.</div>
+        <div class="card-title"><span>Activity log</span></div>
+        <div class="card-subtitle" style="margin-top: 4px;">Who did what, newest first. Hover over an entry to see all its details.</div>
       </div>
       <form id="admin-audit-filter" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-        <input class="form-control" id="admin-audit-actor" placeholder="Actor ID (CLN-001, QUEST3-…)" maxlength="32" style="width: 190px;">
-        <input class="form-control" id="admin-audit-action" placeholder="Action (e.g. PATIENT_ADMIT)" maxlength="48" style="width: 200px;">
-        <input class="form-control" id="admin-audit-target" placeholder="Target (P-001, TAG-001, …)" maxlength="32" style="width: 180px;">
-        <button class="btn btn-primary btn-sm" type="submit">Filter</button>
+        <select class="form-control" id="admin-audit-period" style="width: auto;" title="When">
+          <option value="1">Today</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="0">Any time</option>
+        </select>
+        <select class="form-control" id="admin-audit-actor" style="width: auto; max-width: 220px;" title="Who">
+          <option value="">Anyone</option>
+        </select>
+        <select class="form-control" id="admin-audit-action" style="width: auto; max-width: 240px;" title="What">
+          <option value="">Any action</option>
+        </select>
+        <input class="form-control" id="admin-audit-target" placeholder="Patient or device (P-001, TAG-001)" maxlength="32" style="width: 230px;">
+        <button class="btn btn-primary btn-sm" type="submit">Show</button>
         <button class="btn btn-outline btn-sm" type="button" id="admin-audit-clear">Clear</button>
       </form>
     </div>
@@ -133,9 +145,10 @@
           </tr>
         </thead>
         <tbody id="admin-audit-body">
-          <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">Loading the audit log...</td></tr>
+          <tr><td colspan="6" class="empty-state">Loading the activity log…</td></tr>
         </tbody>
       </table>
     </div>
+    <div id="admin-audit-pager"></div>
   </div>
 </div>

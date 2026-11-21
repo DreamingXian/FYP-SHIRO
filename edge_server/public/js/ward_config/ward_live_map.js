@@ -62,6 +62,9 @@
       activeWard = data.ward;
       trackedSubjects = Array.isArray(data.tracked_subjects) ? data.tracked_subjects : [];
       roomPeople = { at: 0, people: [] };
+      // The overview opens this ward next time on this computer
+      try { localStorage.setItem('shiro.ward', activeWard.ward_id); } catch (e) { /* private window */ }
+      fillWardPicker(activeWard.ward_id);
 
       // Switch view panels
       const dirView = document.getElementById('ward-directory-view');
@@ -93,7 +96,7 @@
       if (anchorsBadge) {
         const total = activeWard.anchors ? activeWard.anchors.length : 0;
         const onlineCount = activeWard.anchors ? activeWard.anchors.filter(a => a.status === 'ONLINE').length : 0;
-        anchorsBadge.innerText = `● ${onlineCount}/${total} Anchors Online`;
+        anchorsBadge.innerText = onlineCount >= 3 ? `● Sensors working (${onlineCount}/${total})` : `● Sensors: only ${onlineCount} of ${total} working`;
         anchorsBadge.className = `badge ${onlineCount >= 3 ? 'badge-live' : 'badge-warning'}`;
       }
 
@@ -122,6 +125,20 @@
     } catch (err) {
       console.error('[IPS LIVE MAP] Error initializing:', err);
       if (window.showToast) window.showToast(`Error loading live map: ${err.message}`, 'danger');
+    }
+  }
+
+  /** Fills the ward picker of the overview, with the shown ward chosen. */
+  async function fillWardPicker(selected) {
+    const sel = document.getElementById('live-map-ward-select');
+    if (!sel) return;
+    try {
+      const res = await fetch('/api/ward/list');
+      const data = await res.json();
+      const wards = data && Array.isArray(data.wards) ? data.wards : [];
+      sel.innerHTML = wards.map(w => `<option value="${escapeHtml(w.ward_id)}"${w.ward_id === selected ? ' selected' : ''}>${escapeHtml(w.ward_id)}${escapeHtml(w.room_title ? ' – ' + w.room_title : '')}</option>`).join('');
+    } catch (e) {
+      sel.innerHTML = `<option value="${escapeHtml(selected || '')}">${escapeHtml(selected || 'Ward')}</option>`;
     }
   }
 
@@ -2098,7 +2115,7 @@
       const tagsBadge = document.getElementById('live-map-tags-badge');
       if (tagsBadge) {
         const onlineCount = Array.from(liveTagPositions.values()).filter(p => p.status !== 'OFFLINE').length;
-        tagsBadge.innerText = `● ${onlineCount}/${liveTagPositions.size} Active Tags`;
+        tagsBadge.innerText = `● ${onlineCount} of ${liveTagPositions.size} wristband${liveTagPositions.size === 1 ? '' : 's'} online`;
       }
 
       renderSubjectsList();
@@ -2162,7 +2179,7 @@
       if (anchorsBadge) {
         const total = activeWard.anchors.length;
         const onlineCount = activeWard.anchors.filter(a => a.status === 'ONLINE').length;
-        anchorsBadge.innerText = `● ${onlineCount}/${total} Anchors Online`;
+        anchorsBadge.innerText = onlineCount >= 3 ? `● Sensors working (${onlineCount}/${total})` : `● Sensors: only ${onlineCount} of ${total} working`;
         anchorsBadge.className = `badge ${onlineCount >= 3 ? 'badge-live' : 'badge-warning'}`;
       }
     });
@@ -2217,6 +2234,8 @@
 
   // Global exposure
   window.openWardLiveMap = openWardLiveMap;
+  window.isLiveMapOpen = () => isLiveMapActive;
+  window.resizeLiveMap = () => { if (typeof resizeCanvas === 'function') resizeCanvas(); };
   window.closeWardLiveMap = closeWardLiveMap;
 
   // Read-only view of the live map for the position test panel (position_test_panel.js)

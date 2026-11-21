@@ -42,16 +42,17 @@ async function initializeApp() {
       loadViewPartial('tab-devices', '/views/devices/devices.html'),
       loadViewPartial('tab-bindings', '/views/bindings/bindings.html'),
       (async () => {
-        const [dirHtml, editHtml, liveMapHtml] = await Promise.all([
+        const [dirHtml, editHtml] = await Promise.all([
           fetch(`/views/ward_config/ward_directory.html?_t=${Date.now()}`).then(r => r.text()),
-          fetch(`/views/ward_config/ward_editor.html?_t=${Date.now()}`).then(r => r.text()),
-          fetch(`/views/ward_config/ward_live_map.html?_t=${Date.now()}`).then(r => r.text())
+          fetch(`/views/ward_config/ward_editor.html?_t=${Date.now()}`).then(r => r.text())
         ]);
         const wardContainer = document.getElementById('tab-ward-config');
         if (wardContainer) {
-          wardContainer.innerHTML = dirHtml + '\n' + editHtml + '\n' + liveMapHtml;
+          wardContainer.innerHTML = dirHtml + '\n' + editHtml;
         }
       })(),
+      // The ward overview (live map) is its own page, the first one after sign-in
+      loadViewPartial('tab-ward', '/views/ward_config/ward_live_map.html'),
       loadViewPartial('tab-health', '/views/health/health.html'),
       loadViewPartial('tab-live-lab', '/views/live_lab/live_lab.html')
     ]);
@@ -60,22 +61,65 @@ async function initializeApp() {
     console.error('[App] Error mounting partials:', e);
   }
 
-  // 2. Setup Top Navigation Bar Tabs
-  const navTabs = document.querySelectorAll('.nav-tab-btn');
+  // 2. Menu: the tabs, and the Setup menu (admins)
+  const navTabs = document.querySelectorAll('[data-tab]');
   const tabPanes = document.querySelectorAll('.tab-pane');
+  const setupToggle = document.getElementById('nav-setup-toggle');
+  const setupMenu = document.getElementById('nav-setup-menu');
+
+  function closeSetupMenu() {
+    if (setupMenu) setupMenu.classList.remove('open');
+    if (setupToggle) setupToggle.setAttribute('aria-expanded', 'false');
+  }
+  if (setupToggle && setupMenu) {
+    setupToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !setupMenu.classList.contains('open');
+      setupMenu.classList.toggle('open', open);
+      setupToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.addEventListener('click', (e) => { if (!setupMenu.contains(e.target)) closeSetupMenu(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSetupMenu(); });
+  }
+
+  // The ward the overview shows: the last one looked at on this computer, else the first ward
+  async function openWardOverview() {
+    if (typeof window.openWardLiveMap !== 'function') return;
+    let wardId = null;
+    try { wardId = localStorage.getItem('shiro.ward'); } catch (e) { wardId = null; }
+    if (!wardId) {
+      try {
+        const res = await fetch('/api/ward/list');
+        const data = await res.json();
+        const wards = (data && (data.wards || data.data)) || [];
+        if (wards.length) wardId = wards[0].ward_id;
+      } catch (e) { wardId = null; }
+    }
+    if (wardId) window.openWardLiveMap(wardId);
+  }
+  window.openWardOverview = openWardOverview;
 
   function switchTab(targetTabId) {
+    closeSetupMenu();
     navTabs.forEach(b => b.classList.remove('active'));
     tabPanes.forEach(p => p.classList.remove('active'));
 
-    const activeBtn = document.querySelector(`.nav-tab-btn[data-tab="${targetTabId}"]`);
+    const activeBtn = document.querySelector(`.nav-tab-btn[data-tab="${targetTabId}"], .nav-menu-item[data-tab="${targetTabId}"]`);
     if (activeBtn) activeBtn.classList.add('active');
+    // A page from the Setup menu marks Setup as the current menu
+    if (activeBtn && activeBtn.classList.contains('nav-menu-item') && setupToggle) setupToggle.classList.add('active');
 
     const targetPane = document.getElementById(targetTabId);
     if (targetPane) targetPane.classList.add('active');
 
     // Trigger module-specific initializations upon tab switch
-    if (targetTabId === 'tab-patients') {
+    if (targetTabId === 'tab-ward') {
+      if (typeof window.isLiveMapOpen === 'function' && window.isLiveMapOpen()) {
+        if (typeof window.resizeLiveMap === 'function') window.resizeLiveMap();
+      } else {
+        openWardOverview();
+      }
+    } else if (targetTabId === 'tab-patients') {
       if (typeof window.initPatientsModule === 'function') {
         window.initPatientsModule();
       }
@@ -105,15 +149,16 @@ async function initializeApp() {
     }
   }
 
-  // Global helper to switch to a ward's live map directly from any tab
+  // Global helper to open a ward's overview (live map) from any page
   window.navigateToWardLiveMap = function(wardId, targetTagId = null) {
+    closeSetupMenu();
     navTabs.forEach(b => b.classList.remove('active'));
     tabPanes.forEach(p => p.classList.remove('active'));
 
-    const activeBtn = document.querySelector('.nav-tab-btn[data-tab="tab-ward-config"]');
+    const activeBtn = document.querySelector('.nav-tab-btn[data-tab="tab-ward"]');
     if (activeBtn) activeBtn.classList.add('active');
 
-    const targetPane = document.getElementById('tab-ward-config');
+    const targetPane = document.getElementById('tab-ward');
     if (targetPane) targetPane.classList.add('active');
 
     if (typeof window.openWardLiveMap === 'function') {
@@ -130,7 +175,7 @@ async function initializeApp() {
       if (typeof window.hasUnsavedWardChanges === 'function' && window.hasUnsavedWardChanges()) {
         showModal({
           title: 'Unsaved Changes',
-          message: `You have unsaved changes in the Ward Layout Editor for "${window.currentWard?.ward_id || 'Ward'}".\n\nIf you leave now, your changes will not be saved to MySQL.`,
+          message: `You have changed the layout of "${window.currentWard?.ward_id || 'this ward'}" without saving.\n\nIf you leave now, the changes are lost.`,
           type: 'warning',
           confirmText: 'Discard & Leave',
           cancelText: 'Continue Editing',
@@ -158,10 +203,11 @@ async function initializeApp() {
     window.initLiveLabListeners();
   }
 
-  // 5. Initialize Ward Configuration State & MySQL Directory
+  // 5. Wards: the list for Setup, and the overview, the first page after sign-in
   if (typeof window.loadWardDirectory === 'function') {
     window.loadWardDirectory();
   }
+  openWardOverview();
   if (typeof window.loadWardDataFromDB === 'function') {
     window.loadWardDataFromDB();
   }

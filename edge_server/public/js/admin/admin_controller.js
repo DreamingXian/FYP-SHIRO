@@ -27,8 +27,41 @@
   }
 
   function emptyRow(columns, text) {
-    return `<tr><td colspan="${escapeHtml(columns)}" style="text-align: center; color: var(--text-muted); padding: 24px;">${escapeHtml(text)}</td></tr>`;
+    return `<tr><td colspan="${escapeHtml(columns)}" class="empty-state">${escapeHtml(text)}</td></tr>`;
   }
+
+  // Pages of 8 (ui_kit.js): the rows of each list are kept, a page button only redraws
+  const pages = { accounts: 1, headsets: 1, audit: 1 };
+  function showPage(kind, bodyId, pagerId, rows, columns, emptyText, noun) {
+    const body = document.getElementById(bodyId);
+    if (!body) return;
+    const data = window.ShiroUI.paginate(rows, pages[kind]);
+    pages[kind] = data.page;
+    window.ShiroUI.renderPager(document.getElementById(pagerId), {
+      total: data.total, page: data.page, noun,
+      onPage: (n) => { pages[kind] = n; showPage(kind, bodyId, pagerId, rows, columns, emptyText, noun); }
+    });
+    body.innerHTML = data.total === 0 ? emptyRow(columns, emptyText) : data.items.join('');
+  }
+
+  // The activity log in words; the code stays in the tooltip
+  const ACTION_TEXT = {
+    LOGIN: 'Signed in', LOGOUT: 'Signed out', LOGIN_FAILED: 'Sign-in failed', LOGIN_LOCKED: 'Sign-in locked (too many tries)',
+    SETUP_FIRST_ADMIN: 'Created the first admin', CLINICIAN_CREATE: 'Created an account', CLINICIAN_ACTIVATE: 'Activated an account',
+    CLINICIAN_DEACTIVATE: 'Deactivated an account', PASSWORD_RESET: 'Reset a password',
+    PATIENT_ADMIT: 'Admitted a patient', PATIENT_UPDATE: 'Changed a patient', PATIENT_PHOTO_UPLOAD: 'Changed a patient photo',
+    PATIENT_ASSIGN_BED: 'Gave a bed', PATIENT_DISCHARGE: 'Discharged a patient', PATIENT_DELETE: 'Deleted a patient',
+    BINDING_CREATE: 'Gave a wristband', BINDING_REMOVE: 'Took off a wristband',
+    ALERT_ACKNOWLEDGE: 'Acknowledged an alert', ALERT_SIMULATE: 'Test alarm', INCIDENTS_EXPORT: 'Downloaded incidents (CSV)',
+    SHIFT_REPORT: 'Opened a shift report', ACTIVE_MODE: 'Started live vitals',
+    DEVICE_ENROLL: 'Added a device', DEVICE_UPDATE: 'Changed a device', DEVICE_DELETE: 'Deleted a device', IPS_TAG_PURGE: 'Removed a wristband from the map',
+    WARD_SAVE: 'Saved a ward layout', WARD_RESET: 'Reset a ward layout', WARD_DELETE: 'Deleted a ward', WARD_ANCHOR_SAVE: 'Saved a wall sensor',
+    CALIBRATION_START: 'Started a calibration', CALIBRATION_APPLY: 'Saved a calibration', CALIBRATION_UPDATE: 'Changed a calibration',
+    CALIBRATION_RESET: 'Reset a calibration',
+    HEADSET_PAIRING_CODE: 'Made a headset pairing code', HEADSET_PAIR: 'Paired a headset', HEADSET_PAIR_FAILED: 'Headset pairing failed',
+    HEADSET_REVOKE: 'Revoked a headset', HEADSET_ASSIGN: 'Gave a headset to someone', HEADSET_UNASSIGN: 'Took a headset from someone'
+  };
+  const actionText = (code) => ACTION_TEXT[code] || String(code || '').toLowerCase().replace(/_/g, ' ');
 
   // ----- accounts -----
 
@@ -38,7 +71,8 @@
     try {
       const { clinicians } = await api('/api/admin/clinicians');
       const me = window.shiroAuth && window.shiroAuth.user ? window.shiroAuth.user.clinician_id : null;
-      body.innerHTML = clinicians.length === 0 ? emptyRow(7, 'No accounts.') : clinicians.map((c) => {
+      fillActorFilter(clinicians);
+      const rows = clinicians.map((c) => {
         const active = c.is_active;
         const statusBadge = active ? '<span class="badge badge-live">Active</span>' : '<span class="badge badge-neutral">Deactivated</span>';
         const typeBadge = c.role === 'ADMIN' ? '<span class="badge badge-info">Admin</span>' : '<span class="badge badge-neutral">Clinician</span>';
@@ -57,7 +91,8 @@
             ${toggle}
           </td>
         </tr>`;
-      }).join('');
+      });
+      showPage('accounts', 'admin-accounts-body', 'admin-accounts-pager', rows, 7, 'No accounts.', 'accounts');
     } catch (err) {
       body.innerHTML = emptyRow(7, `Could not load the accounts: ${err.message}`);
     }
@@ -165,7 +200,7 @@
     try {
       const [{ pairings }, { clinicians }] = await Promise.all([api('/api/admin/headsets'), api('/api/admin/clinicians')]);
       const activeClinicians = clinicians.filter(c => c.is_active);
-      body.innerHTML = pairings.length === 0 ? emptyRow(6, 'No headset is paired yet.') : pairings.map((p) => {
+      const rows = pairings.map((p) => {
         const revoked = Boolean(p.revoked_at);
         // Who uses the headset: what it does is recorded in this clinician's name
         let assignCell;
@@ -198,9 +233,10 @@
           <td>${statusBadgeHtml}</td>
           <td style="text-align: right;">${secondaryActionBtn}</td>
         </tr>`;
-      }).join('');
+      });
+      showPage('headsets', 'admin-headsets-body', 'admin-headsets-pager', rows, 6, 'No headset is paired yet.', 'headsets');
     } catch (err) {
-      body.innerHTML = emptyRow(6, `Could not load the pairings: ${err.message}`);
+      body.innerHTML = emptyRow(6, `Could not load the headsets: ${err.message}`);
     }
   }
 
@@ -269,31 +305,57 @@
 
   // ----- audit log -----
 
+  /** The "Who" filter: every account. */
+  function fillActorFilter(clinicians) {
+    const sel = document.getElementById('admin-audit-actor');
+    if (!sel) return;
+    const chosen = sel.value;
+    sel.innerHTML = '<option value="">Anyone</option>' + clinicians.map(c =>
+      `<option value="${escapeHtml(c.clinician_id)}"${c.clinician_id === chosen ? ' selected' : ''}>${escapeHtml(c.full_name)} (${escapeHtml(c.clinician_id)})</option>`).join('');
+  }
+
+  /** The "What" filter: the actions in words. */
+  function fillActionFilter() {
+    const sel = document.getElementById('admin-audit-action');
+    if (!sel || sel.options.length > 1) return;
+    const entries = Object.entries(ACTION_TEXT).sort((a, b) => a[1].localeCompare(b[1]));
+    sel.innerHTML = '<option value="">Any action</option>' + entries.map(([code, text]) => `<option value="${escapeHtml(code)}">${escapeHtml(text)}</option>`).join('');
+  }
+
   async function loadAudit() {
     const body = document.getElementById('admin-audit-body');
     if (!body) return;
-    const params = new URLSearchParams({ limit: '200' });
+    fillActionFilter();
+    const params = new URLSearchParams({ limit: '500' });
     const actor = document.getElementById('admin-audit-actor').value.trim();
     const action = document.getElementById('admin-audit-action').value.trim().toUpperCase();
     const target = document.getElementById('admin-audit-target').value.trim();
+    const days = parseInt(document.getElementById('admin-audit-period').value, 10) || 0;
     if (actor) params.set('actor_id', actor);
     if (action) params.set('action', action);
     if (target) params.set('target_id', target);
     try {
       const { entries } = await api(`/api/admin/audit?${params}`);
-      body.innerHTML = entries.length === 0 ? emptyRow(6, 'No entries.') : entries.map((e) => {
+      const since = days > 0 ? Date.now() - days * 86400000 : null;
+      const inPeriod = since === null ? entries : entries.filter(e => new Date(e.created_at).getTime() >= since);
+      const rows = inPeriod.map((e) => {
         const failed = /FAILED|LOCKED/.test(e.action);
-        return `<tr>
-          <td style="font-size: 12px; white-space: nowrap;">${escapeHtml(formatTime(e.created_at))}</td>
+        const details = String(e.details || '');
+        const shortDetails = details.length > 70 ? `${details.slice(0, 70)}…` : details;
+        return `<tr title="${escapeHtml(`${e.action}${details ? ' · ' + details : ''}${e.ip_address ? ' · from ' + e.ip_address : ''}`)}">
+          <td style="white-space: nowrap;">${escapeHtml(formatTime(e.created_at))}</td>
           <td>${escapeHtml(e.actor_label || 'not signed in')}</td>
-          <td><span class="badge ${failed ? 'badge-alert' : 'badge-neutral'}">${escapeHtml(e.action)}</span></td>
+          <td><span class="badge ${failed ? 'badge-warning' : 'badge-neutral'}">${escapeHtml(actionText(e.action))}</span></td>
           <td class="mono">${escapeHtml(e.target_id || '—')}</td>
-          <td class="mono" style="font-size: 11px; color: var(--text-secondary); max-width: 280px; overflow-wrap: anywhere;">${escapeHtml(e.details || '')}</td>
+          <td style="font-size: 13px; color: var(--text-secondary); max-width: 320px; overflow-wrap: anywhere;">${escapeHtml(shortDetails)}</td>
           <td class="mono" style="font-size: 12px;">${escapeHtml(e.ip_address || '—')}</td>
         </tr>`;
-      }).join('');
+      });
+      pages.audit = 1;
+      const emptyText = entries.length === 0 ? 'Nothing recorded for this filter.' : 'Nothing in this period. Choose a longer period.';
+      showPage('audit', 'admin-audit-body', 'admin-audit-pager', rows, 6, emptyText, 'entries');
     } catch (err) {
-      body.innerHTML = emptyRow(6, `Could not load the audit log: ${err.message}`);
+      body.innerHTML = emptyRow(6, `Could not load the activity log: ${err.message}`);
     }
   }
 
@@ -303,7 +365,14 @@
     if (!form) return; // the view is not loaded (not an admin)
     wired = true;
     form.addEventListener('submit', createAccount);
-    document.getElementById('admin-refresh-accounts').addEventListener('click', loadAccounts);
+    document.getElementById('admin-refresh-accounts').addEventListener('click', async (e) => {
+      const done = window.ShiroUI.busy(e.currentTarget, 'Refreshing…');
+      await loadAccounts();
+      setTimeout(done, 400);
+    });
+    document.getElementById('admin-audit-period').addEventListener('change', loadAudit);
+    document.getElementById('admin-audit-actor').addEventListener('change', loadAudit);
+    document.getElementById('admin-audit-action').addEventListener('change', loadAudit);
     document.getElementById('admin-refresh-headsets').addEventListener('click', () => {
       loadHeadsets();
       loadServerAddress();

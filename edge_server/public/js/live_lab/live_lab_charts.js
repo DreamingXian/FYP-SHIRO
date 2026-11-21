@@ -202,7 +202,7 @@ function initLiveLabListeners() {
       // Vitals: BPM & SpO2
       if (d.touch === 1) {
         if (fingerBadge) {
-          fingerBadge.innerText = '● Finger Detected';
+          fingerBadge.innerText = '● Skin contact';
           fingerBadge.className = 'badge badge-live';
         }
         if (contactStatus) {
@@ -241,7 +241,7 @@ function initLiveLabListeners() {
         }
       } else {
         if (fingerBadge) {
-          fingerBadge.innerText = 'No Finger';
+          fingerBadge.innerText = 'No contact';
           fingerBadge.className = 'badge badge-neutral';
         }
         if (contactStatus) {
