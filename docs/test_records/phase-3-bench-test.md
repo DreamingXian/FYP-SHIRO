@@ -443,4 +443,5 @@ For `FREE-FALL TOO SHORT` the impact column holds the highest value after the di
 - [x] Round 4 hardware check, with V5.2 (21 Nov 2026): 9 / 12 table drops detected; 3 / 21 arm drops while standing raised an alarm; no fall alarm in the 31 runs of the step 6 position test.
 - [x] With V5.2: every drop without an alarm had a free-fall shorter than 150 ms (finding 17). No other free-fall limit separates the two kinds of drop (finding 20), so the thresholds are unchanged.
 - [ ] Open: an arm dropped against the leg while standing raises an alarm in about 1 of 7 tries (3 / 21). Rejecting it needs more than the size of the acceleration: the orientation of the forearm after the impact, or the LiDAR (finding 21).
-- [ ] Open: the 496 ms pause between two accelerometer readings (finding 22).
+- [x] Decided 21 Nov 2026: no LiDAR check of fall alarms. Fall detection stays on the wristband alone, so it works the same in a ward without a LiDAR; the LD2450 radar of the original plan reports where a person is, not whether they are standing. The forearm-orientation check is planned after the presentation, once the UI/UX work (Phase 11) is done, with a new bench round.
+- [ ] Open, with the orientation check: the 496 ms pause between two accelerometer readings (finding 22).
