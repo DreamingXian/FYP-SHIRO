@@ -186,3 +186,16 @@
 .toast-pill.toast-info    { border-left: 5px solid #2563EB; }
 .toast-pill.toast-warning { border-left: 5px solid #D97706; }
 
+
+/* Phase 11: the alarm pop-up says who, where and when in words */
+.em-facts { display: grid; grid-template-columns: 1.2fr 1fr 0.8fr; gap: 12px; margin-bottom: 14px; }
+.em-fact { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px 14px; }
+.em-fact-label { font-size: 12px; font-weight: 600; color: #64748B; }
+.em-fact-main { font-size: 19px; font-weight: 800; color: #0F172A; margin-top: 2px; line-height: 1.25; }
+.em-fact-sub { font-size: 13px; color: #64748B; margin-top: 2px; }
+.em-vitals { font-size: 14px; color: #334155; margin-bottom: 12px; }
+.em-vitals b { font-size: 16px; color: #0F172A; }
+.em-details { margin-bottom: 18px; font-size: 13px; color: #475569; }
+.em-details summary { cursor: pointer; font-weight: 600; }
+.em-detail-row { margin-top: 6px; line-height: 1.5; }
+@media (max-width: 640px) { .em-facts { grid-template-columns: 1fr; } }
