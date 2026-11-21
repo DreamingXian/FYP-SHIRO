@@ -659,7 +659,7 @@ How linking behaves:
 * Known limit: someone the LiDAR first sees right at the bed while the patient lies there is taken for the patient getting up. This happens, for example, when they step out from behind another person standing at the bed.
 
 Door alerts (geofence; only for a wristband bound to a patient, only in a ward with a LiDAR):
-* **🚪 AT THE DOOR:** the LiDAR has seen the patient in the door zone (the doorway, reaching 1 m into the room) for 10 s. At most one a minute per patient.
+* **🚪 AT THE DOOR:** the LiDAR has seen the patient in the door zone (the doorway, reaching 1 m into the room) for 10 s. One per visit to the door; after 3 s back in the room, the next visit can raise its own.
 * **🚪 LEFT THE WARD:** the LiDAR lost the patient in the door zone and did not see them again, about 11.5 s after it last saw them. After that, the patient's dot is Bluetooth again, and only a person who comes in through the door is taken for them.
 * Both come as an alert with the alarm tone on the dashboard and the headset, and are acknowledged like a fall. No door alert while a headset sees the patient elsewhere in the room.
 * The server log shows each one: `[ROOM PEOPLE] The patient of TAG-… has been at the door …` or `… left WARD-… through the door …`, and `… came back into …` when the patient returns.

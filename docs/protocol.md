@@ -265,7 +265,7 @@ The door zone is the door's width plus 0.1 m on each side, reaching 1 m into the
 
 | Kind (`geofence_kind`) | When | Rule |
 | :--- | :--- | :--- |
-| `AT_DOOR` | The LiDAR has seen the patient in the door zone for 10 s | `door_watch.js`. Stepping out of the zone for less than 3 s does not restart the 10 s; walking through the zone does not count. At most one per patient a minute. |
+| `AT_DOOR` | The LiDAR has seen the patient in the door zone for 10 s | `door_watch.js`. Stepping out of the zone for less than 3 s does not restart the 10 s; walking through the zone does not count. One per visit to the door: a visit ends after 3 s outside the zone, and the next visit has its own. |
 | `LEFT_WARD` | The LiDAR lost the patient in the door zone and did not see them again before the held position ended | `lidar_linker.js`. A patient lost in the door zone is held as "elsewhere", never as lying in bed, even next to a bed. The hold ends 10 s after the tracker let the person go (1.5 s after the last sighting), so the alert comes about 11.5 s after the patient was last seen; earlier when the Bluetooth position leaves (2 m for 5 s) or the wristband is no longer heard. Someone appearing within 0.8 m before then is the patient again, and there is no alert. |
 
 Each is one `GEOFENCE_BREACH` incident with its `geofence_kind` (`services/alerts/geofence_alerts.js` → `alert_service.recordIncident`), sent as `EMERGENCY_ALERT` to the dashboards and headsets like a fall, with the ward and the spot where the patient was last seen. No alert when:

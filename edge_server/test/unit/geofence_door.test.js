@@ -169,14 +169,13 @@ describe('standing at the door (door watch)', () => {
     assert.deepEqual(watch(v, 9500, 9000, () => seenAt(AT_DOOR)), [], 'a new visit starts from 0');
   });
 
-  test('at most one event a minute per patient', () => {
+  // Live check of 21 Nov 2026: with a limit of one a minute, the second visit's alert came at 18 s
+  test('one event per visit; the next visit has its own, 10 s after it starts', () => {
     const w = createDoorWatch();
     assert.equal(watch(w, 0, 10100, () => seenAt(AT_DOOR)).length, 1);
     watch(w, 10100, 5000, () => seenAt(MIDDLE));
-    assert.deepEqual(watch(w, 15100, 20000, () => seenAt(AT_DOOR)), [], 'back at the door within the minute');
-    watch(w, 35100, 5000, () => seenAt(MIDDLE));
-    const later = watch(w, 40100, 31000, () => seenAt(AT_DOOR));
-    assert.deepEqual(later.map(e => e.t), [70000], 'once the minute since the first is over');
+    const again = watch(w, 15100, 20000, () => seenAt(AT_DOOR));
+    assert.deepEqual(again.map(e => e.t), [25100], 'back at the door 15 s after the first alert: 10 s, not later');
   });
 
   test('a held position (the LiDAR lost them) does not count, and nothing happens without a door', () => {

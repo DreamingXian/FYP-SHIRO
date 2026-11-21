@@ -2,18 +2,19 @@
 // SHIRO Edge Server - A patient standing at the door (Phase 10)
 // A patient whom the LiDAR follows (a linked wristband, not a held position)
 // and who stays in the door zone (zones.js) for 10 s gives one "at the door"
-// event: they may be about to leave the ward. Short steps out of the zone do
-// not count: a visit to the door ends after 3 s seen outside it, or when the
-// LiDAR loses the patient (then the "left the ward" rule of lidar_linker.js
-// applies). At most one event per wristband a minute.
+// event: they may be about to leave the ward. One event per visit to the
+// door. Short steps out of the zone do not count: a visit ends after 3 s
+// seen outside it, or when the LiDAR loses the patient (then the "left the
+// ward" rule of lidar_linker.js applies). The next visit can raise its own
+// event. (Until the live check of 21 Nov 2026 there was also a limit of one
+// event a minute; it delayed a second visit's alert to 18 s.)
 // Plain functions: no database, no clock (times passed in, milliseconds).
 // =============================================================================
 const { inDoorZone } = require('./lidar_linker');
 
 const DEFAULTS = Object.freeze({
   dwellMs: 10000,    // seen in the door zone this long: at the door
-  awayMs: 3000,      // seen outside the door zone this long: the visit is over
-  repeatMs: 60000    // at most one event per wristband in this time
+  awayMs: 3000       // seen outside the door zone this long: the visit is over
 });
 
 /**
@@ -22,7 +23,6 @@ const DEFAULTS = Object.freeze({
 function createDoorWatch(options = {}) {
   const o = { ...DEFAULTS, ...options };
   const visits = new Map();      // tagId -> { since, awaySince, raised }
-  const lastRaised = new Map();  // tagId -> t of the last event
 
   return {
     /**
@@ -43,10 +43,8 @@ function createDoorWatch(options = {}) {
         if (inDoorZone(door, p.x, p.y)) {
           if (!visit) visits.set(p.tagId, (visit = { since: t, awaySince: null, raised: false }));
           visit.awaySince = null;
-          const last = lastRaised.get(p.tagId);
-          if (!visit.raised && t - visit.since >= o.dwellMs && (last === undefined || t - last >= o.repeatMs)) {
+          if (!visit.raised && t - visit.since >= o.dwellMs) {
             visit.raised = true;
-            lastRaised.set(p.tagId, t);
             events.push({ tagId: p.tagId, x: p.x, y: p.y, since: visit.since });
           }
         } else if (visit) {
@@ -62,7 +60,6 @@ function createDoorWatch(options = {}) {
     /** Forgets everything (LiDAR moved or relearned). */
     clear() {
       visits.clear();
-      lastRaised.clear();
     }
   };
 }
