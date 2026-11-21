@@ -300,10 +300,27 @@ Sources of the position shown: LiDAR 96.8 %, LiDAR held at the bed 3.2 % (the ly
 
 | Check | Result |
 | :--- | :--- |
-| Lie down until 🛏 shows, then get out on the west side (away from the LiDAR) and walk to the table: the violet 📡 dot goes with the tester within about 2 s | / 2 |
-| The same, getting out at the foot end | / 2 |
-| The same, sitting up on the bed for a few seconds first | / 1 |
-| Optional, with a second person: while the tester lies (🛏), they walk in from the door and stand at the bedside for 10 s. The tester's dot stays at the bed (🛏) and the second person is a grey dot | |
+| Lie down until 🛏 shows, then get out on the west side (away from the LiDAR) and walk to the table: the violet 📡 dot goes with the tester within about 2 s | **2 / 2** |
+| The same, getting out at the foot end | **2 / 2** |
+| The same, sitting up on the bed for a few seconds first | **1 / 1** |
+| Optional, with a second person: while the tester lies (🛏), they walk in from the door and stand at the bedside for 10 s. The tester's dot stays at the bed (🛏) and the second person is a grey dot | not done |
+
+Session `PT-20261121-120830` ("Get-up check"), 21 November 2026, 12:08–12:21, edge server `f935f6f`. One run per get-up: the tester lay down during the 10 s countdown and, once recording had started, got up and walked to the table (0.8, 2.45). The 20 s of each run were read from the samples and replayed from the recorded LiDAR turns.
+
+| Run | Way out | Held at the bed until | Position goes with the tester from | Out of the bed zone | Within 0.25 m of the table | First seen, from the held position |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| 1 | west side | 4.7 s | 5.0 s | 7.0 s | 9.6 s | 0.70 m |
+| 2 | west side | 5.7 s | 6.0 s | 8.3 s | 10.9 s | 0.38 m |
+| 3 | foot end | 2.9 s | 3.1 s | 8.1 s | 9.1 s | 0.51 m |
+| 4 | foot end | 6.8 s | 7.0 s | 9.6 s | 10.4 s | 0.42 m |
+| 5 | sitting up first | 3.2 s | 3.4 s | 9.6 s | 9.9 s | 0.16 m |
+
+- In every run the position left the held spot at the first reading after the LiDAR saw the tester up (readings come every 0.26 s), then followed them to the table. It came from the LiDAR throughout; Bluetooth was never used.
+- In the replay, only one person was seen at a time during the 20 s of each run. No grey "person (no wristband)" appeared.
+- The replay gives the same result as the live session (0.712 m against 0.711 m). That error is the walk from the bed to the table, not positioning error: the spot of every run is the table. This session is therefore not part of the accuracy results above.
+- **What this check does not show.** In all five runs the tester was first seen sitting up on the bed, 0.16–0.70 m from the held position. The 0.8 m rule from before the fix would have picked them up too: replayed with the code before `f935f6f`, the five runs give the same result. The case that failed between runs 30 and 31 (first seen 0.9 m or more away) did not occur. It is covered by the unit tests only.
+
+To test that case live: lie down, roll to the west edge of the bed while staying low, and stand up beside the bed without sitting up first.
 
 ### Against the requirement
 
@@ -324,5 +341,6 @@ Bluetooth alone stays at about 1.0 m. That is within the band, but only because 
 - [data/ips-6anchors-2026-11-21_summary.csv](data/ips-6anchors-2026-11-21_summary.csv) and [data/ips-6anchors-2026-11-21_samples.csv](data/ips-6anchors-2026-11-21_samples.csv): the same for the six-anchor session, with the LiDAR turns recorded per run.
 - [data/ips-6anchors-2026-11-21_lidar-replay.csv](data/ips-6anchors-2026-11-21_lidar-replay.csv): the replay of that session through the LiDAR positioning (written by `tools/replay_lidar_runs.js --csv`).
 - [data/ips-lidar-2026-11-21_summary.csv](data/ips-lidar-2026-11-21_summary.csv) and [data/ips-lidar-2026-11-21_samples.csv](data/ips-lidar-2026-11-21_samples.csv): the session with six anchors and the LiDAR. The samples include the source of each reading, whether it was held, and the Bluetooth-only and raw positions.
+- [data/ips-getup-2026-11-21_summary.csv](data/ips-getup-2026-11-21_summary.csv) and [data/ips-getup-2026-11-21_samples.csv](data/ips-getup-2026-11-21_samples.csv): the live check of getting out of bed. The error columns there measure the walk to the table, not accuracy.
 
-The summary and samples files were downloaded from the Position test panel. The sessions themselves are `PT-20261120-223212.json`, `PT-20261121-055850.json` and `PT-20261121-100601.json` in `edge_server/data/position_tests/` on the edge server, together with the LiDAR turns of each run of the last two (`PT-…-run<n>.lidar.json.gz`, git-ignored).
+The summary and samples files were downloaded from the Position test panel. The sessions themselves are `PT-20261120-223212.json`, `PT-20261121-055850.json`, `PT-20261121-100601.json` and `PT-20261121-120830.json` in `edge_server/data/position_tests/` on the edge server, together with the LiDAR turns of each run of the last three (`PT-…-run<n>.lidar.json.gz`, git-ignored).

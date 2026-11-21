@@ -1,0 +1,9 @@
+﻿Session,Ward,Run,Spot,Posture,Facing,True x (m),True y (m),True zone,Samples,Available (%),Mean error (m),Median error (m),95% error (m),Largest error (m),Within 0.5 m (%),Within 1.0 m (%),Within 1.5 m (%),Zone correct (%),Bluetooth mean error (m),Bluetooth 95% error (m),Bluetooth zone correct (%),Raw mean error (m),Source BLE (%),Source LIDAR (%),Source HEADSET (%),Mean anchors heard,LiDAR turns recorded
+PT-20261121-120830,WARD-005,1,west side,STANDING,N,0.8,2.45,ROOM,78,100,0.59,0.11,1.46,1.87,57.7,64.1,94.9,65.4,0.79,1,0,1.15,0,100,0,6,302
+PT-20261121-120830,WARD-005,2,west side 2,STANDING,N,0.8,2.45,ROOM,78,100,0.82,0.36,1.93,1.93,53.8,59,67.9,59,1.08,1.18,0,1.29,0,100,0,6,301
+PT-20261121-120830,WARD-005,3,foot end,STANDING,N,0.8,2.45,ROOM,78,100,0.52,0.11,1.33,1.54,60.3,74.4,98.7,60.3,0.83,0.89,32.1,1.18,0,100,0,6,301
+PT-20261121-120830,WARD-005,4,foot end 2,STANDING,N,0.8,2.45,ROOM,78,100,0.86,0.31,2.08,2.08,51.3,59,65.4,52.6,0.69,1.04,57.7,1.1,0,100,0,6,301
+PT-20261121-120830,WARD-005,5,sitting up,STANDING,N,0.8,2.45,ROOM,78,100,0.77,0.18,1.94,2.04,55.1,59,69.2,52.6,0.59,0.68,84.6,0.88,0,100,0,6,299
+PT-20261121-120830,WARD-005,ALL,,,,,,,390,100,0.71,0.23,1.98,2.08,55.6,63.1,79.2,57.9,0.8,1.12,34.9,1.12,0,100,0,6,
+PT-20261121-120830,WARD-005,STANDING,,,,,,,390,100,0.71,0.23,1.98,2.08,55.6,63.1,79.2,57.9,0.8,1.12,34.9,1.12,0,100,0,6,
+PT-20261121-120830,WARD-005,SITTING+LYING,,,,,,,0,,,,,,,,,,,,,,0,0,0,,

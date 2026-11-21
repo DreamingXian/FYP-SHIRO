@@ -192,15 +192,16 @@ Values of the three B7 alerts:
 
 ## Summary
 
-| Measure | Round 1 | Round 2 |
-| :--- | :--- | :--- |
-| Part A, hard surface: arm drops detected ÷ performed | 9 / 10 | 41 / 47 in all four series; 18 / 20 after the power switch was replaced (Series 4) |
-| Part A, soft surface | not tested | 7 / 7 |
-| Post-impact motion of detected drops, arm held still | 0.06 to 0.17 g | 0.02 to 0.04 g (hard surface), 0.03 to 0.09 g (soft surface) |
-| Part B, B1 to B6: fall alerts ÷ repetitions | 0 / 51 | 0 / 51 |
-| Part B, B7 | not tested | 3 / 6 |
-| Part C: duplicate incidents | 0 | one, caused by restarting the server during a fall hold (finding 9) |
-| False vitals alarms raised during the test day | not counted | 68 (finding 10) |
+| Measure | Round 1 | Round 2 | Round 4 (V5.2) |
+| :--- | :--- | :--- | :--- |
+| Part A, hard surface: arm drops detected ÷ performed | 9 / 10 | 41 / 47 in all four series; 18 / 20 after the power switch was replaced (Series 4) | 9 / 12 |
+| Part A, soft surface | not tested | 7 / 7 | not repeated |
+| Post-impact motion of detected drops, arm held still | 0.06 to 0.17 g | 0.02 to 0.04 g (hard surface), 0.03 to 0.09 g (soft surface) | 0.02 g |
+| Part B, B1 to B6: fall alerts ÷ repetitions | 0 / 51 | 0 / 51 | not repeated |
+| Part B, B7 | not tested | 3 / 6 | not repeated |
+| Arm dropped against the leg while standing (Round 4): fall alerts ÷ repetitions | not tested | not tested | 3 / 21 (2 / 11 with the hand moving, 1 / 10 standing still) |
+| Part C: duplicate incidents | 0 | one, caused by restarting the server during a fall hold (finding 9) | not checked |
+| False vitals alarms raised during the test day | not counted | 68 (finding 10) | not counted |
 
 ## Findings from Round 1
 
@@ -331,9 +332,9 @@ Candidate rules replayed on these values:
 | Check | Result |
 | :--- | :--- |
 | At power-on the Serial Monitor shows `V5.1` and `[SELF-TEST] Fall detector: PASS (… arm drop while standing: ignored)` | Y (21 Nov, once **USB CDC On Boot** was set to Enabled; with it Disabled the Serial Monitor stayed empty) |
-| 5 arm drops onto the table as in Part A, arm kept still for 3 s: falls detected | about 5 / 10 (the tester did 10; see below) |
-| 10 times, standing: turn on the spot, let the arm drop quickly against the leg, then keep moving the hand a little for 5 s: fall alarms (expected 0) | not done yet |
-| 10 times, the same, then stand completely still for 5 s: fall alarms (known limit, counted for the record) | not done yet |
+| 5 arm drops onto the table as in Part A, arm kept still for 3 s: falls detected | about 5 / 10 (the tester did 10; see below); with V5.2, 9 / 12 |
+| 10 times, standing: turn on the spot, let the arm drop quickly against the leg, then keep moving the hand a little for 5 s: fall alarms (expected 0) | 2 / 11 (with V5.2, which detects as V5.1; see "Check with V5.2") |
+| 10 times, the same, then stand completely still for 5 s: fall alarms (known limit, counted for the record) | 1 / 10 (with V5.2) |
 | Fall alarms during the 31 runs of position-test session `PT-20261121-100601` (10:06–10:35: walking between spots, turning, standing, sitting, lying) | 0 (2 in the 31 runs of the morning session with V5.0) |
 
 #### First check of V5.1: half of the drops missed, reason not recorded
@@ -363,20 +364,72 @@ Each line also gives the values, the largest time between two accelerometer read
 
 Wristband on USB with the Serial Monitor open; keep the cable slack so that it does not hold the arm back. The banner must show `V5.2` and `[SELF-TEST] Fall detector: PASS`. Drop the relaxed arm from about 0.5 m onto the table and keep it still for 3 s, as in Part A. Before the next drop, wait for `[FALL] Alert hold over` after an alarm, or 5 s after a drop without one.
 
+Done on 21 November 2026. The Serial Monitor output of the three series, without the status lines, is in [phase-3-round4-v52-fall-checks.txt](phase-3-round4-v52-fall-checks.txt). Every check after an alarm came after `[FALL] Alert hold over`, so the 45 s hold did not take any drop.
+
+For `FREE-FALL TOO SHORT` the impact column holds the highest value after the dip, and the motion after the impact is not measured. "Motion after" is followed by the limit that applied.
+
+**Series 1: arm dropped onto the table.** The tester counted 10 drops and 7 or 8 alarms. The log has 12 checks, each ending in a hard impact (16.56 to 22.63 g in the three without an alarm), and 9 alarms numbered #93 to #101 without a gap. The table follows the log.
+
 | # | Alarm (Y/N) | `[FALL CHECK]` result | Free-fall (ms) | Lowest (g) | Impact (g) | Motion after (g) | Largest sample gap (ms) | Mode |
 | :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | :--- |
-| 1 | | | | | | | | |
-| 2 | | | | | | | | |
-| 3 | | | | | | | | |
-| 4 | | | | | | | | |
-| 5 | | | | | | | | |
-| 6 | | | | | | | | |
-| 7 | | | | | | | | |
-| 8 | | | | | | | | |
-| 9 | | | | | | | | |
-| 10 | | | | | | | | |
+| 1 | Y | FALL | 213 | 0.21 | 5.24 | 0.02 (0.20) | 35 | 3m BURST |
+| 2 | Y | FALL | 204 | 0.24 | 17.08 | 0.02 (0.20) | 42 | 1Hz ACTIVE |
+| 3 | Y | FALL | 162 | 0.27 | 5.74 | 0.02 (0.20) | 35 | 1Hz ACTIVE |
+| 4 | Y | FALL | 169 | 0.33 | 6.58 | 0.02 (0.20) | 36 | 1Hz ACTIVE |
+| 5 | Y | FALL | 185 | 0.36 | 2.81 | 0.02 (0.08) | **496** | 1Hz ACTIVE |
+| 6 | N | FREE-FALL TOO SHORT | 72 | 0.25 | 22.63 | – | 34 | 1Hz ACTIVE |
+| 7 | Y | FALL | 236 | 0.26 | 13.35 | 0.02 (0.20) | 25 | 3m SLEEP |
+| 8 | Y | FALL | 234 | 0.18 | 12.63 | 0.02 (0.20) | 26 | 1Hz ACTIVE |
+| 9 | N | FREE-FALL TOO SHORT | 92 | 0.24 | 16.56 | – | 26 | 1Hz ACTIVE |
+| 10 | Y | FALL | 163 | 0.32 | 3.74 | 0.02 (0.08) | 27 | 3m SLEEP |
+| 11 | N | FREE-FALL TOO SHORT | 94 | 0.36 | 22.63 | – | 30 | 1Hz ACTIVE |
+| 12 | Y | FALL | 163 | 0.33 | 3.42 | 0.02 (0.08) | 41 | 3m SLEEP |
 
-Then the two standing checks of the table above (10 + 10), with their `[FALL CHECK]` lines.
+**Series 2 and 3: standing, turn on the spot, arm dropped quickly against the leg**, then the hand kept moving a little for 5 s (series 2) or the tester stood completely still for 5 s (series 3). The tester counted 10 and 10; the log has 11 and 10 checks.
+
+| Series | # | Alarm (Y/N) | `[FALL CHECK]` result | Free-fall (ms) | Lowest (g) | Impact (g) | Motion after (g) | Largest sample gap (ms) | Mode |
+| :--- | :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | :--- |
+| 2, hand moving | 1 | N | FREE-FALL TOO SHORT | 46 | 0.45 | 9.59 | – | 25 | 3m BURST |
+| 2, hand moving | 2 | N | FREE-FALL TOO SHORT | 71 | 0.21 | 9.81 | – | 25 | 3m BURST |
+| 2, hand moving | 3 | N | FREE-FALL TOO SHORT | 115 | 0.05 | 5.68 | – | 26 | 3m BURST |
+| 2, hand moving | 4 | N | FREE-FALL TOO SHORT | 81 | 0.42 | 15.87 | – | 35 | 3m BURST |
+| 2, hand moving | 5 | **Y** | FALL | 164 | 0.34 | 21.66 | 0.04 (0.20) | 40 | 3m BURST |
+| 2, hand moving | 6 | N | FREE-FALL TOO SHORT | 140 | 0.33 | 9.15 | – | 26 | 1Hz ACTIVE |
+| 2, hand moving | 7 | N | FREE-FALL TOO SHORT | 21 | 0.49 | 8.08 | – | 27 | 3m SLEEP |
+| 2, hand moving | 8 | **Y** | FALL | 163 | 0.38 | 10.52 | 0.05 (0.20) | 22 | 3m SLEEP |
+| 2, hand moving | 9 | N | FREE-FALL TOO SHORT | 0 | 0.51 | 12.08 | – | 25 | 1Hz ACTIVE |
+| 2, hand moving | 10 | N | FREE-FALL TOO SHORT | 60 | 0.45 | 18.10 | – | 22 | 3m SLEEP |
+| 2, hand moving | 11 | N | FREE-FALL TOO SHORT | 81 | 0.44 | 18.12 | – | 22 | 3m SLEEP |
+| 3, standing still | 1 | **Y** | FALL | 163 | 0.31 | 6.97 | 0.01 (0.20) | 32 | 3m BURST |
+| 3, standing still | 2 | N | FREE-FALL TOO SHORT | 23 | 0.49 | 18.38 | – | 25 | 1Hz ACTIVE |
+| 3, standing still | 3 | N | FREE-FALL TOO SHORT | 83 | 0.46 | 17.11 | – | 26 | 3m SLEEP |
+| 3, standing still | 4 | N | FREE-FALL TOO SHORT | 0 | 0.53 | 13.87 | – | 22 | 3m SLEEP |
+| 3, standing still | 5 | N | FREE-FALL TOO SHORT | 41 | 0.47 | 16.39 | – | 22 | 3m SLEEP |
+| 3, standing still | 6 | N | FREE-FALL TOO SHORT | 63 | 0.42 | 11.88 | – | 22 | 3m SLEEP |
+| 3, standing still | 7 | N | FREE-FALL TOO SHORT | 81 | 0.35 | 6.96 | – | 22 | 3m SLEEP |
+| 3, standing still | 8 | N | FREE-FALL TOO SHORT | 41 | 0.35 | 13.91 | – | 22 | 3m SLEEP |
+| 3, standing still | 9 | N | FREE-FALL TOO SHORT | 20 | 0.48 | 18.79 | – | 36 | 3m SLEEP |
+| 3, standing still | 10 | N | FREE-FALL TOO SHORT | 20 | 0.48 | 8.43 | – | 22 | 3m SLEEP |
+
+#### Findings from the V5.2 check
+
+17. **Every drop without an alarm had a free-fall shorter than 150 ms.** Each of the 33 checks ended either in `FALL` or in `FREE-FALL TOO SHORT`; none ended with `NO IMPACT` or `MOVING`. The impact was far above the 2.50 g limit in every check. The readings came 22 to 42 ms apart in 32 of the 33 checks, so missed readings do not explain the misses. This answers finding 7 of Round 2, and most likely the first V5.1 check, which left no record.
+18. **Table drops: 9 of 12.** The 9 alarms had 162 to 236 ms of free-fall, the 3 misses 72 to 94 ms. Four of the alarms were within 20 ms of the limit (162, 163, 163, 169 ms). How long the wrist is near free-fall depends on how the relaxed arm is let go: it pivots at the shoulder or the elbow and does not fall freely. The three soft impacts (2.81, 3.42 and 3.74 g) were detected: their motion after the impact was 0.02 g, below the 0.08 g limit of V5.1. So V5.1 cost no table drop here.
+19. **Standing: 3 of 21 arm drops raised an alarm** (2 of 11 with the hand moving, 1 of 10 standing still). All three had 163 or 164 ms of free-fall, just over the limit. All three hit the leg harder than 4 g (6.97 to 21.66 g), so the 0.20 g limit applied. Moving the hand a little did not cancel the two alarms of series 2 (0.04 and 0.05 g after the impact). Turning the wrist changes the direction of gravity, not its size, and the detector uses only the size.
+20. **No free-fall limit separates the two.** The same 33 checks, with other limits (free-fall phase only):
+
+    | Free-fall limit | Table drops that pass the free-fall phase | Standing arm drops that pass it |
+    | :--- | ---: | ---: |
+    | 60 ms | 12 / 12 | 12 / 21 |
+    | 80 ms | 11 / 12 | 9 / 21 |
+    | 100 ms | 9 / 12 | 5 / 21 |
+    | **150 ms (now)** | **9 / 12** | **3 / 21** |
+    | 165 ms | 6 / 12 | 0 / 21 |
+    | 200 ms | 4 / 12 | 0 / 21 |
+
+    A drop that passes the free-fall phase raises an alarm only if it is still enough afterwards. That was not measured for the checks that stopped at the free-fall, but every drop in this round that passed it was still enough (0.01 to 0.05 g). A lower limit catches the three missed table drops only together with more than half of the standing drops. A higher limit removes the three standing alarms but also three of the nine detected table drops. The lowest value does not separate them either: 0.18 to 0.36 g in the table alarms, 0.31 to 0.38 g in the standing alarms. **The limit stays at 150 ms.**
+21. **What tells them apart is not in the size of the acceleration.** After a table drop the forearm lies flat; after an arm drop while standing it hangs down. The direction of gravity in the wristband shows this, but the detector uses only the total acceleration (Algorithm 3). The LiDAR, which scans at hip height (finding 6 of `ips-accuracy-10.md`), still sees a person who stands but not one lying on the floor. Either could reject the standing case; both are new functions, not threshold changes.
+22. **One long pause between readings.** In check 5 of series 1 (1 Hz active streaming) two readings were 496 ms apart. The drop was still detected, but its impact was the lowest of the series (2.81 g, against 3.42 to 17.08 g); the peak probably fell into the pause. It happened in 1 of 33 checks. The cause is not known: the same loop also reads the pulse sensor and the battery and sends the broadcast and the Serial output.
 
 ## Decision
 
@@ -387,5 +440,7 @@ Then the two standing checks of the table above (10 + 10), with their `[FALL CHE
 - [x] Round 3 accepted for the alarm path: no false vitals alarm, one incident per fall, no second incident after a server restart.
 - [ ] Open, outside Phase 3: stability of the heart-rate value (finding 15).
 - [x] Round 4 (21 Nov 2026): after three false alarms while standing, an impact below 4 g now needs post-impact motion below 0.08 g (wristband firmware V5.1). This departs from the single 0.20 g limit of the thesis (Chapter 4, Algorithm 3); all other thresholds are unchanged.
-- [ ] Round 4 hardware check (table above).
-- [ ] With V5.2: the reason for every missed drop (table "Check with V5.2"); only then decide whether a threshold changes.
+- [x] Round 4 hardware check, with V5.2 (21 Nov 2026): 9 / 12 table drops detected; 3 / 21 arm drops while standing raised an alarm; no fall alarm in the 31 runs of the step 6 position test.
+- [x] With V5.2: every drop without an alarm had a free-fall shorter than 150 ms (finding 17). No other free-fall limit separates the two kinds of drop (finding 20), so the thresholds are unchanged.
+- [ ] Open: an arm dropped against the leg while standing raises an alarm in about 1 of 7 tries (3 / 21). Rejecting it needs more than the size of the acceleration: the orientation of the forearm after the impact, or the LiDAR (finding 21).
+- [ ] Open: the 496 ms pause between two accelerometer readings (finding 22).

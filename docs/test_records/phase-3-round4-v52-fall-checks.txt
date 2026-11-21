@@ -1,0 +1,130 @@
+Round 4, check with wristband firmware V5.2 (21 November 2026): Serial Monitor output
+See phase-3-bench-test.md, Round 4. Wristband on USB, Serial Monitor at 115200 baud.
+Left out: the [BROADCAST ...] status lines (5 per second) and empty lines.
+Each series is one Serial Monitor session, copied in full by the tester; the lines are in their original order.
+
+==============================================================================
+Series 1: arm dropped onto the table, kept still for 3 s
+==============================================================================
+[POWER] Vitals measurement ended after 5 s: no skin contact (0 s with a heart rate).
+[POWER] MAX30102 sleeping for 3 minutes. Vitals reset to 0.
+[PPG-REC] commands: rec [seconds] | stop | led <hex 01..FF>
+[PPG-REC] commands: rec [seconds] | stop | led <hex 01..FF>
+==========================================================
+  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)
+  Hardware: Seeed Studio XIAO ESP32-C6
+==========================================================
+[OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x70.
+[SELF-TEST] Fall detector: PASS (fall: detected, soft fall: detected, short dip: ignored, movement: ignored, arm drop while standing: ignored)
+[OK] HW-605 (MAX30102) Initialized.
+[OK] Battery Monitoring Initialized: 1.96V (0%)
+[OK] Dual BLE Broadcast + GATT Server Active! MAC: 58:e6:c5:1b:80:4e
+[OK] Telemetry packet version 2, 15 bytes.
+>>> Ready: 3-min passive cycle + 1Hz on-demand/fall escalation <<<
+==========================================================
+  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)
+  Hardware: Seeed Studio XIAO ESP32-C6
+==========================================================
+[OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x70.
+[SELF-TEST] Fall detector: PASS (fall: detected, soft fall: detected, short dip: ignored, movement: ignored, arm drop while standing: ignored)
+[OK] HW-605 (MAX30102) Initialized.
+[OK] Battery Monitoring Initialized: 1.97V (0%)
+[OK] Dual BLE Broadcast + GATT Server Active! MAC: 58:e6:c5:1b:80:4e
+[OK] Telemetry packet version 2, 15 bytes.
+>>> Ready: 3-min passive cycle + 1Hz on-demand/fall escalation <<<
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #93 | free-fall min 0.21g | impact 5.24g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 213 ms (needs 150), lowest 0.21 g | impact 5.24 g (needs 2.50) | motion after 0.02 g (limit 0.20) | largest sample gap 35 ms | 3m BURST
+[FALL] Alert hold over: watching for falls again.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #94 | free-fall min 0.24g | impact 17.08g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 204 ms (needs 150), lowest 0.24 g | impact 17.08 g (needs 2.50) | motion after 0.02 g (limit 0.20) | largest sample gap 42 ms | 1Hz ACTIVE
+[FALL] Alert hold over: watching for falls again.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #95 | free-fall min 0.27g | impact 5.74g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 162 ms (needs 150), lowest 0.27 g | impact 5.74 g (needs 2.50) | motion after 0.02 g (limit 0.20) | largest sample gap 35 ms | 1Hz ACTIVE
+[FALL] Alert hold over: watching for falls again.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #96 | free-fall min 0.33g | impact 6.58g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 169 ms (needs 150), lowest 0.33 g | impact 6.58 g (needs 2.50) | motion after 0.02 g (limit 0.20) | largest sample gap 36 ms | 1Hz ACTIVE
+[FALL] Alert hold over: watching for falls again.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #97 | free-fall min 0.36g | impact 2.81g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 185 ms (needs 150), lowest 0.36 g | impact 2.81 g (needs 2.50) | motion after 0.02 g (limit 0.08) | largest sample gap 496 ms | 1Hz ACTIVE
+[FALL] Alert hold over: watching for falls again.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 72 ms (needs 150), lowest 0.25 g | highest after it 22.63 g | largest sample gap 34 ms | 1Hz ACTIVE
+[POWER] Active stream finished. MAX30102 entering low-power sleep. Vitals reset to 0.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #98 | free-fall min 0.26g | impact 13.35g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 236 ms (needs 150), lowest 0.26 g | impact 13.35 g (needs 2.50) | motion after 0.02 g (limit 0.20) | largest sample gap 25 ms | 3m SLEEP
+[POWER] Escalated to 1 Hz Active Streaming (MAX30102 Awake)
+[FALL] Alert hold over: watching for falls again.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #99 | free-fall min 0.18g | impact 12.63g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 234 ms (needs 150), lowest 0.18 g | impact 12.63 g (needs 2.50) | motion after 0.02 g (limit 0.20) | largest sample gap 26 ms | 1Hz ACTIVE
+[FALL] Alert hold over: watching for falls again.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 92 ms (needs 150), lowest 0.24 g | highest after it 16.56 g | largest sample gap 26 ms | 1Hz ACTIVE
+[POWER] Active stream finished. MAX30102 entering low-power sleep. Vitals reset to 0.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #100 | free-fall min 0.32g | impact 3.74g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 163 ms (needs 150), lowest 0.32 g | impact 3.74 g (needs 2.50) | motion after 0.02 g (limit 0.08) | largest sample gap 27 ms | 3m SLEEP
+[POWER] Escalated to 1 Hz Active Streaming (MAX30102 Awake)
+[FALL] Alert hold over: watching for falls again.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 94 ms (needs 150), lowest 0.36 g | highest after it 22.63 g | largest sample gap 30 ms | 1Hz ACTIVE
+[POWER] Active stream finished. MAX30102 entering low-power sleep. Vitals reset to 0.
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #101 | free-fall min 0.33g | impact 3.42g | post-impact motion 0.02g ***
+[FALL CHECK] FALL | free-fall 163 ms (needs 150), lowest 0.33 g | impact 3.42 g (needs 2.50) | motion after 0.02 g (limit 0.08) | largest sample gap 41 ms | 3m SLEEP
+[POWER] Escalated to 1 Hz Active Streaming (MAX30102 Awake)
+
+==============================================================================
+Series 2: standing, turn, arm dropped against the leg, then the hand kept moving a little for 5 s
+==============================================================================
+==========================================================
+  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)
+  Hardware: Seeed Studio XIAO ESP32-C6
+==========================================================
+[OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x70.
+[SELF-TEST] Fall detector: PASS (fall: detected, soft fall: detected, short dip: ignored, movement: ignored, arm drop while standing: ignored)
+[OK] HW-605 (MAX30102) Initialized.
+[OK] Battery Monitoring Initialized: 1.96V (0%)
+[OK] Dual BLE Broadcast + GATT Server Active! MAC: 58:e6:c5:1b:80:4e
+[OK] Telemetry packet version 2, 15 bytes.
+>>> Ready: 3-min passive cycle + 1Hz on-demand/fall escalation <<<
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 46 ms (needs 150), lowest 0.45 g | highest after it 9.59 g | largest sample gap 25 ms | 3m BURST
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 71 ms (needs 150), lowest 0.21 g | highest after it 9.81 g | largest sample gap 25 ms | 3m BURST
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 115 ms (needs 150), lowest 0.05 g | highest after it 5.68 g | largest sample gap 26 ms | 3m BURST
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 81 ms (needs 150), lowest 0.42 g | highest after it 15.87 g | largest sample gap 35 ms | 3m BURST
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #193 | free-fall min 0.34g | impact 21.66g | post-impact motion 0.04g ***
+[FALL CHECK] FALL | free-fall 164 ms (needs 150), lowest 0.34 g | impact 21.66 g (needs 2.50) | motion after 0.04 g (limit 0.20) | largest sample gap 40 ms | 3m BURST
+[FALL] Alert hold over: watching for falls again.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 140 ms (needs 150), lowest 0.33 g | highest after it 9.15 g | largest sample gap 26 ms | 1Hz ACTIVE
+[POWER] Active stream finished. MAX30102 entering low-power sleep. Vitals reset to 0.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 21 ms (needs 150), lowest 0.49 g | highest after it 8.08 g | largest sample gap 27 ms | 3m SLEEP
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #194 | free-fall min 0.38g | impact 10.52g | post-impact motion 0.05g ***
+[FALL CHECK] FALL | free-fall 163 ms (needs 150), lowest 0.38 g | impact 10.52 g (needs 2.50) | motion after 0.05 g (limit 0.20) | largest sample gap 22 ms | 3m SLEEP
+[POWER] Escalated to 1 Hz Active Streaming (MAX30102 Awake)
+[FALL] Alert hold over: watching for falls again.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 0 ms (needs 150), lowest 0.51 g | highest after it 12.08 g | largest sample gap 25 ms | 1Hz ACTIVE
+[POWER] Active stream finished. MAX30102 entering low-power sleep. Vitals reset to 0.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 60 ms (needs 150), lowest 0.45 g | highest after it 18.10 g | largest sample gap 22 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 81 ms (needs 150), lowest 0.44 g | highest after it 18.12 g | largest sample gap 22 ms | 3m SLEEP
+
+==============================================================================
+Series 3: standing, turn, arm dropped against the leg, then standing completely still for 5 s
+==============================================================================
+==========================================================
+  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)
+  Hardware: Seeed Studio XIAO ESP32-C6
+==========================================================
+[OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x70.
+[SELF-TEST] Fall detector: PASS (fall: detected, soft fall: detected, short dip: ignored, movement: ignored, arm drop while standing: ignored)
+[OK] HW-605 (MAX30102) Initialized.
+[OK] Battery Monitoring Initialized: 1.97V (0%)
+[OK] Dual BLE Broadcast + GATT Server Active! MAC: 58:e6:c5:1b:80:4e
+[OK] Telemetry packet version 2, 15 bytes.
+>>> Ready: 3-min passive cycle + 1Hz on-demand/fall escalation <<<
+[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! #217 | free-fall min 0.31g | impact 6.97g | post-impact motion 0.01g ***
+[FALL CHECK] FALL | free-fall 163 ms (needs 150), lowest 0.31 g | impact 6.97 g (needs 2.50) | motion after 0.01 g (limit 0.20) | largest sample gap 32 ms | 3m BURST
+[FALL] Alert hold over: watching for falls again.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 23 ms (needs 150), lowest 0.49 g | highest after it 18.38 g | largest sample gap 25 ms | 1Hz ACTIVE
+[POWER] Active stream finished. MAX30102 entering low-power sleep. Vitals reset to 0.
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 83 ms (needs 150), lowest 0.46 g | highest after it 17.11 g | largest sample gap 26 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 0 ms (needs 150), lowest 0.53 g | highest after it 13.87 g | largest sample gap 22 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 41 ms (needs 150), lowest 0.47 g | highest after it 16.39 g | largest sample gap 22 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 63 ms (needs 150), lowest 0.42 g | highest after it 11.88 g | largest sample gap 22 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 81 ms (needs 150), lowest 0.35 g | highest after it 6.96 g | largest sample gap 22 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 41 ms (needs 150), lowest 0.35 g | highest after it 13.91 g | largest sample gap 22 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 20 ms (needs 150), lowest 0.48 g | highest after it 18.79 g | largest sample gap 36 ms | 3m SLEEP
+[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below 0.50 g for 20 ms (needs 150), lowest 0.48 g | highest after it 8.43 g | largest sample gap 22 ms | 3m SLEEP
