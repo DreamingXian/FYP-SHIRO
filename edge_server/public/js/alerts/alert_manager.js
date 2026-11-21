@@ -219,7 +219,8 @@ class EmergencyAlertManager {
             </div>
           </div>
 
-          <div class="em-vitals">
+          <!-- Vitals only for a vitals alert: a fall or a door alert comes without a fresh measurement -->
+          <div class="em-vitals" id="em-vitals-row">
             Heart rate <b id="em-bpm">--</b>
             <span title="Not calibrated: for information only, raises no alarm">· SpO2 (indicative) <b id="em-spo2">--</b></span>
           </div>
@@ -482,6 +483,11 @@ class EmergencyAlertManager {
     document.getElementById('em-freefall').innerText = gValue(incident.freefall_min_g);
     document.getElementById('em-impact').innerText = gValue(incident.kinematic_impact_force);
     document.getElementById('em-stillness').innerText = gValue(incident.post_impact_stillness);
+    // A fall or a door alert comes suddenly: nothing says the heart rate was being measured
+    // then, so the pop-up shows no vitals for them (only for a vitals alert)
+    const vitalsAlert = incident.incident_category === 'CRITICAL_VITALS';
+    const vitalsRow = document.getElementById('em-vitals-row');
+    if (vitalsRow) vitalsRow.style.display = vitalsAlert ? '' : 'none';
     document.getElementById('em-bpm').innerText = known(incident.heart_rate) && Number(incident.heart_rate) > 0 ? `${incident.heart_rate} bpm` : 'not measured';
     document.getElementById('em-spo2').innerText = known(incident.spo2) && Number(incident.spo2) > 0 ? `${incident.spo2}%` : 'not measured';
     document.getElementById('em-alert-msg').innerText = incident.alert_message || 'Clinical safety event detected.';

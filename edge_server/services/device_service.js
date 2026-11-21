@@ -269,10 +269,14 @@ async function listDevices(typeFilter = 'ALL', statusFilter = 'ALL') {
       d.created_at,
       w.room_title AS ward_title,
       p.patient_id AS bound_patient_id,
-      p.full_name AS bound_patient_name
+      p.full_name AS bound_patient_name,
+      (SELECT CONCAT(wa.ward_id, ' · ', wa.anchor_id) FROM ward_anchors wa WHERE wa.device_id = d.device_id LIMIT 1) AS anchor_slot,
+      (SELECT CONCAT(rs.ward_id, ' · ', rs.sensor_id) FROM ward_room_sensors rs WHERE rs.device_id = d.device_id LIMIT 1) AS sensor_slot
     FROM devices d
     LEFT JOIN ward_rooms w ON d.assigned_ward_id = w.ward_id
-    LEFT JOIN patients p ON (p.status = 'ADMITTED' AND (p.assigned_bed_id = d.device_id OR p.patient_id = d.device_id))
+    -- The patient wearing the wristband now (at most one ACTIVE binding per wristband)
+    LEFT JOIN patient_bindings pb ON pb.device_id = d.device_id AND pb.status = 'ACTIVE'
+    LEFT JOIN patients p ON p.patient_id = pb.patient_id
     WHERE 1=1
   `;
   const params = [];

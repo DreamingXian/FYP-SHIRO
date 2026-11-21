@@ -41,6 +41,8 @@
     const items = [];
     items.push(`<button type="button" role="menuitem"${actionAttrs('editPatientInfo', [p.patient_id])}>Edit details</button>`);
     if (admitted && !p.assigned_bed_id) items.push(`<button type="button" role="menuitem"${actionAttrs('openAssignBedModal', [p.patient_id])}>Give a bed</button>`);
+    if (admitted && p.assigned_bed_id) items.push(`<button type="button" role="menuitem"${actionAttrs('openAssignBedModal', [p.patient_id])}>Move to another bed</button>`);
+    if (!admitted) items.push(`<button type="button" role="menuitem"${actionAttrs('openAssignBedModal', [p.patient_id])}>Admit again…</button>`);
     if (admitted && !b) items.push(`<button type="button" role="menuitem"${actionAttrs('openGiveWristband', [p.patient_id, p.full_name])}>Give a wristband</button>`);
     if (b) items.push(`<button type="button" role="menuitem"${actionAttrs('takeOffWristband', [p.patient_id])}>Take off wristband (${escapeHtml(b.device_id)})</button>`);
     items.push(`<button type="button" role="menuitem"${actionAttrs('openWristbandHistory', [p.patient_id, p.full_name])}>Wristband history</button>`);
@@ -86,7 +88,7 @@
       return `<label class="pick-row" data-search="${escapeHtml(`${w.device_id} ${w.mac_address || ''}`.toLowerCase())}">
         <input type="radio" name="give-wristband" value="${escapeHtml(w.device_id)}"${i === 0 ? ' checked' : ''}>
         <span class="pick-main"><b>${escapeHtml(w.device_id)}</b><small class="mono">${escapeHtml(w.mac_address || '')}</small></span>
-        <span class="pick-side">${escapeHtml(isOn(w) ? '● on' : '○ off')}${escapeHtml(battery)}</span>
+        <span class="pick-side"><span class="status-word">${escapeHtml(isOn(w) ? '● ON' : '○ OFF')}</span>${escapeHtml(battery)}</span>
       </label>`;
     }).join('');
     window.showModal({

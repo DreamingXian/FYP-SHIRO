@@ -647,9 +647,19 @@ function runOfflineCheck() {
  * or OFFLINE).
  */
 function broadcastCurrentPosition(tagId, now = Date.now()) {
+  const msg = currentPositionMessage(tagId, now);
+  if (msg) broadcastToClients(msg);
+}
+
+/**
+ * A tag's position as the maps receive it (IPS_POSITION_UPDATE), or null when
+ * the tag is not tracked. Also sent when a map opens, so it shows the wristbands
+ * at once instead of after their next update (ward ips-init).
+ */
+function currentPositionMessage(tagId, now = Date.now()) {
   const pos = tagSmoothedPositions.get(tagId);
-  if (!pos) return;
-  broadcastToClients({
+  if (!pos) return null;
+  return {
     type: 'IPS_POSITION_UPDATE',
     ward_id: pos.ward_id,
     tag_id: tagId,
@@ -663,7 +673,12 @@ function broadcastCurrentPosition(tagId, now = Date.now()) {
     anchors_used: pos.status === 'OFFLINE' ? [] : undefined,
     timestamp: pos.status === 'OFFLINE' ? pos.last_seen : now,
     ...headsetPositions.positionFields(pos, headsetPositions.fresh(tagId, now), lidarPositions.fresh(tagId, now))
-  });
+  };
+}
+
+/** The current position message of every tracked tag (see currentPositionMessage). */
+function getPositionMessages(now = Date.now()) {
+  return [...tagSmoothedPositions.keys()].map(tagId => currentPositionMessage(tagId, now)).filter(Boolean);
 }
 
 /** The key of a tracked tag, matched without regard to case (the headset uses upper case). */
@@ -882,6 +897,7 @@ module.exports = {
   getTagPosition,
   getTagAnchorReadings,
   getWardTagPositions,
+  getPositionMessages,
   applyHeadsetPosition,
   endHeadsetPosition,
   headsetDisconnected,

@@ -102,6 +102,7 @@ async function initializeApp() {
     closeSetupMenu();
     navTabs.forEach(b => b.classList.remove('active'));
     tabPanes.forEach(p => p.classList.remove('active'));
+    if (setupToggle) setupToggle.classList.remove('active');
 
     const activeBtn = document.querySelector(`.nav-tab-btn[data-tab="${targetTabId}"], .nav-menu-item[data-tab="${targetTabId}"]`);
     if (activeBtn) activeBtn.classList.add('active');
@@ -113,6 +114,9 @@ async function initializeApp() {
 
     // Trigger module-specific initializations upon tab switch
     if (targetTabId === 'tab-ward') {
+      // The overview panel is always shown on this page (other pages never hide it)
+      const overview = document.getElementById('ward-live-map-view');
+      if (overview) overview.style.display = 'block';
       if (typeof window.isLiveMapOpen === 'function' && window.isLiveMapOpen()) {
         if (typeof window.resizeLiveMap === 'function') window.resizeLiveMap();
       } else {
@@ -149,6 +153,9 @@ async function initializeApp() {
     closeSetupMenu();
     navTabs.forEach(b => b.classList.remove('active'));
     tabPanes.forEach(p => p.classList.remove('active'));
+    if (setupToggle) setupToggle.classList.remove('active');
+    const overview = document.getElementById('ward-live-map-view');
+    if (overview) overview.style.display = 'block';
 
     const activeBtn = document.querySelector('.nav-tab-btn[data-tab="tab-ward"]');
     if (activeBtn) activeBtn.classList.add('active');

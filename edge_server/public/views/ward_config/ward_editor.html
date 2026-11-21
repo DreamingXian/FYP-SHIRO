@@ -90,7 +90,8 @@
                 </div>
               </div>
 
-              <div class="form-grid-3">
+              <!-- The headset room anchor is not typed here: the headset app sets it (Phase 11) -->
+              <div class="form-grid-3" style="margin-bottom: 0;">
                 <div class="form-group">
                   <label class="form-label">Door is in the wall</label>
                   <select class="form-control" id="cfg-door-wall" onchange="syncWardDoor()">
@@ -115,14 +116,6 @@
                   </div>
                 </div>
               </div>
-
-              <div class="form-group" style="margin-bottom: 0;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                  <label class="form-label">Headset room anchor (set by the headset)</label>
-                  <span style="font-size: 12px; color: var(--text-muted);">Lines the headset's view up with this room</span>
-                </div>
-                <input type="text" class="form-control mono" id="cfg-spatial-uuid" value="a1b2c3d4-e5f6-7890-abcd-ef0123456789" placeholder="e.g. a1b2c3d4-e5f6-7890-abcd-ef0123456789" onchange="syncWardMeta()">
-              </div>
             </div>
 
             <!-- Panel 2: Enclosed Obstacles / Cutout Zones (e.g. Toilets, Structural Pillars) -->
@@ -132,9 +125,9 @@
                   <span>2. Furniture, bathroom, partitions</span>
                   <span class="badge-num" id="obstacle-count-badge">1</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addObstacle()">➕ Add Obstacle</button>
+                <button class="btn btn-outline btn-sm" id="btn-add-obstacle" onclick="addObstacle()">➕ Add Obstacle</button>
               </div>
-              <div class="card-subtitle">Things that block walking or the sensors: a bathroom, cupboards, tables, partitions.</div>
+              <div class="card-subtitle">Things that block walking or the sensors: a bathroom, cupboards, tables, partitions. At most 15, all inside the room.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -194,9 +187,9 @@
                   <span>4. LiDAR (exact position)</span>
                   <span class="badge-num" id="room-sensor-count-badge">0</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addRoomSensor()">➕ Add LiDAR</button>
+                <button class="btn btn-outline btn-sm" id="btn-add-lidar" onclick="addRoomSensor()">➕ Add LiDAR</button>
               </div>
-              <div class="card-subtitle">Where the LiDAR stands (its centre), how high its base is, and which way the ▲ on top points: 0° north, 90° east, 180° south, 270° west.</div>
+              <div class="card-subtitle">One per ward. Where the LiDAR stands (its centre), how high its base is, and which way the ▲ on top points: 0° north, 90° east, 180° south, 270° west.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -223,9 +216,9 @@
                   <span>5. Beds</span>
                   <span class="badge-num" id="bed-count-badge">4 Beds</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addBed()">➕ Add Bed</button>
+                <button class="btn btn-outline btn-sm" id="btn-add-bed" onclick="addBed()">➕ Add Bed</button>
               </div>
-              <div class="card-subtitle">Each bed's south-west corner, and which way it is turned. A bed taken out of use is "Unavailable".</div>
+              <div class="card-subtitle">Each bed's south-west corner, and which way it is turned. A bed taken out of use is "Unavailable". The room takes one bed per 5 m² of free floor.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -281,6 +274,9 @@
                   <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); margin-top: 2px;" id="stat-active-anchors">3 Nodes</div>
                 </div>
               </div>
+
+              <!-- What stops the layout from being saved, and what is worth a look (ward_rules.js) -->
+              <div id="ward-layout-problems" class="layout-problems" aria-live="polite"></div>
 
               <!-- Live Legend -->
               <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--text-muted); margin-top: 14px; flex-wrap: wrap; gap: 8px;">

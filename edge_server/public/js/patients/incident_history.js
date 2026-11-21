@@ -48,20 +48,25 @@
     return v === null || v === undefined || v === '' || !isFinite(Number(v)) ? null : Number(v);
   }
 
-  /** The measurements stored with the incident. Values that were not measured are left out. */
+  /**
+   * The measurements stored with the incident. Values that were not measured are
+   * left out; heart rate and SpO2 only for a vitals alert (a fall or a door alert
+   * comes suddenly, without a measurement of that moment).
+   */
   function measurementsText(inc) {
     const parts = [];
     const impact = numberOrNull(inc.kinematic_impact_force);
     const still = numberOrNull(inc.post_impact_stillness);
     const freefall = numberOrNull(inc.freefall_min_g);
-    const hr = numberOrNull(inc.heart_rate);
-    const spo2 = numberOrNull(inc.spo2);
+    const vitalsAlert = inc.incident_category === 'CRITICAL_VITALS';
+    const hr = vitalsAlert ? numberOrNull(inc.heart_rate) : null;
+    const spo2 = vitalsAlert ? numberOrNull(inc.spo2) : null;
     if (impact !== null) parts.push(`impact ${impact.toFixed(2)} g`);
     if (freefall !== null) parts.push(`free-fall min ${freefall.toFixed(2)} g`);
     if (still !== null) parts.push(`stillness ${still.toFixed(2)} g`);
     if (hr !== null && hr > 0) parts.push(`HR ${hr} bpm`);
     if (spo2 !== null && spo2 > 0) parts.push(`SpO2 ~${Math.round(spo2)} %`);
-    return parts.length ? parts.join(' · ') : 'not measured';
+    return parts.length ? parts.join(' · ') : (vitalsAlert ? 'not measured' : '–');
   }
 
   // Incidents from before 22 Nov 2026 may have a position but no ward: the ward was

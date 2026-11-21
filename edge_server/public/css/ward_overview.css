@@ -187,3 +187,21 @@
   .wo-side { width: 100%; }
   .wo-map { min-height: 520px; }
 }
+
+/* Phase 11 (review): patients of other wards, below this ward's, one line each */
+.wo-list-divider { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 6px 2px 0; padding-top: 8px; border-top: 1px dashed var(--border); }
+.wo-tile.wo-tile-other { padding: 6px 10px; border-left-width: 1.5px; background: #F8FAFC; }
+.wo-tile.wo-tile-other .wo-initials { width: 30px; height: 30px; font-size: 12px; background: #F1F5F9; color: #475569; }
+.wo-tile.wo-tile-other .wo-tile-name { font-size: 14px; font-weight: 600; }
+.wo-tile.wo-tile-other .wo-tile-where { font-size: 12px; }
+.wo-tile-go { font-size: 20px; color: var(--text-muted); flex-shrink: 0; }
+
+/* Nobody chosen: the card shows only how to choose a patient */
+#live-map-patient-card.is-empty #live-map-alert-chip,
+#live-map-patient-card.is-empty .wo-where,
+#live-map-patient-card.is-empty .wo-vitals,
+#live-map-patient-card.is-empty .wo-facts,
+#live-map-patient-card.is-empty .wo-actions,
+#live-map-patient-card.is-empty #live-map-offline-actions,
+#live-map-patient-card.is-empty .wo-tech { display: none !important; }
+#live-map-patient-card.is-empty .wo-avatar { background: #F1F5F9; color: #94A3B8; }

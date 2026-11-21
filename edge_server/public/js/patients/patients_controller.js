@@ -418,14 +418,17 @@ function renderPatientsTable(patients) {
     // The wristband: worn now, or a button to give one (admitted patients only)
     const worn = bindingByPatient.get(p.patient_id);
     const wristbandCell = worn
-      ? `<span class="badge badge-info">${escapeHtml(worn.device_id)}</span> <span style="font-size: 12px; color: var(--text-muted);">${escapeHtml(worn.device_status === 'ONLINE' || worn.device_status === 'CHARGING' ? '● on' : '○ off')}</span>`
+      ? `<span class="badge badge-info">${escapeHtml(worn.device_id)}</span> <span class="status-word" style="color: var(--text-muted);">${escapeHtml(worn.device_status === 'ONLINE' || worn.device_status === 'CHARGING' ? '● ON' : '○ OFF')}</span>`
       : p.status === 'ADMITTED'
         ? `<button class="btn btn-outline btn-sm"${actionAttrs('openGiveWristband', [p.patient_id, p.full_name], { stop: true })}>＋ Give wristband</button>`
         : '<span style="color: var(--text-muted);">–</span>';
-    // No bed yet: the one obvious next step is giving one
+    // The one obvious next step: a bed for an admitted patient without one; a discharged
+    // patient who comes back is admitted again with a bed (same record, a new stay)
     const secondaryActionBtn = p.status === 'ADMITTED' && !p.assigned_bed_id
       ? `<button class="btn btn-primary btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })} style="margin-right: 4px;">Give bed</button>`
-      : '';
+      : p.status === 'DISCHARGED'
+        ? `<button class="btn btn-outline btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })} style="margin-right: 4px;" title="The patient is back: choose a bed, the stay starts now">↩ Admit again</button>`
+        : '';
 
     const genderLabel = p.gender === 'FEMALE' ? 'Female' : p.gender === 'MALE' ? 'Male' : 'Other';
 
@@ -925,9 +928,10 @@ async function openAssignBedModal(patientId) {
     const firstFree = (wards.find(w => availableBeds.some(b => b.ward_id === w.ward_id)) || {}).ward_id;
     const wardOptions = wards.map(w => `<option value="${escapeHtml(w.ward_id)}"${w.ward_id === firstFree ? ' selected' : ''}>${escapeHtml(w.ward_id)} - ${escapeHtml(w.room_title)}${escapeHtml(availableBeds.some(b => b.ward_id === w.ward_id) ? '' : ' (no free bed)')}</option>`).join('');
 
+    const readmit = p.status === 'DISCHARGED';
     const modalContent = `
       <div style="font-size:14px; color:var(--text-secondary); margin-bottom:12px;">
-        A bed for <strong>${escapeHtml(p.full_name)}</strong> (${escapeHtml(p.patient_id)}). Click a green bed on the map, or choose it in the list.
+        ${readmit ? 'Admit' : 'A bed for'} <strong>${escapeHtml(p.full_name)}</strong> (${escapeHtml(p.patient_id)})${readmit ? ' again: a new stay starts now, with the same record and history' : ''}. Click a green bed on the map, or choose it in the list.
       </div>
       <div class="form-group">
         <label class="form-label">Ward</label>
@@ -961,11 +965,11 @@ async function openAssignBedModal(patientId) {
 
     if (window.showModal) {
       window.showModal({
-        title: `Give ${p.full_name} a bed`,
+        title: readmit ? `Admit ${p.full_name} again` : `Give ${p.full_name} a bed`,
         customHtml: modalContent,
         isWide: true,
         type: 'info',
-        confirmText: 'Give this bed',
+        confirmText: readmit ? 'Admit with this bed' : 'Give this bed',
         cancelText: 'Cancel',
         onConfirm: async () => {
           const wardId = document.getElementById('modal-assign-ward')?.value;
@@ -988,7 +992,9 @@ async function openAssignBedModal(patientId) {
             });
             const assignResult = await assignRes.json();
             if (assignResult.success) {
-              if (window.showToast) window.showToast(`${p.full_name} now has a bed.`, 'success');
+              if (window.showToast) window.showToast(readmit ? `${p.full_name} is admitted again.` : `${p.full_name} now has a bed.`, 'success');
+              // Back on the Admitted list, where they are now
+              if (readmit && typeof window.setPatientFilter === 'function') window.setPatientFilter('ADMITTED');
               await Promise.all([
                 fetchAvailableBedsAndWards(),
                 loadPatientsDirectory()

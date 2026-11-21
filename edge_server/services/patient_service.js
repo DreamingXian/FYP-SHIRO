@@ -625,20 +625,29 @@ async function assignBed(patientId, wardId, bedId) {
       [wardId, bedId]
     );
 
-    // 5. Update patient record
+    // 5. Update patient record. A discharged patient is admitted again: a new
+    //    stay starts now (admission date now, no discharge yet).
+    const readmit = patient.status === 'DISCHARGED';
     await conn.query(
-      `UPDATE patients 
-       SET assigned_ward_id = ?, 
-           assigned_bed_id = ?, 
-           status = 'ADMITTED' 
-       WHERE patient_id = ?`,
+      readmit
+        ? `UPDATE patients
+           SET assigned_ward_id = ?, assigned_bed_id = ?, status = 'ADMITTED',
+               admission_date = NOW(), discharge_date = NULL,
+               discharged_from_ward_id = NULL, discharged_from_bed_id = NULL
+           WHERE patient_id = ?`
+        : `UPDATE patients
+           SET assigned_ward_id = ?, assigned_bed_id = ?, status = 'ADMITTED'
+           WHERE patient_id = ?`,
       [wardId, bedId, patientId]
     );
 
     await conn.commit();
     return {
       success: true,
-      message: `Bed ${bedRows[0].bed_code} (${wardId}) successfully assigned to ${patient.full_name} (${patientId}).`
+      readmitted: readmit,
+      message: readmit
+        ? `${patient.full_name} (${patientId}) admitted again, in ${bedRows[0].bed_code} (${wardId}).`
+        : `Bed ${bedRows[0].bed_code} (${wardId}) successfully assigned to ${patient.full_name} (${patientId}).`
     };
   } catch (err) {
     await conn.rollback();

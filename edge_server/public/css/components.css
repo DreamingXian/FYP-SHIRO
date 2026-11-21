@@ -756,3 +756,22 @@ table.data-table th {
 /* Phase 11: new devices waiting to be added stand out; none = a slim line */
 .discovery-card.has-new { border: 2px solid var(--primary-border); background: var(--primary-subtle); }
 .discovery-card:not(.has-new) .card-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+/* Phase 11 (review): short status words in capitals, like status lozenges
+   (ON, OFF, FREE, IN USE, ADMITTED). .keep-case for a badge holding units or a sentence. */
+.badge { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+.badge.keep-case { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.status-word { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; font-size: 12px; }
+
+/* A button that cannot be used looks it (the title says why) */
+.btn:disabled, .btn[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.btn:disabled:hover, .btn[disabled]:hover { transform: none; }
+
+/* Ward editor: what stops the layout from being saved, and what is worth a look */
+.layout-problems:empty { display: none; }
+.layout-problems { margin-top: 12px; border-radius: 10px; padding: 10px 14px; background: #FFFBEB; border: 1px solid #FCD34D; font-size: 13px; }
+.layout-problems:has(.is-error) { background: #FEF2F2; border-color: #FCA5A5; }
+.layout-problems-title { font-weight: 700; margin-bottom: 4px; color: var(--text-primary); }
+.layout-problems ul { margin: 0; padding-left: 18px; line-height: 1.5; }
+.layout-problems li.is-error { color: #B91C1C; }
+.layout-problems li.is-warning { color: #92400E; }

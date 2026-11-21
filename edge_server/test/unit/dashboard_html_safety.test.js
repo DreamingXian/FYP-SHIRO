@@ -166,6 +166,8 @@ const SAFE_EXPRESSIONS = [
   /^(emptyHtml|healthNote|lidarStatusHtml|flagHtml|wristbandCell|rows|readingRows)$/,
   /^\(padLeft \+ \(w - padRight\)\) \/ 2$/,
   /^bedShapes$/, /^free \? 'free' : 'taken'$/,
+  // Phase 11 review: the ward editor's problem list, the overview's other-ward tiles (escaped parts)
+  /^(problemItems|otherTilesHtml)$/,
   /^getRadar(Signal|Battery)Html\(d\)$/,
   /^statusBadge\(d\.status\)$/, // health_monitor.js: fixed class name, escaped text
   /^isBound \|\| isAssignedWard \? `<option value="IN_USE" selected>In Use \(Currently Deployed\)<\/option>` : ''$/,

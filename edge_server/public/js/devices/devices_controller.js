@@ -457,10 +457,23 @@ function getEffectiveAvailability(d) {
   if (d.availability_status === 'UNAVAILABLE' || d.availability_status === 'MAINTENANCE') {
     return 'UNAVAILABLE';
   }
-  if (d.bound_patient_name || d.assigned_ward_id || d.availability_status === 'IN_USE') {
+  if (d.bound_patient_name || d.anchor_slot || d.sensor_slot || d.assigned_ward_id || d.availability_status === 'IN_USE') {
     return 'IN_USE';
   }
   return 'AVAILABLE';
+}
+
+/**
+ * What a device is used for now, in words, or '' when it is free: the patient
+ * wearing a wristband, the ward place of a wall sensor or a LiDAR.
+ */
+function deviceUseText(d) {
+  if (d.bound_patient_name) return `worn by ${d.bound_patient_name} (${d.bound_patient_id})`;
+  if (d.anchor_slot) return `wall sensor ${d.anchor_slot}`;
+  if (d.sensor_slot) return `LiDAR ${d.sensor_slot}`;
+  if (d.assigned_ward_id) return `assigned to ${d.assigned_ward_id}`;
+  if (d.availability_status === 'IN_USE') return 'marked as in use';
+  return '';
 }
 
 /**
@@ -690,8 +703,10 @@ function renderDevicesTable(filtered) {
     } else if (effectiveAvail === 'UNAVAILABLE') {
       availBadge = '<span class="badge badge-warning">Out of use</span>';
     }
-    // Where it is used: the patient wearing it, else its ward
-    const whereText = d.bound_patient_name ? `👤 ${d.bound_patient_name}` : d.assigned_ward_id ? `📍 ${d.assigned_ward_id}` : '–';
+    // Where it is used: the patient wearing it, else its place in a ward
+    const whereText = d.bound_patient_name ? `👤 ${d.bound_patient_name}`
+      : d.anchor_slot || d.sensor_slot ? `📍 ${d.anchor_slot || d.sensor_slot}`
+        : d.assigned_ward_id ? `📍 ${d.assigned_ward_id}` : '–';
     // Technical details on hover; nothing invented when unknown
     const details = [`MAC ${d.mac_address || 'unknown'}`, `network ${d.ip_address || (d.device_type === 'WRISTBAND' ? 'none (Bluetooth only)' : 'unknown')}`,
       `model ${d.hardware_model || 'unknown'}`, `firmware ${d.firmware_version || 'unknown'}`].join(' · ');
@@ -1078,12 +1093,31 @@ function openEditDeviceModal(deviceId) {
 /**
  * Prompts danger confirmation modal before deleting a device record.
  */
+/**
+ * Asks before deleting a device. A device in use says by whom or where, and
+ * what stops when it is deleted.
+ */
 function confirmDeleteDevice(deviceId) {
+  const d = cachedFleet.find(x => x.device_id === deviceId) || { device_id: deviceId };
+  const use = deviceUseText(d);
+  let effect = '';
+  if (d.bound_patient_name) {
+    effect = `It is taken off ${d.bound_patient_name}: their heart rate, fall alarms and position stop until they get another wristband.`;
+  } else if (d.anchor_slot) {
+    effect = `Its place (${d.anchor_slot}) stays empty: positions in that ward get less accurate, and with fewer than 3 working wall sensors its live map stops.`;
+  } else if (d.sensor_slot) {
+    effect = `Its place (${d.sensor_slot}) stays empty: that ward goes back to Bluetooth positions, and its door alerts (at the door, left the ward) stop.`;
+  } else if (use) {
+    effect = 'Whatever uses it stops getting its data.';
+  }
+  const message = use
+    ? `⚠ ${deviceId} is in use: ${use}.\n\n${effect}\n\nDelete it anyway? Its history is kept. This cannot be undone.`
+    : `Delete ${deviceId}? It is not in use. Its history is kept. This cannot be undone.`;
   safeShowModal({
-    title: 'Decommission Hardware Device',
-    message: `Are you sure you want to permanently remove device "${deviceId}" from the MySQL database?\n\nIf this device is an active anchor or edge gateway, position tracking in its assigned ward may be disrupted.`,
+    title: use ? `${deviceId} is in use` : `Delete ${deviceId}?`,
+    message,
     type: 'danger',
-    confirmText: '🗑️ Delete Permanently',
+    confirmText: use ? 'Delete anyway' : 'Delete',
     cancelText: 'Cancel',
     onConfirm: async () => {
       try {
@@ -1094,14 +1128,14 @@ function confirmDeleteDevice(deviceId) {
         });
         const result = await res.json();
         if (result.success) {
-          safeShowToast(`Device ${deviceId} removed from fleet.`, 'success');
+          safeShowToast(`${deviceId} deleted.`, 'success');
           await loadDevicesFleet();
         } else {
-          safeShowToast(`Deletion failed: ${result.error}`, 'danger');
+          safeShowToast(`Not deleted: ${result.error}`, 'danger');
         }
       } catch (err) {
         console.error('Delete device error:', err);
-        safeShowToast('Network error deleting device.', 'danger');
+        safeShowToast('The server does not answer. The device was not deleted.', 'danger');
       }
     }
   });

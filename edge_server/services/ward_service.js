@@ -6,6 +6,7 @@ const { getPool } = require('../database/db');
 const fs = require('fs');
 const path = require('path');
 const ipsService = require('./ips_service');
+const { HttpError } = require('../utils/http');
 const { getCalibration } = require('./kalman_filter');
 
 // Each template has 6 anchors at 2.40 m where the placement planner
@@ -160,7 +161,8 @@ async function getWardConfig(wardId) {
       width: parseFloat(b.width),
       length: parseFloat(b.length),
       rotation_deg: parseInt(b.rotation_deg, 10) || 0,
-      status: b.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE'
+      // OCCUPIED too: the editor shows a taken bed as taken, the maps write TAKEN on it
+      status: b.status === 'UNAVAILABLE' || b.status === 'OCCUPIED' ? b.status : 'AVAILABLE'
     })),
     anchors: anchors.map(a => ({
       anchor_id: a.anchor_id,
@@ -246,6 +248,7 @@ async function saveWardConfig(data) {
     const doorX = parseFloat(data.door?.x ?? 2.80);
     const doorY = parseFloat(data.door?.y ?? 0.00);
     const doorW = parseFloat(data.door?.width ?? 0.90);
+    // A new ward starts without a headset room anchor; the headset sets it (POST /api/ward/save-anchor)
     const uuid = data.spatial_anchor_uuid || '';
     const layoutType = data.layout_type || 'L_SHAPED';
 
@@ -262,7 +265,7 @@ async function saveWardConfig(data) {
         door_y = VALUES(door_y),
         door_wall = VALUES(door_wall),
         door_width = VALUES(door_width),
-        spatial_anchor_uuid = VALUES(spatial_anchor_uuid),
+        -- spatial_anchor_uuid: only the headset sets it (save-anchor); saving the layout keeps it
         layout_type = VALUES(layout_type),
         updated_at = CURRENT_TIMESTAMP
     `;
@@ -284,19 +287,45 @@ async function saveWardConfig(data) {
       }
     }
 
-    // 3. Replace Beds (using bottom-left coordinates)
-    await conn.query('DELETE FROM ward_beds WHERE ward_id = ?', [wardId]);
-    if (Array.isArray(data.beds) && data.beds.length > 0) {
-      for (let i = 0; i < data.beds.length; i++) {
-        const b = data.beds[i];
-        const bId = b.bed_id || `BED-${wardId}-${String(i + 1).padStart(2, '0')}`;
-        const bCode = b.bed_code || `Bed ${i + 1}`;
-        const bStatus = b.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE';
-        await conn.query(
-          'INSERT INTO ward_beds (bed_id, ward_id, bed_code, x, y, width, length, rotation_deg, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [bId, wardId, bCode, b.x || 0, b.y || 0, b.width || 0.90, b.length || 2.00, b.rotation_deg || 0, bStatus]
-        );
-      }
+    // 3. Beds (bottom-left coordinates), updated in place (Phase 11 review).
+    //    Before, every bed of the ward was deleted and inserted again: the foreign
+    //    key of patients (ON DELETE SET NULL) then cleared the ward and bed of every
+    //    patient in the ward, and the beds came back AVAILABLE, free to be given to
+    //    a second patient. Now: a bed given to an admitted patient cannot be removed
+    //    (move the patient first), only beds left out of the layout are deleted, and
+    //    the beds of admitted patients stay OCCUPIED.
+    const beds = (Array.isArray(data.beds) ? data.beds : []).map((b, i) => ({
+      ...b, bed_id: b.bed_id || `BED-${wardId}-${String(i + 1).padStart(2, '0')}`, bed_code: b.bed_code || `Bed ${i + 1}`
+    }));
+    const [inBeds] = await conn.query(
+      `SELECT patient_id, full_name, assigned_bed_id FROM patients
+       WHERE status = 'ADMITTED' AND assigned_ward_id = ? AND assigned_bed_id IS NOT NULL`,
+      [wardId]
+    );
+    const keptBedIds = new Set(beds.map(b => b.bed_id));
+    const removed = inBeds.filter(p => !keptBedIds.has(p.assigned_bed_id));
+    if (removed.length) {
+      throw new HttpError(400, `${removed.map(p => `${p.assigned_bed_id} is given to ${p.full_name} (${p.patient_id})`).join('; ')}. Move ${removed.length === 1 ? 'the patient' : 'these patients'} to another bed first (Patients → ⋯ → Move to another bed), then remove the bed.`);
+    }
+    if (beds.length) {
+      await conn.query('DELETE FROM ward_beds WHERE ward_id = ? AND bed_id NOT IN (?)', [wardId, beds.map(b => b.bed_id)]);
+    } else {
+      await conn.query('DELETE FROM ward_beds WHERE ward_id = ?', [wardId]);
+    }
+    for (const b of beds) {
+      const bStatus = b.status === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE';
+      await conn.query(
+        `INSERT INTO ward_beds (bed_id, ward_id, bed_code, x, y, width, length, rotation_deg, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE bed_code = VALUES(bed_code), x = VALUES(x), y = VALUES(y), width = VALUES(width),
+           length = VALUES(length), rotation_deg = VALUES(rotation_deg), status = VALUES(status)`,
+        [b.bed_id, wardId, b.bed_code, b.x || 0, b.y || 0, b.width || 0.90, b.length || 2.00, b.rotation_deg || 0, bStatus]
+      );
+    }
+    if (inBeds.length) {
+      await conn.query(
+        `UPDATE ward_beds SET status = 'OCCUPIED' WHERE ward_id = ? AND bed_id IN (?)`,
+        [wardId, inBeds.map(p => p.assigned_bed_id)]
+      );
     }
 
     // 4. Replace Anchors
@@ -436,6 +465,11 @@ async function resetDefaultWard() {
   const sqlPath = path.join(__dirname, '..', 'database', 'seed', '01_wards.sql');
   const sql = fs.readFileSync(sqlPath, 'utf8');
   await pool.query(sql);
+  // The sample layout lists its beds as free: those of admitted patients stay taken
+  await pool.query(
+    `UPDATE ward_beds b JOIN patients p ON p.assigned_ward_id = b.ward_id AND p.assigned_bed_id = b.bed_id
+     SET b.status = 'OCCUPIED' WHERE p.status = 'ADMITTED'`
+  );
   return getWardConfig('WARD-001');
 }
 
@@ -463,29 +497,51 @@ async function getWardIpsData(wardId) {
     WHERE pb.status = 'ACTIVE'
   `);
 
+  // Who has which bed of this ward: the map writes the name and ID on the bed
+  const [occupants] = await pool.query(
+    `SELECT patient_id, full_name, assigned_bed_id AS bed_id FROM patients
+     WHERE status = 'ADMITTED' AND assigned_ward_id = ? AND assigned_bed_id IS NOT NULL`,
+    [wardId]
+  );
+
+  // Where every wristband is now (the maps' own position messages): the map shows
+  // this ward's at once, and knows in which ward each patient is
+  const now = Date.now();
+  const positions = ipsService.getPositionMessages(now);
+  const positionOf = (deviceId, mac) => positions.find(p => p.tag_id === deviceId) ||
+    (mac ? positions.find(p => String(p.tag_id).toUpperCase() === String(mac).toUpperCase()) : null) || null;
+
   return {
     ward,
-    tracked_subjects: bindings.map(b => ({
-      binding_id: b.binding_id,
-      patient_id: b.patient_id,
-      full_name: b.full_name,
-      nric_passport: b.nric_passport,
-      gender: b.gender,
-      dob: b.dob,
-      assigned_bed_id: b.assigned_bed_id,
-      assigned_ward_id: b.assigned_ward_id,
-      is_ward_resident: (b.assigned_ward_id === wardId),
-      medical_history: b.medical_history,
-      photo_url: b.photo_url,
-      patient_status: b.patient_status,
-      height_cm: b.height_cm === null ? null : Number(b.height_cm),
-      weight_kg: b.weight_kg === null ? null : Number(b.weight_kg),
-      device_id: b.device_id,
-      mac_address: b.mac_address,
-      device_status: b.device_status,
-      battery_level: b.battery_level,
-      firmware_version: b.firmware_version
-    })),
+    bed_occupants: occupants.map(o => ({ bed_id: o.bed_id, patient_id: o.patient_id, full_name: o.full_name })),
+    positions: positions.filter(p => p.ward_id === wardId),
+    tracked_subjects: bindings.map(b => {
+      const pos = positionOf(b.device_id, b.mac_address);
+      return {
+        // The ward the wristband is heard in now (null: not heard, or switched off)
+        located_ward_id: pos && pos.status !== 'OFFLINE' ? pos.ward_id || null : null,
+        last_ward_id: pos ? pos.ward_id || null : null,
+        binding_id: b.binding_id,
+        patient_id: b.patient_id,
+        full_name: b.full_name,
+        nric_passport: b.nric_passport,
+        gender: b.gender,
+        dob: b.dob,
+        assigned_bed_id: b.assigned_bed_id,
+        assigned_ward_id: b.assigned_ward_id,
+        is_ward_resident: (b.assigned_ward_id === wardId),
+        medical_history: b.medical_history,
+        photo_url: b.photo_url,
+        patient_status: b.patient_status,
+        height_cm: b.height_cm === null ? null : Number(b.height_cm),
+        weight_kg: b.weight_kg === null ? null : Number(b.weight_kg),
+        device_id: b.device_id,
+        mac_address: b.mac_address,
+        device_status: b.device_status,
+        battery_level: b.battery_level,
+        firmware_version: b.firmware_version
+      };
+    }),
     calibration: getCalibration()
   };
 }

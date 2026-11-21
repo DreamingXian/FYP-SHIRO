@@ -28,7 +28,7 @@
       if (usedHere.has(dev.device_id)) continue;
       const otherWard = dev.assigned_ward_id && dev.assigned_ward_id !== w.ward_id;
       if (otherWard && dev.device_id !== selected) continue;
-      const state = dev.status === 'ONLINE' ? '● Online' : '○ Offline';
+      const state = dev.status === 'ONLINE' ? '● ON' : '○ OFF';
       html += `<option value="${escapeHtml(dev.device_id)}" ${dev.device_id === selected ? 'selected' : ''}>${escapeHtml(dev.device_id)} (${escapeHtml(state)})</option>`;
     }
     if (selected && !roomSensorDevices.some(d => d.device_id === selected)) {
@@ -108,6 +108,12 @@
   function addRoomSensor() {
     const w = ward();
     if (!w) return;
+    // One LiDAR per ward (ward_rules.js)
+    const max = window.ShiroWardRules ? window.ShiroWardRules.LIMITS.maxLidars : Infinity;
+    if (w.room_sensors.length >= max) {
+      if (window.showToast) window.showToast('A ward has one LiDAR. Change the one there instead.', 'warning', 4000);
+      return;
+    }
     const n = w.room_sensors.length + 1;
     w.room_sensors.push({
       sensor_id: `LiDAR ${n}`, device_id: null,

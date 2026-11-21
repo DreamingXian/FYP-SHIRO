@@ -30,6 +30,11 @@
   // Those without a wristband are drawn as grey dots; older than this, not drawn.
   let roomPeople = { at: 0, people: [] };
   const ROOM_PEOPLE_FRESH_MS = 2000;
+  // Who has which bed of the shown ward: bed_id -> { patient_id, full_name } (written on the bed)
+  let bedOccupants = new Map();
+  // The ward each wristband is heard in, from every position message of every ward:
+  // tagId -> { ward, online }. The list knows where each patient is; a click opens that ward.
+  const tagWard = new Map();
 
   let canvas = null;
   let ctx = null;
@@ -60,20 +65,29 @@
         return;
       }
 
+      // Another ward: the wristbands of the one shown before are not on this map
+      if (!activeWard || activeWard.ward_id !== data.ward.ward_id) {
+        liveTagPositions.clear();
+        hoveredTagId = null;
+        const tagsBadge = document.getElementById('live-map-tags-badge');
+        if (tagsBadge) tagsBadge.innerText = '● 0 wristbands';
+      }
       activeWard = data.ward;
       trackedSubjects = Array.isArray(data.tracked_subjects) ? data.tracked_subjects : [];
       roomPeople = { at: 0, people: [] };
+      bedOccupants = new Map((Array.isArray(data.bed_occupants) ? data.bed_occupants : []).map(o => [o.bed_id, o]));
+      // Where each wristband is now, and this ward's positions at once (not after their next update)
+      for (const s of trackedSubjects) {
+        if (s.last_ward_id) tagWard.set(s.device_id, { ward: s.last_ward_id, online: Boolean(s.located_ward_id) });
+      }
+      (Array.isArray(data.positions) ? data.positions : []).forEach(applyPositionMessage);
       // The overview opens this ward next time on this computer
       try { localStorage.setItem('shiro.ward', activeWard.ward_id); } catch (e) { /* private window */ }
       fillWardPicker(activeWard.ward_id);
 
-      // Switch view panels
-      const dirView = document.getElementById('ward-directory-view');
-      const editView = document.getElementById('ward-editor-view');
+      // The overview is its own page (tab-ward): only its panel is shown here;
+      // the Wards & layout page (tab-ward-config) keeps its own view
       const liveView = document.getElementById('ward-live-map-view');
-
-      if (dirView) dirView.style.display = 'none';
-      if (editView) editView.style.display = 'none';
       if (liveView) liveView.style.display = 'block';
 
       isLiveMapActive = true;
@@ -106,12 +120,13 @@
       // Populate Tracked Subjects list on Left Panel
       renderSubjectsList();
 
-      // Show the requested patient, else the first one; showing never starts live vitals
+      // Show the requested patient; else the first one whose wristband is heard in this
+      // ward now; else nobody (the card stays empty). Showing never starts live vitals.
       if (targetTagId) {
         selectSubject(targetTagId, false);
       } else {
-        const wardResident = trackedSubjects.find(s => s.is_ward_resident) || trackedSubjects[0];
-        selectSubject(wardResident ? wardResident.device_id : null, false);
+        const here = trackedSubjects.find(s => isHeardHere(s));
+        selectSubject(here ? here.device_id : null, false);
       }
 
       // Initialize Canvas
@@ -141,25 +156,13 @@
     }
   }
 
-  /**
-   * Exit Live Map and return to Ward Directory
-   */
+  /** Stops the live map (drawing, position test). The Ward page shows it again with openWardLiveMap. */
   function closeWardLiveMap() {
     isLiveMapActive = false;
     if (window.positionTestPanel) window.positionTestPanel.close();
     if (animationFrameId) {
       cancelAnimationFrame(animationFrameId);
       animationFrameId = null;
-    }
-
-    const liveView = document.getElementById('ward-live-map-view');
-    const dirView = document.getElementById('ward-directory-view');
-
-    if (liveView) liveView.style.display = 'none';
-    if (dirView) dirView.style.display = 'block';
-
-    if (typeof window.loadWardDirectory === 'function') {
-      window.loadWardDirectory();
     }
   }
 
@@ -211,6 +214,36 @@
 
   const inRect = (r, x, y, m = 0) => !!r && x >= r.x - m && x <= r.x + r.w + m && y >= r.y - m && y <= r.y + r.l + m;
   const bedName = (bed) => String(bed.bed_code || bed.bed_id || 'Bed');
+
+  /** Where a patient's wristband is heard now: { ward, online }, or null. */
+  function heardWard(s) {
+    return tagWard.get(s.device_id) || (s.mac_address ? tagWard.get(String(s.mac_address).toUpperCase()) : null) || null;
+  }
+
+  /** A patient's bed in words: its name in this ward ("Bed 1"), else ward and bed ID. */
+  function bedLabelOf(s) {
+    if (!s || !s.assigned_bed_id) return '';
+    const bed = activeWard && s.assigned_ward_id === activeWard.ward_id
+      ? (activeWard.beds || []).find(b => b.bed_id === s.assigned_bed_id) : null;
+    if (bed) return bedName(bed);
+    return [s.assigned_ward_id, s.assigned_bed_id].filter(Boolean).join(' · ');
+  }
+
+  /** The wristband is heard in the shown ward now. */
+  function isHeardHere(s) {
+    const h = heardWard(s);
+    return Boolean(activeWard && h && h.online && h.ward === activeWard.ward_id);
+  }
+
+  /**
+   * The ward a patient belongs on: where the wristband is heard now; when it is
+   * not heard, the ward of their bed (null when they have none).
+   */
+  function wardOfSubject(s) {
+    const h = heardWard(s);
+    if (h && h.online && h.ward) return h.ward;
+    return s.assigned_ward_id || null;
+  }
 
   /** The alerts of a patient that nobody has answered yet. */
   function pendingAlertsFor(subject, tagId) {
@@ -306,25 +339,27 @@
     const container = document.getElementById('live-map-subjects-container');
     const countBadge = document.getElementById('live-map-subject-count');
     if (!container) return;
-    if (countBadge) countBadge.innerText = String(trackedSubjects.length);
 
-    let html;
-    if (trackedSubjects.length === 0) {
-      html = '<div class="empty-state"><strong>No patient wears a wristband in this ward.</strong>Give one on the Wristbands page.</div>';
-    } else {
-      const now = Date.now();
-      html = trackedSubjects.map(s => {
-        const pos = liveTagPositions.get(s.device_id);
-        const v = liveVitals.get(s.device_id) || {};
-        const st = tileStatus(s, pos, v, now);
-        const where = describeWhere(s.device_id, pos, s, now).main;
-        const hr = heartState(v, now);
-        const bed = s.bed_code || s.assigned_bed_id || '';
-        const avatarHtml = s.photo_url
-          ? `<img src="${escapeHtml(s.photo_url)}" alt=""${imgFallbackAttrs(initialsOf(s.full_name))}>`
-          : escapeHtml(initialsOf(s.full_name));
-        const flagHtml = st.flag ? `<span class="wo-tile-flag">${escapeHtml(st.flag)}</span>` : '';
-        return `<button type="button" class="wo-tile ${escapeHtml(st.cls)}${s.device_id === selectedTagId ? ' is-selected' : ''}"${actionAttrs('selectWardPatient', [s.device_id])}>
+    // In this ward (heard here now, or their bed is here and the wristband is not
+    // heard elsewhere) first; the others below, with the ward they are in
+    const wardId = activeWard ? activeWard.ward_id : null;
+    const here = trackedSubjects.filter(s => wardOfSubject(s) === wardId);
+    const elsewhere = trackedSubjects.filter(s => wardOfSubject(s) !== wardId);
+    if (countBadge) countBadge.innerText = String(here.length);
+
+    const now = Date.now();
+    const tile = (s) => {
+      const pos = liveTagPositions.get(s.device_id);
+      const v = liveVitals.get(s.device_id) || {};
+      const st = tileStatus(s, pos, v, now);
+      const where = describeWhere(s.device_id, pos, s, now).main;
+      const hr = heartState(v, now);
+      const bed = bedLabelOf(s);
+      const avatarHtml = s.photo_url
+        ? `<img src="${escapeHtml(s.photo_url)}" alt=""${imgFallbackAttrs(initialsOf(s.full_name))}>`
+        : escapeHtml(initialsOf(s.full_name));
+      const flagHtml = st.flag ? `<span class="wo-tile-flag">${escapeHtml(st.flag)}</span>` : '';
+      return `<button type="button" class="wo-tile ${escapeHtml(st.cls)}${s.device_id === selectedTagId ? ' is-selected' : ''}"${actionAttrs('selectWardPatient', [s.device_id])}>
           <span class="wo-initials">${avatarHtml}</span>
           <span class="wo-tile-main">
             <span class="wo-tile-name">${escapeHtml(s.full_name || s.device_id)}</span>
@@ -333,7 +368,28 @@
           </span>
           <span class="wo-tile-hr${hr.dim ? ' is-dim' : ''}"><b>${escapeHtml(hr.cls === 'is-measuring' ? '♥' : hr.value)}</b><small>${escapeHtml(hr.cls === 'is-measuring' ? 'measuring' : 'bpm')}</small></span>
         </button>`;
-      }).join('');
+    };
+    // A patient in another ward: one line, a click opens their ward
+    const otherTile = (s) => {
+      const h = heardWard(s);
+      const ward = wardOfSubject(s);
+      const whereText = h && h.online ? `In ${ward}` : ward ? `${ward} · wristband not heard` : 'No bed, wristband not heard';
+      return `<button type="button" class="wo-tile wo-tile-other"${actionAttrs('selectWardPatient', [s.device_id])} title="${escapeHtml(ward ? `Open ${ward}` : 'Show this patient')}">
+          <span class="wo-initials">${escapeHtml(initialsOf(s.full_name))}</span>
+          <span class="wo-tile-main">
+            <span class="wo-tile-name">${escapeHtml(s.full_name || s.device_id)}</span>
+            <span class="wo-tile-where">${escapeHtml(whereText)}</span>
+          </span>
+          <span class="wo-tile-go" aria-hidden="true">›</span>
+        </button>`;
+    };
+
+    let html = here.length
+      ? here.map(tile).join('')
+      : '<div class="empty-state"><strong>Nobody with a wristband in this ward.</strong>Patients with a bed here appear when they get a wristband (Patients page).</div>';
+    if (elsewhere.length) {
+      const otherTilesHtml = elsewhere.map(otherTile).join('');   // built from escaped parts
+      html += `<div class="wo-list-divider">Other wards (${Number(elsewhere.length)})</div>${otherTilesHtml}`;
     }
     if (html !== lastListHtml) {
       container.innerHTML = html;
@@ -364,10 +420,13 @@
     const hwIdEl = document.getElementById('live-map-hardware-id');
     const macEl = document.getElementById('live-map-tag-mac');
     const avatarEl = document.getElementById('live-map-patient-avatar');
+    // Nobody chosen: the card shows only how to choose (no empty vitals)
+    const card = document.getElementById('live-map-patient-card');
+    if (card) card.classList.toggle('is-empty', !tagId);
 
     if (!tagId) {
-      if (nameEl) nameEl.innerText = 'Choose a patient';
-      if (subtextEl) subtextEl.innerText = 'Click a patient in the list or on the map.';
+      if (nameEl) nameEl.innerText = 'No patient chosen';
+      if (subtextEl) subtextEl.innerText = 'Click a patient in the list or on the map to see where they are and their heart rate.';
       if (avatarEl) avatarEl.innerText = '?';
       updateTelemetryCard();
       return;
@@ -375,7 +434,7 @@
 
     if (subject) {
       if (nameEl) nameEl.innerText = subject.full_name || 'Patient';
-      const bed = subject.bed_code || subject.assigned_bed_id;
+      const bed = bedLabelOf(subject);
       const year = subject.dob ? new Date(subject.dob).getFullYear() : null;
       const age = year ? `${new Date().getFullYear() - year} years` : '';
       const sex = subject.gender ? String(subject.gender).charAt(0) + String(subject.gender).slice(1).toLowerCase() : '';
@@ -399,7 +458,21 @@
     if (userChose) triggerActiveModeForTag(tagId, false);
   }
 
-  window.selectWardPatient = (tagId) => selectSubject(tagId, true);
+  /**
+   * A click on a patient: shown here when they are in this ward; else the map
+   * opens the ward their wristband is heard in, or, when it is not heard, the
+   * ward of their bed. Live vitals start for the chosen patient.
+   */
+  window.selectWardPatient = async (tagId) => {
+    const s = trackedSubjects.find(x => x.device_id === tagId);
+    const ward = s ? wardOfSubject(s) : null;
+    if (ward && activeWard && ward !== activeWard.ward_id) {
+      const heard = s && heardWard(s) && heardWard(s).online;
+      if (window.showToast) window.showToast(`${s.full_name} is ${heard ? 'in' : 'not heard; showing the ward of their bed,'} ${ward}.`, 'info', 3000);
+      await openWardLiveMap(ward, tagId);
+    }
+    selectSubject(tagId, true);
+  };
 
   window.openSelectedPatientProfile = function () {
     const s = trackedSubjects.find(x => x.device_id === selectedTagId);
@@ -558,7 +631,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; background:#FFFFFF; border:1px solid var(--border-light); border-radius:4px; padding:4px 8px;">
           <div><strong style="color:var(--primary);">${escapeHtml(a.anchor_id)}</strong> <span style="color:var(--text-muted); font-family:monospace;">(${escapeHtml(a.device_id)})</span></div>
           <div style="font-family:monospace; color:var(--text-secondary);">${Number(a.distance).toFixed(2)}m</div>
-          <div><span class="badge badge-info" style="font-size:9px;">${escapeHtml(a.rssi)} dBm</span></div>
+          <div><span class="badge badge-info keep-case">${escapeHtml(a.rssi)} dBm</span></div>
         </div>
       `;
     }).join('');
@@ -1060,11 +1133,39 @@
       ctx.stroke();
     }
 
-    // Bed names always: nurses find patients by bed
-    ctx.fillStyle = '#334155';
-    ctx.font = '600 13px Inter, "Segoe UI", sans-serif';
+    // Bed names always: nurses find patients by bed. A bed given to a patient also
+    // shows their name and ID (shortened to fit); a free bed says so.
+    const occupant = bedOccupants.get(bed.bed_id);
+    const fit = (text, maxW) => {
+      let out = String(text);
+      if (ctx.measureText(out).width <= maxW) return out;
+      while (out.length > 1 && ctx.measureText(`${out}…`).width > maxW) out = out.slice(0, -1);
+      return `${out}…`;
+    };
+    const cx = p.x + bw / 2;
+    const cy = p.y + bl / 2;
+    const maxW = Math.max(20, bw - 10);
     ctx.textAlign = 'center';
-    ctx.fillText(bed.bed_code || bed.bed_id, p.x + bw / 2, p.y + bl / 2 + 4);
+    ctx.textBaseline = 'middle';
+    if (occupant && bl >= 44) {
+      ctx.fillStyle = '#334155';
+      ctx.font = '600 12px Inter, "Segoe UI", sans-serif';
+      ctx.fillText(fit(bed.bed_code || bed.bed_id, maxW), cx, cy - 16);
+      ctx.fillStyle = '#0F172A';
+      ctx.font = '700 13px Inter, "Segoe UI", sans-serif';
+      ctx.fillText(fit(occupant.full_name, maxW), cx, cy);
+      ctx.fillStyle = '#475569';
+      ctx.font = '600 11px Inter, "Segoe UI", sans-serif';
+      ctx.fillText(fit(occupant.patient_id, maxW), cx, cy + 15);
+    } else {
+      ctx.fillStyle = '#334155';
+      ctx.font = '600 13px Inter, "Segoe UI", sans-serif';
+      ctx.fillText(fit(bed.bed_code || bed.bed_id, maxW), cx, occupant ? cy - 7 : cy);
+      ctx.font = '600 11px Inter, "Segoe UI", sans-serif';
+      ctx.fillStyle = occupant ? '#0F172A' : '#94A3B8';
+      const state = bed.status === 'UNAVAILABLE' ? 'OUT OF USE' : bed.status === 'OCCUPIED' ? 'TAKEN' : 'FREE';
+      ctx.fillText(fit(occupant ? occupant.full_name : state, maxW), cx, occupant ? cy + 8 : cy + 15);
+    }
     ctx.restore();
   }
 
@@ -1635,7 +1736,7 @@
           </div>
           <div style="display: flex; align-items: center; gap: 12px;">
             <span style="color: var(--text-secondary);">True Dist: <b style="color: var(--primary);">${dTrue}m</b></span>
-            <span class="badge badge-neutral" style="font-size: 10px;">Current A: ${curA} dBm</span>
+            <span class="badge badge-neutral keep-case">Current A: ${curA} dBm</span>
           </div>
         `;
         listEl.appendChild(row);
@@ -2065,6 +2166,83 @@
     }
   };
 
+  /**
+   * A position message (IPS_POSITION_UPDATE, also those ips-init sends when the map
+   * opens). Every ward's message tells where that wristband is; only the shown
+   * ward's moves a dot. A wristband now heard in another ward leaves this map.
+   */
+  function applyPositionMessage(msg) {
+    if (!msg || !activeWard) return;
+    const tagId = msg.tag_id;
+    if (!tagId) return;
+    if (msg.ward_id) tagWard.set(tagId, { ward: msg.ward_id, online: msg.status !== 'OFFLINE' });
+    if (msg.ward_id !== activeWard.ward_id) {
+      // Heard in another ward now (walked out, or another ward's sensors hear them better)
+      if (liveTagPositions.delete(tagId) || (msg.tag_mac && liveTagPositions.delete(msg.tag_mac))) {
+        if (hoveredTagId === tagId) hoveredTagId = null;
+      }
+      renderSubjectsList();
+      if (tagId === selectedTagId) updateTelemetryCard();
+      return;
+    }
+
+    // Purge ghost MAC key if tag_mac is provided and differs from tagId
+    if (msg.tag_mac && msg.tag_mac !== tagId && liveTagPositions.has(msg.tag_mac)) {
+      liveTagPositions.delete(msg.tag_mac);
+    }
+
+    // Where the patient is: seen by a headset (source HEADSET: its depth sensor, about as
+    // accurate as the room alignment), by the LiDAR (source LIDAR: about 0.1 m; held when
+    // it lost them, for example lying in bed) or the Bluetooth estimate (often 1-3 m off).
+    // The Bluetooth position is kept as well, to show how far off it is.
+    const seen = {
+      source: msg.source === 'HEADSET' || msg.source === 'LIDAR' ? msg.source : 'BLE',
+      seenBy: msg.seen_by || null,
+      seenManual: !!msg.seen_manual,
+      lidarHeld: !!msg.lidar_held,
+      lidarInBed: !!msg.lidar_in_bed,
+      bleX: msg.has_ble ? msg.ble_x : undefined,
+      bleY: msg.has_ble ? msg.ble_y : undefined
+    };
+    const existing = liveTagPositions.get(tagId);
+    if (!existing) {
+      liveTagPositions.set(tagId, {
+        x: msg.x,
+        y: msg.y,
+        targetX: msg.x,
+        targetY: msg.y,
+        status: msg.status || 'ONLINE',
+        motion_state: msg.motion_state || 'STATIONARY',
+        confidence: msg.confidence,
+        anchors: msg.anchors_used || [],
+        lastSeen: msg.timestamp || Date.now(),
+        ...seen
+      });
+    } else {
+      existing.targetX = msg.x;
+      existing.targetY = msg.y;
+      existing.status = msg.status || 'ONLINE';
+      existing.motion_state = msg.motion_state || (existing.motion_state || 'STATIONARY');
+      existing.confidence = msg.confidence;
+      // Updates from a headset carry no anchors: keep the ones last heard
+      if (Array.isArray(msg.anchors_used)) existing.anchors = msg.anchors_used;
+      existing.lastSeen = msg.timestamp || Date.now();
+      Object.assign(existing, seen);
+    }
+
+    const tagsBadge = document.getElementById('live-map-tags-badge');
+    if (tagsBadge) {
+      const onlineCount = Array.from(liveTagPositions.values()).filter(p => p.status !== 'OFFLINE').length;
+      tagsBadge.innerText = `● ${onlineCount} of ${liveTagPositions.size} wristband${liveTagPositions.size === 1 ? '' : 's'} online`;
+    }
+
+    renderSubjectsList();
+
+    if (tagId === selectedTagId) {
+      updateTelemetryCard();
+    }
+  }
+
   // --- WebSocket Live Listener ---
   function setupWebSocketListeners() {
     if (!window.wsClient) {
@@ -2101,9 +2279,10 @@
           changed = true;
         }
       }
+      targets.forEach(t => tagWard.delete(t));
       if (targets.includes(selectedTagId)) {
-        const remaining = Array.from(liveTagPositions.keys());
-        selectedTagId = remaining.length > 0 ? remaining[0] : null;
+        // The removed wristband was shown: the card goes back to empty
+        selectSubject(null, false);
         changed = true;
       }
       if (changed) {
@@ -2112,71 +2291,11 @@
       }
     });
 
-    // 2. Position update from Multilateration Engine
+    // 2. Position update (every ward's): see applyPositionMessage
     window.wsClient.on('IPS_POSITION_UPDATE', (msg) => {
       if (!isLiveMapActive || !activeWard) return;
-      if (msg.ward_id !== activeWard.ward_id) return;
-
-      const tagId = msg.tag_id;
-      if (!tagId) return;
-
-      // Purge ghost MAC key if tag_mac is provided and differs from tagId
-      if (msg.tag_mac && msg.tag_mac !== tagId && liveTagPositions.has(msg.tag_mac)) {
-        liveTagPositions.delete(msg.tag_mac);
-      }
-
-      // Where the patient is: seen by a headset (source HEADSET: its depth sensor, about as
-      // accurate as the room alignment), by the LiDAR (source LIDAR: about 0.1 m; held when
-      // it lost them, for example lying in bed) or the Bluetooth estimate (often 1-3 m off).
-      // The Bluetooth position is kept as well, to show how far off it is.
-      const seen = {
-        source: msg.source === 'HEADSET' || msg.source === 'LIDAR' ? msg.source : 'BLE',
-        seenBy: msg.seen_by || null,
-        seenManual: !!msg.seen_manual,
-        lidarHeld: !!msg.lidar_held,
-        lidarInBed: !!msg.lidar_in_bed,
-        bleX: msg.has_ble ? msg.ble_x : undefined,
-        bleY: msg.has_ble ? msg.ble_y : undefined
-      };
-      const existing = liveTagPositions.get(tagId);
-      if (!existing) {
-        liveTagPositions.set(tagId, {
-          x: msg.x,
-          y: msg.y,
-          targetX: msg.x,
-          targetY: msg.y,
-          status: msg.status || 'ONLINE',
-          motion_state: msg.motion_state || 'STATIONARY',
-          confidence: msg.confidence,
-          anchors: msg.anchors_used || [],
-          lastSeen: msg.timestamp || Date.now(),
-          ...seen
-        });
-      } else {
-        existing.targetX = msg.x;
-        existing.targetY = msg.y;
-        existing.status = msg.status || 'ONLINE';
-        existing.motion_state = msg.motion_state || (existing.motion_state || 'STATIONARY');
-        existing.confidence = msg.confidence;
-        // Updates from a headset carry no anchors: keep the ones last heard
-        if (Array.isArray(msg.anchors_used)) existing.anchors = msg.anchors_used;
-        existing.lastSeen = msg.timestamp || Date.now();
-        Object.assign(existing, seen);
-      }
-
-      const tagsBadge = document.getElementById('live-map-tags-badge');
-      if (tagsBadge) {
-        const onlineCount = Array.from(liveTagPositions.values()).filter(p => p.status !== 'OFFLINE').length;
-        tagsBadge.innerText = `● ${onlineCount} of ${liveTagPositions.size} wristband${liveTagPositions.size === 1 ? '' : 's'} online`;
-      }
-
-      renderSubjectsList();
-
-      if (tagId === selectedTagId) {
-        updateTelemetryCard();
-      }
+      applyPositionMessage(msg);
     });
-
     // 2b. The people the ward's LiDARs follow, with the wristband each is linked to
     window.wsClient.on('ROOM_PEOPLE', (msg) => {
       if (!isLiveMapActive || !activeWard || msg.ward_id !== activeWard.ward_id) return;
