@@ -690,3 +690,65 @@ table.data-table th {
   border-color: #B45309 !important;
   box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.3) !important;
 }
+
+/* Phase 11: the "⋯" menu of a list row, and pick lists in dialogs */
+.row-menu {
+  display: none;
+  position: fixed;
+  z-index: 3000;
+  min-width: 220px;
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.22);
+  padding: 6px;
+}
+.row-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 9px 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.row-menu button:hover { background: var(--primary-subtle); }
+.row-menu button.danger { color: var(--status-danger-text); }
+.row-menu button.danger:hover { background: var(--status-danger-bg); }
+
+.pick-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.pick-row:has(input:checked) { border-color: var(--primary); background: var(--primary-subtle); }
+.pick-main { flex: 1; display: flex; flex-direction: column; }
+.pick-main small { color: var(--text-muted); font-size: 12px; }
+.pick-side { font-size: 13px; color: var(--text-secondary); white-space: nowrap; }
+
+/* Phase 11: the ward map of the "give a bed" dialog */
+.bed-map { border: 1px solid var(--border); border-radius: 10px; background: #F8FAFC; padding: 8px; margin-bottom: 6px; }
+.bed-map svg { width: 100%; height: auto; max-height: 280px; display: block; }
+.bed-map .room { fill: #FFFFFF; stroke: #334155; stroke-width: 3; }
+.bed-map .bed-pick rect { stroke-width: 2; }
+.bed-map .bed-pick text { font-size: 12px; font-weight: 600; font-family: inherit; pointer-events: none; }
+.bed-map .bed-pick.free rect { fill: #DCFCE7; stroke: #16A34A; }
+.bed-map .bed-pick.free { cursor: pointer; }
+.bed-map .bed-pick.free:hover rect { fill: #BBF7D0; }
+.bed-map .bed-pick.taken rect { fill: #E2E8F0; stroke: #94A3B8; }
+.bed-map .bed-pick.taken text { fill: #64748B; }
+.bed-map .bed-pick.chosen rect { fill: #2563EB; stroke: #1E3A8A; }
+.bed-map .bed-pick.chosen text { fill: #FFFFFF; }
+.bed-map-legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+.bed-map-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; border: 2px solid; }
+.bed-map-legend i.free { background: #DCFCE7; border-color: #16A34A; }
+.bed-map-legend i.taken { background: #E2E8F0; border-color: #94A3B8; }
+.bed-map-legend i.chosen { background: #2563EB; border-color: #1E3A8A; }

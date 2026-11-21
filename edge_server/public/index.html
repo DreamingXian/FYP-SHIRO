@@ -26,7 +26,7 @@
 
   <!-- =========================================================================
        HEADER: the menu follows the work of the person signed in (Phase 11).
-       Everyone: Ward, Patients, Wristbands, Shift report.
+       Everyone: Ward, Patients (with their wristbands), Shift report.
        Admins also: Setup (wards, devices, system status, accounts, test tools).
        ========================================================================= -->
   <header class="global-header">
@@ -44,7 +44,6 @@
     <nav class="nav-tabs" aria-label="Main menu">
       <button class="nav-tab-btn active" data-tab="tab-ward">Ward</button>
       <button class="nav-tab-btn" data-tab="tab-patients">Patients</button>
-      <button class="nav-tab-btn" data-tab="tab-bindings">Wristbands</button>
       <a class="nav-tab-btn" href="/shift_report.html" target="_blank" rel="noopener" title="Shift summary for handover; opens in a new tab">Shift report ↗</a>
 
       <!-- Admins only (auth_client.js shows it) -->
@@ -81,10 +80,6 @@
 
     <section class="tab-pane" id="tab-patients">
       <div class="page-loading">Loading patients…</div>
-    </section>
-
-    <section class="tab-pane" id="tab-bindings">
-      <div class="page-loading">Loading wristbands…</div>
     </section>
 
     <section class="tab-pane" id="tab-ward-config">
@@ -149,10 +144,10 @@
   <script src="/js/ward_config/placement_planner.js?v=1.0"></script>
   <script src="/js/ward_config/ward_live_map.js?v=6.0"></script>
   <script src="/js/ward_config/position_test_panel.js?v=1.1"></script>
-  <script src="/js/patients/patients_controller.js?v=4.3"></script>
+  <script src="/js/patients/patients_controller.js?v=4.4"></script>
   <script src="/js/patients/incident_history.js?v=1.1"></script>
+  <script src="/js/patients/patient_wristbands.js?v=1.0"></script>
   <script src="/js/devices/devices_controller.js?v=4.3"></script>
-  <script src="/js/bindings/bindings_controller.js?v=4.1"></script>
   <script src="/js/live_lab/live_lab_charts.js?v=4.1"></script>
   <script src="/js/health/health_monitor.js?v=1.1"></script>
   <script src="/js/admin/admin_controller.js?v=1.1"></script>

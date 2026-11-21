@@ -40,7 +40,6 @@ async function initializeApp() {
       user.role === 'ADMIN' ? loadViewPartial('tab-admin', '/views/admin/admin.html') : Promise.resolve(),
       loadViewPartial('tab-patients', '/views/patients/patients.html'),
       loadViewPartial('tab-devices', '/views/devices/devices.html'),
-      loadViewPartial('tab-bindings', '/views/bindings/bindings.html'),
       (async () => {
         const [dirHtml, editHtml] = await Promise.all([
           fetch(`/views/ward_config/ward_directory.html?_t=${Date.now()}`).then(r => r.text()),
@@ -127,10 +126,6 @@ async function initializeApp() {
       if (typeof window.initDevicesModule === 'function') {
         window.initDevicesModule();
       }
-    } else if (targetTabId === 'tab-bindings') {
-      if (typeof window.initBindingsModule === 'function') {
-        window.initBindingsModule();
-      }
     } else if (targetTabId === 'tab-ward-config') {
       if (typeof window.forceReturnToWardDirectory === 'function') {
         window.forceReturnToWardDirectory();
@@ -216,9 +211,6 @@ async function initializeApp() {
   }
   if (typeof window.initDevicesModule === 'function') {
     window.initDevicesModule();
-  }
-  if (typeof window.initBindingsModule === 'function') {
-    window.initBindingsModule();
   }
   if (typeof window.initHealthMonitor === 'function') {
     window.initHealthMonitor();

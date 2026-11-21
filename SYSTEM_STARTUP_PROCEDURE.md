@@ -205,8 +205,9 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
 
 3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The menu follows the role of the person signed in (Phase 11):
    * **Ward** (the first page): the ward overview, a live map of one ward with its patients and their vitals. Choose the ward at the top; the dashboard opens the same ward next time on that computer. Admins also see 🎯 Calibrate and 📏 Position test there.
-   * **Patients:** the admitted patients, 8 a page (Discharged and All on the filter). **＋ Admit patient** opens the admission form. Each row: vitals history, incidents, edit, give a bed or discharge. 🚨 Incident log lists the incidents of every patient.
-   * **Wristbands:** give a patient a wristband, take it off, and the wristband history.
+   * **Patients:** the admitted patients, 8 a page (Discharged and All on the filter). **＋ Admit patient** opens the admission form. Each row shows the ward and bed and the wristband the patient wears (**＋ Give wristband** when none), with 📈 Vitals, 🚨 Incidents and a **⋯** menu: edit details, give a bed, give or take off the wristband, wristband history, discharge, delete. 🚨 Incident log lists the incidents of every patient; ⌚ Wristband history, who wore which wristband and when.
+     * **Give a bed:** a map of the ward opens, free beds in green: click one (or choose it in the list).
+     * **Vitals:** heart rate and SpO2 for the last hour, 6 h, 24 h, 7 or 30 days, with dates on the time axis for the longer periods; **⬇ CSV** downloads every reading for Excel, **🖨 Print / PDF** opens a report to print or save as PDF.
    * **Shift report ↗:** the handover report, in a new tab.
    * **⚙ Setup** (admins only):
      * **Wards & layout:** room size, door, furniture, wall sensors, the LiDAR and beds, and **📐 Plan Anchors & LiDAR**: where to mount each anchor and the LiDAR, which way each faces, and a printable installation sheet (Section 4.5).

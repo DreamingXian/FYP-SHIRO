@@ -157,6 +157,7 @@
       </div>
 
       <button type="button" class="btn btn-outline btn-sm" onclick="openIncidentHistoryModal(null, null)" title="Falls, critical vitals and door alerts of every patient">🚨 Incident log</button>
+      <button type="button" class="btn btn-outline btn-sm" onclick="openWristbandHistory()" title="Who wore which wristband, and when">⌚ Wristband history</button>
       <button type="button" class="btn btn-primary btn-sm" id="btn-open-admission" onclick="toggleAdmissionForm(true)">＋ Admit patient</button>
     </div>
   </div>
@@ -169,6 +170,7 @@
           <th>Age</th>
           <th>Sex</th>
           <th>Ward and bed</th>
+          <th>Wristband</th>
           <th>Admitted on</th>
           <th>Status</th>
           <th style="text-align: right;">Actions</th>
@@ -176,7 +178,7 @@
       </thead>
       <tbody id="patients-table-body">
         <tr>
-          <td colspan="7" class="empty-state">Loading patients…</td>
+          <td colspan="8" class="empty-state">Loading patients…</td>
         </tr>
       </tbody>
     </table>
