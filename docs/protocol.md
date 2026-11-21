@@ -131,10 +131,10 @@ Refused logins are logged once per address every 10 seconds, without the passwor
 
 ## 3. Edge server to anchors: 1 Hz command
 
-When a clinician selects a patient on the live map, the server asks that wristband to stream its vitals at 1 Hz for `duration` seconds. Every anchor receives the command; only the anchor named in `target_anchor` carries it out.
+When a clinician selects a patient on the live map, the server asks that wristband to stream its vitals at 1 Hz. The wristband then streams for 120 seconds, a time fixed in its firmware (V5.3; 60 seconds before). Every anchor receives the command; only the anchor named in `target_anchor` carries it out.
 
 ```json
-{ "cmd": "SET_ACTIVE", "target_tag": "TAG-002", "target_mac": "54:32:04:AB:CD:EF", "target_anchor": "A4:CF:12:01:F8:2C", "duration": 60 }
+{ "cmd": "SET_ACTIVE", "target_tag": "TAG-002", "target_mac": "54:32:04:AB:CD:EF", "target_anchor": "A4:CF:12:01:F8:2C", "duration": 120 }
 ```
 
 | Field | Meaning |
@@ -142,7 +142,7 @@ When a clinician selects a patient on the live map, the server asks that wristba
 | `target_tag` | Device ID of the wristband, or its MAC address when it is not enrolled |
 | `target_mac` | BLE address of the wristband |
 | `target_anchor` | Wi-Fi MAC of the anchor that heard the wristband most strongly: the median of its last 5 readings within 3.5 seconds (`services/telemetry/tag_hearing.js`) |
-| `duration` | Seconds, 5 to 600 |
+| `duration` | Seconds the wristband streams: always 120, its own fixed time. The anchor writes only `ACTIVE` to the wristband, so a length asked for on the dashboard or headset (checked: 5 to 600) is not used. |
 
 Only one anchor connects, because two anchors opening a BLE connection to the same wristband at the same time make both attempts fail. When no anchor has heard the wristband within 3.5 seconds, the server sends nothing and answers the dashboard with an error. The chosen anchor still checks that it has heard the wristband within 3.5 seconds at -82 dBm or stronger before it connects. An anchor ignores a command without `target_anchor`.
 
@@ -168,6 +168,7 @@ An enrolled anchor or wristband is known by its device ID, any other by its MAC 
 Alarm rules use the normalised values and the limits in `edge_server/config/clinical_thresholds.js`:
 
 - **Fall:** the first message with `fall` true for a wristband and fall counter opens one incident. Repeats within 90 seconds belong to the same incident.
+- **At the door, left the ward (geofence):** only in a ward with a LiDAR; see section 5, "At the door and leaving the ward".
 - **Fall after a server restart:** for 90 seconds after start-up, a wristband that is still flagging a fall is matched to the incident already stored for it, so a restart does not raise the same fall twice.
 - **Heart rate:** judged only with skin contact. An extreme rate must persist for 5 seconds. An abnormal rate must be confirmed (5 seconds without a break) in two measurement cycles, or last 30 seconds without a break. A silence of more than 10 seconds, or a reading that is not abnormal, ends a series.
 - **SpO2:** stored and displayed, but it raises no alarm (`spo2AlarmsEnabled: false` in `config/clinical_thresholds.js`). The wristband's SpO2 formula is not calibrated: in the bench tests of 14 Nov 2026, 68% of the readings on a healthy tester were below 90%. The switch may be turned on after validation against a reference pulse oximeter.
@@ -257,6 +258,23 @@ The position of a linked or held patient is the map position, with **source `LID
 | WebSocket `ROOM_PEOPLE` | dashboards | The same, at most 5 a second per ward, and at once when the number of people changes. The Live Map draws people without a wristband as grey dots. |
 
 The position test records the source of each reading and, for `LIDAR`, whether it was held (`LiDAR held` in the CSV). `tools/replay_lidar_runs.js <session>` runs the recorded runs of a session through the same code and scores the result against the marked spots.
+
+### At the door and leaving the ward (Phase 10)
+
+The door zone is the door's width plus 0.1 m on each side, reaching 1 m into the room (`services/ips/zones.js`; in WARD-005 x 1.29–2.29 m, y 2.47–3.39 m). For a patient whose wristband the LiDAR has linked:
+
+| Kind (`geofence_kind`) | When | Rule |
+| :--- | :--- | :--- |
+| `AT_DOOR` | The LiDAR has seen the patient in the door zone for 10 s | `door_watch.js`. Stepping out of the zone for less than 3 s does not restart the 10 s; walking through the zone does not count. At most one per patient a minute. |
+| `LEFT_WARD` | The LiDAR lost the patient in the door zone and did not see them again before the held position ended | `lidar_linker.js`. A patient lost in the door zone is held as "elsewhere", never as lying in bed, even next to a bed. The hold ends 10 s after the tracker let the person go (1.5 s after the last sighting), so the alert comes about 11.5 s after the patient was last seen; earlier when the Bluetooth position leaves (2 m for 5 s) or the wristband is no longer heard. Someone appearing within 0.8 m before then is the patient again, and there is no alert. |
+
+Each is one `GEOFENCE_BREACH` incident with its `geofence_kind` (`services/alerts/geofence_alerts.js` → `alert_service.recordIncident`), sent as `EMERGENCY_ALERT` to the dashboards and headsets like a fall, with the ward and the spot where the patient was last seen. No alert when:
+- a headset sees the patient in that ward (the headset comes first): anywhere for `LEFT_WARD`, away from the door zone for `AT_DOOR`;
+- the wristband is not bound to a patient.
+
+After `LEFT_WARD` the wristband is linked again only to a person first seen within 0.5 m of the door zone after the exit (the patient coming back in), not to anyone who was already in the room. Until then its position is Bluetooth. The patient coming back is logged; the alert stays until it is acknowledged.
+
+Limits: no door alerts in a ward without a LiDAR (Bluetooth cannot tell the door zone from the rest of the room); a patient who takes off the wristband and walks out is not followed; when the wristband is linked to the wrong person, that person's door events are reported for the patient.
 
 ## 6. Changing the protocol
 

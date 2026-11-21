@@ -4,6 +4,16 @@
 // Documentation: Chapter 4 (Section 4.2.2, Table 4.13)
 // =============================================================================
 
+/** The words for an incident's type: a geofence alert says which kind it is. */
+function incidentTypeText(incident) {
+  if (incident.incident_category === 'GEOFENCE_BREACH') {
+    if (incident.geofence_kind === 'AT_DOOR') return 'AT THE DOOR';
+    if (incident.geofence_kind === 'LEFT_WARD') return 'LEFT THE WARD';
+    return 'GEOFENCE';
+  }
+  return String(incident.incident_category || 'INCIDENT').replace('_', ' ');
+}
+
 class EmergencyAlertManager {
   constructor() {
     this.activeAlerts = [];
@@ -399,9 +409,9 @@ class EmergencyAlertManager {
       catEl.style.color = '#D97706';
       iconEl.innerText = '⚠️';
     } else if (incident.incident_category === 'GEOFENCE_BREACH') {
-      catEl.innerText = '🚪 GEOFENCE BOUNDARY BREACH';
+      catEl.innerText = `🚪 ${incidentTypeText(incident)}`;
       catEl.style.color = '#7C3AED';
-      iconEl.innerText = '📍';
+      iconEl.innerText = '🚪';
     }
 
     // Unknown values are shown as unknown. Nothing is filled in on the screen.
@@ -448,7 +458,7 @@ class EmergencyAlertManager {
       const topAlert = this.activeAlerts[0];
       const simulatedTag = (topAlert.is_simulated === true || topAlert.is_simulated === 1) ? '[SIMULATION] ' : '';
       const bannerWard = topAlert.ward_id ? ` in ${topAlert.ward_id}` : ' (ward unknown)';
-      bannerText.innerText = `🚨 ${simulatedTag}EMERGENCY: ${String(topAlert.incident_category || 'INCIDENT').replace('_', ' ')} on ${topAlert.patient_name || 'unknown patient'}${bannerWard}! Click to inspect.`;
+      bannerText.innerText = `🚨 ${simulatedTag}EMERGENCY: ${incidentTypeText(topAlert)} on ${topAlert.patient_name || 'unknown patient'}${bannerWard}! Click to inspect.`;
       banner.style.display = 'block';
     } else {
       banner.style.display = 'none';

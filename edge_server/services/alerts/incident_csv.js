@@ -18,6 +18,13 @@ const CATEGORY_TEXT = Object.freeze({
   CRITICAL_VITALS: 'Critical vitals',
   GEOFENCE_BREACH: 'Left the ward'
 });
+// The two kinds of geofence alert (Phase 10); older geofence rows have none
+const GEOFENCE_KIND_TEXT = Object.freeze({ LEFT_WARD: 'Left the ward', AT_DOOR: 'At the door' });
+
+function typeText(r) {
+  if (r.incident_category === 'GEOFENCE_BREACH' && GEOFENCE_KIND_TEXT[r.geofence_kind]) return GEOFENCE_KIND_TEXT[r.geofence_kind];
+  return CATEGORY_TEXT[r.incident_category] || r.incident_category;
+}
 
 /** Local time "YYYY-MM-DD HH:MM:SS", or null. */
 function formatLocalTime(value) {
@@ -49,7 +56,7 @@ const round = (digits) => (v) => {
 const COLUMNS = Object.freeze([
   ['Incident ID', r => r.incident_id],
   ['Time (local)', r => formatLocalTime(r.trigger_timestamp)],
-  ['Type', r => CATEGORY_TEXT[r.incident_category] || r.incident_category],
+  ['Type', typeText],
   ['Live Lab test', r => (Number(r.is_simulated) === 1 ? 'yes' : 'no')],
   ['Patient ID', r => r.patient_id],
   ['Patient name', r => r.patient_name],

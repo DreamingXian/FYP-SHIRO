@@ -120,7 +120,8 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
 * **Only the Project's Devices Are Accepted:** The MQTT broker requires the anchor login and an anchor client ID, limits each anchor to its own topics and locks out an address after 10 failed logins. MySQL and InfluxDB listen on the server PC only, the server uses a limited MySQL account, and the firewall opens only the dashboard and MQTT ports on private networks. What is protected, and the known limits (no TLS, unauthenticated BLE, shared anchor login, minimal sign-in), are in [docs/security.md](docs/security.md).
 * **Stable Under Continuous Telemetry:** Device presence is kept in memory and written in one batch every 5 s; status changes are written at once. In a 5-minute load test (3 anchors × 2 wristbands at 7 Hz) database queries fell from about 150 to 2.6 per second and memory stayed at about 95 MB instead of growing to 200 MB; a 30-minute run with the real hardware stayed level at 79–83 MB ([docs/test_records/load-test.md](docs/test_records/load-test.md)). Ctrl+C shuts the server down cleanly without losing buffered data; log lines carry a time stamp and a level (`LOG_LEVEL`); a database outage is logged without flooding and the server recovers by itself.
 * **Clinician Sign-in and Audit Trail:** The dashboard and API need a signed-in clinician (roles `ADMIN` and `CLINICIAN`; scrypt password hashes, 12-hour HttpOnly session, lockout after 5 wrong passwords). Every change, sign-in and failed sign-in is written to an audit log with who did it; bindings and acknowledgements record the real clinician. A headset is paired once with a 6-digit code from the dashboard and then uses its own revocable token. The ADMIN tab manages accounts, headset pairings and the audit log ([docs/security.md](docs/security.md)).
-* **One Anchor per 1 Hz Command:** The server sends the 1 Hz vitals command through the anchor that hears the wristband most strongly, so two anchors never compete for the same BLE connection.
+* **One Anchor per 1 Hz Command:** The server sends the 1 Hz vitals command through the anchor that hears the wristband most strongly, so two anchors never compete for the same BLE connection. The wristband then streams for 120 s (firmware V5.3).
+* **Door Alerts (ward with a LiDAR):** a patient whom the LiDAR follows raises **At the door** after 10 s in the doorway, and **Left the ward** when it loses them at the door and does not see them again (about 11.5 s). Both are geofence incidents with their kind, on the dashboard and the headset, in the incident log, CSV and shift report ([docs/protocol.md](docs/protocol.md), section 5). Not in a ward without a LiDAR; a wristband taken off is not followed.
 
 ### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
 * **Color Passthrough Digital Twin:** Real-time 3D ward generation (`WardVisualizer.cs`) matching real-world architectural dimensions, walls, doors, obstacles, and hospital beds.
@@ -317,11 +318,11 @@ Code/
 * [ ] **Remaining clinical features:**
   * ✅ Headset emergency overlay with alarm tone and acknowledge; live 2D ward map on the hand slate.
   * ✅ Person linking on the headset: a wristband linked to the person the depth sensor sees, choosing by hand, maps showing where the headset sees the patient.
-  * ✅ Headset-triggered live mode (1 Hz from the Live Map card). Open: an explicit return to passive mode, and a longer live mode.
+  * ✅ Headset-triggered live mode (1 Hz from the Live Map card), 120 s (wristband V5.3). Open: an explicit return to passive mode.
   * ✅ Each patient's incident history on the dashboard's Patients page (🚨 Incidents on a patient row, 🚨 Incident log for every patient), with who responded and how fast; **⬇ CSV** downloads the filtered list for Excel.
   * ✅ Headset: restore the ward alignment after the headset wakes from sleep (F-5, confirmed on the headset).
   * ✅ Optional patient height and weight; one spatial anchor per headset and ward; automatic ward detection (walk between two rooms not tested yet).
-  * Geofence detection on the server.
+  * ✅ Geofence on the server, in a ward with a LiDAR: **At the door** and **Left the ward** alerts ([docs/test_records/ward-exit-10.md](docs/test_records/ward-exit-10.md)).
   * Patient profile and 24-hour history in the headset.
   * ✅ Binding history instead of deleting binding rows.
   * ✅ Shift summary report for handover (printable, Save as PDF).

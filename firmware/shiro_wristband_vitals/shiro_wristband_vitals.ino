@@ -1,6 +1,6 @@
 /*
  * =========================================================================================
- *   SHIRO Wristband Tag - Physiological & Kinematic Telemetry Node (V5.2 - Protocol 2)
+ *   SHIRO Wristband Tag - Physiological & Kinematic Telemetry Node (V5.3 - Protocol 2)
  *   Hardware: Seeed Studio XIAO ESP32-C6
  *   Sensors:  HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) via I2C (SDA: D4, SCL: D5)
  *   Battery:  100k/100k Divider on BAT+ to D0
@@ -11,6 +11,7 @@
  *
  *   Serial log (USB, 115200): a [BROADCAST] line 5 times a second, and from V5.2 a
  *   [FALL CHECK] line for every drop-like event, saying how it ended and why.
+ *   V5.3: 1 Hz live mode lasts 120 s (was 60 s), on a request and after a fall.
  *
  *   Files in this sketch folder:
  *     fall_detector.h  - fall state machine, its fall-check report and its self-test
@@ -140,7 +141,7 @@ const unsigned long BURST_MAX_DURATION     = 90000;  // 90 Seconds
 const unsigned long BURST_NO_SKIN_TIMEOUT  = 5000;   // 5 Seconds
 const uint8_t       BURST_READINGS_WANTED  = 10;     // seconds with a heart rate
 uint8_t burstReadings = 0;
-const unsigned long ACTIVE_STREAM_TIMEOUT  = 60000;  // 60 Seconds when triggered
+const unsigned long ACTIVE_STREAM_TIMEOUT  = 120000; // 120 s of 1 Hz streaming per trigger (V5.3; was 60 s)
 
 // Kinematic Vector & Motion Classifier
 float currentG = 1.0f;
@@ -270,7 +271,7 @@ class ControlCallback : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pCharacteristic) {
     String value = pCharacteristic->getValue();
     if (value.length() > 0) {
-      Serial.printf("[BLE GATT CMD] Received '%s' -> Escalating to 1 Hz Active Mode!\n", value.c_str());
+      Serial.printf("[BLE GATT CMD] Received '%s' -> 1 Hz Active Mode for %lu s!\n", value.c_str(), ACTIVE_STREAM_TIMEOUT / 1000UL);
       activeModeEndTime = millis() + ACTIVE_STREAM_TIMEOUT;
     }
   }
@@ -516,7 +517,7 @@ void setup() {
   delay(1500);
 
   Serial.println("\n==========================================================");
-  Serial.println("  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)");
+  Serial.println("  SHIRO Wristband Tag - Adaptive Telemetry (V5.3 - Protocol 2)");
   Serial.println("  Hardware: Seeed Studio XIAO ESP32-C6");
   Serial.println("==========================================================");
 

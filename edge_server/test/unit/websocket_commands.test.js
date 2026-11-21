@@ -14,7 +14,7 @@ describe('1 Hz activation (SET_ACTIVE_MODE)', () => {
   test('the command of the live map is accepted', () => {
     assert.deepEqual(
       validateCommand({ action: 'SET_ACTIVE_MODE', data: { tagId: 'TAG-002', targetMac: '58:e6:c5:1b:80:4e', duration: 60 } }),
-      { action: 'SET_ACTIVE_MODE', tagId: 'TAG-002', targetMac: '58:E6:C5:1B:80:4E', duration: 60 }
+      { action: 'SET_ACTIVE_MODE', tagId: 'TAG-002', targetMac: '58:E6:C5:1B:80:4E', duration: 120 }
     );
   });
 
@@ -22,7 +22,7 @@ describe('1 Hz activation (SET_ACTIVE_MODE)', () => {
     const cmd = validateCommand({ action: 'SET_ACTIVE_MODE', tag_id: '58:E6:C5:1B:80:4E' });
     assert.equal(cmd.tagId, '58:E6:C5:1B:80:4E');
     assert.equal(cmd.targetMac, null);
-    assert.equal(cmd.duration, 60);
+    assert.equal(cmd.duration, 120, 'the wristband\'s own length (firmware V5.3), whatever was asked');
   });
 
   test('a command without a wristband is refused: no wristband is assumed', () => {

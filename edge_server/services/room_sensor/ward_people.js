@@ -3,7 +3,9 @@
 // Runs the three steps for every turn of a LiDAR in the ward:
 //   people.js          the people in the turn
 //   people_tracker.js  followed from turn to turn (one tracker per LiDAR)
-//   lidar_linker.js    which of them wears which wristband
+//   lidar_linker.js    which of them wears which wristband, and who left
+//                      through the door
+//   door_watch.js      who stands at the door
 // The live server (people_service.js) and the replay of recorded runs
 // (tools/replay_lidar_runs.js) both use this, so a replay shows what the
 // server would have done.
@@ -12,6 +14,7 @@
 const { findPeople } = require('./people');
 const { createPeopleTracker } = require('./people_tracker');
 const { createLidarLinker } = require('./lidar_linker');
+const { createDoorWatch } = require('./door_watch');
 
 // Two LiDARs that see the same person: one entry within this distance
 const SAME_PERSON_M = 0.4;
@@ -28,12 +31,13 @@ function mergeAcrossLidars(people) {
 }
 
 /**
- * @param {object} [options]  { finder, tracker, linker }: overrides of each step's DEFAULTS
+ * @param {object} [options]  { finder, tracker, linker, door }: overrides of each step's DEFAULTS
  */
 function createWardPeople(options = {}) {
   const trackers = new Map();   // device_id -> tracker
   const seen = new Map();       // device_id -> confirmed people of its last turn (with key)
   const linker = createLidarLinker(options.linker);
+  const doorWatch = createDoorWatch(options.door);
 
   return {
     /**
@@ -45,24 +49,30 @@ function createWardPeople(options = {}) {
      * @param {{x, y, heading_deg}} input.pose
      * @param {{length_x, width_y}} input.room
      * @param {Array<object>} [input.beds]
+     * @param {{x, y, w, l}|null} [input.door]  the ward's door zone (zones.js)
      * @param {number} input.t
      * @param {Array<{tagId, x, y, at}>} input.wristbands  unsmoothed Bluetooth positions of the wristbands in the ward
-     * @returns {{people: Array, positions: Array, ended: string[], others: Array}}
+     * @returns {{people: Array, positions: Array, ended: string[], exits: Array, returns: string[], atDoor: Array, others: Array}}
      *   people: everyone the ward's LiDARs follow now, with tag_id when linked;
-     *   positions / ended: as lidar_linker.update; others: groups too small to be a person
+     *   positions / ended / exits / returns: as lidar_linker.update; atDoor: as door_watch.update;
+     *   others: groups too small to be a person
      */
-    turn({ deviceId, distancesMm, model, pose, room, beds = [], t, wristbands }) {
+    turn({ deviceId, distancesMm, model, pose, room, beds = [], door = null, t, wristbands }) {
       const { people: found, others } = findPeople(distancesMm, model, pose, room, options.finder);
       let tracker = trackers.get(deviceId);
       if (!tracker) trackers.set(deviceId, (tracker = createPeopleTracker(options.tracker)));
       seen.set(deviceId, tracker.update(found, t).map(p => ({ ...p, key: `${deviceId}#${p.id}`, device_id: deviceId })));
       const people = mergeAcrossLidars([...seen.values()].flat());
-      const { positions, ended } = linker.update({ t, people, wristbands, beds });
+      const { positions, ended, exits, returns } = linker.update({ t, people, wristbands, beds, door });
+      const atDoor = doorWatch.update({ t, positions, door });
       const linkedTo = new Map(positions.filter(p => !p.held).map(p => [p.key, p.tagId]));
       return {
         people: people.map(p => ({ ...p, tag_id: linkedTo.get(p.key) || null })),
         positions,
         ended,
+        exits,
+        returns,
+        atDoor,
         others
       };
     },
@@ -77,6 +87,7 @@ function createWardPeople(options = {}) {
     clear() {
       trackers.clear();
       seen.clear();
+      doorWatch.clear();
       return linker.clear();
     }
   };

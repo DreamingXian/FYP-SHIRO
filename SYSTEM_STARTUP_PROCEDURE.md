@@ -256,7 +256,7 @@ The dashboard and every API address need a signed-in clinician. Two roles exist:
   * The folder must have the same name as its `.ino` file.
   * It must hold **every** `.h` file of the repository folder, plus your own `secrets.h` for the anchors and the LiDAR node.
   * Copy **all** of them again after every firmware update. A copy with one old `.h` file either fails to compile or runs old code.
-* The first lines on the Serial Monitor show the version that is running (for example `V5.2` on the wristband).
+* The first lines on the Serial Monitor show the version that is running (for example `V5.3` on the wristband).
 
 #### The Tools settings belong to the board type, not to the sketch
 Arduino IDE keeps the **Tools** settings you last chose for each board type, whichever sketch is open.
@@ -362,7 +362,7 @@ Uploading works with either setting: the chip's built-in loader receives the upl
 #### What the Serial Monitor shows at power-on (115200 baud):
 ```
 ==========================================================
-  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)
+  SHIRO Wristband Tag - Adaptive Telemetry (V5.3 - Protocol 2)
   Hardware: Seeed Studio XIAO ESP32-C6
 ==========================================================
 [OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x68.
@@ -657,6 +657,13 @@ How linking behaves:
 * Several people close together near one wristband: no link until one is clearly nearer. They show as grey dots, and the patient's dot stays on Bluetooth.
 * While a patient lies in bed (🛏), a person counts as that patient getting up only if the LiDAR first saw them **at that bed** (within 0.6 m of it), after the patient lay down. A nurse or visitor who walks up to the bed was first seen where they came into view, usually the door, and stays a grey dot. So does someone who was already in the room, and someone getting out of another bed.
 * Known limit: someone the LiDAR first sees right at the bed while the patient lies there is taken for the patient getting up. This happens, for example, when they step out from behind another person standing at the bed.
+
+Door alerts (geofence; only for a wristband bound to a patient, only in a ward with a LiDAR):
+* **🚪 AT THE DOOR:** the LiDAR has seen the patient in the door zone (the doorway, reaching 1 m into the room) for 10 s. At most one a minute per patient.
+* **🚪 LEFT THE WARD:** the LiDAR lost the patient in the door zone and did not see them again, about 11.5 s after it last saw them. After that, the patient's dot is Bluetooth again, and only a person who comes in through the door is taken for them.
+* Both come as an alert with the alarm tone on the dashboard and the headset, and are acknowledged like a fall. No door alert while a headset sees the patient elsewhere in the room.
+* The server log shows each one: `[ROOM PEOPLE] The patient of TAG-… has been at the door …` or `… left WARD-… through the door …`, and `… came back into …` when the patient returns.
+* The headset shows the kind (AT THE DOOR / LEFT THE WARD) from the next APK build; an older APK shows LEFT THE WARD for both.
 
 Things that stop the LiDAR positions (the map falls back to Bluetooth): the empty room being learned, the "may have been moved" warning (4.6), the node not sending turns. Things that put grey dots where nobody is: furniture moved since the empty room was learned (learn it again).
 

@@ -238,6 +238,7 @@ namespace ShiroMR
         public string wristband_mac;
         public string device_id;
         public string incident_category; // FALL_ACCIDENT, CRITICAL_VITALS, GEOFENCE_BREACH
+        public string geofence_kind;     // GEOFENCE_BREACH only: LEFT_WARD or AT_DOOR (null for older alerts)
         public string trigger_timestamp;
         public float pos_x;
         public float pos_y;
@@ -257,7 +258,8 @@ namespace ShiroMR
         public string CategoryLabel =>
             incident_category == "FALL_ACCIDENT" ? "FALL" :
             incident_category == "CRITICAL_VITALS" ? "CRITICAL VITALS" :
-            incident_category == "GEOFENCE_BREACH" ? "LEFT THE WARD" : (incident_category ?? "INCIDENT");
+            incident_category == "GEOFENCE_BREACH" ? (geofence_kind == "AT_DOOR" ? "AT THE DOOR" : "LEFT THE WARD") :
+            (incident_category ?? "INCIDENT");
     }
 
     [Serializable]

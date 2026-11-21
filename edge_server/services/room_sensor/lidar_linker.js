@@ -28,6 +28,12 @@
 //            - Held elsewhere: a person within 0.8 m of the held position.
 //            A held position ends when the Bluetooth position stays more than
 //            2 m away from it for 5 s.
+//   Left     Lost in the door zone (zones.js) and not seen again before the
+//            held position ends: the patient left the ward (an exit; the
+//            "left the ward" alert). The door zone comes before a bed. After
+//            that the wristband is linked only to a person who comes in
+//            through the door (first seen within 0.5 m of the door zone, after
+//            the exit), not to someone who was already in the room.
 //   Nothing  Otherwise the wristband keeps its Bluetooth position, and the
 //            people the LiDAR sees are shown without a name.
 //
@@ -49,7 +55,8 @@ const DEFAULTS = Object.freeze({
   lostHoldMs: 10000,       // lost elsewhere: held this long
   reacquireM: 0.8,         // held elsewhere: a new person this close to the held position is the same person
   leaveM: 2.0,             // Bluetooth this far from a held position ...
-  leaveMs: 5000            // ... for this long ends the hold
+  leaveMs: 5000,           // ... for this long ends the hold
+  doorReturnM: 0.5         // after an exit: a new person first seen this close to the door zone came back in
 });
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -70,6 +77,11 @@ function nearBed(beds, x, y, margin) {
   return bedAt(beds, x, y, margin) !== null;
 }
 
+/** Inside the door zone {x, y, w, l} (zones.js), widened by margin; false without a door. */
+function inDoorZone(door, x, y, margin = 0) {
+  return !!door && inFootprint(door, x, y, margin);
+}
+
 /**
  * @param {object} [options] overrides of DEFAULTS
  */
@@ -79,6 +91,7 @@ function createLidarLinker(options = {}) {
   const links = new Map();    // tagId -> { key, x, y, since, farSince }
   const holds = new Map();    // tagId -> { x, y, since, inBed, bed, farSince, key, lastSeenAt }
   const pending = new Map();  // tagId -> { key, since }
+  const exited = new Map();   // tagId -> { at, x, y }: left through the door, not back yet
 
   function bleAverage(tagId) {
     const list = ble.get(tagId);
@@ -108,13 +121,26 @@ function createLidarLinker(options = {}) {
      * @param {Array<{tagId: string, x: number, y: number, at: number}>} input.wristbands
      *        each wristband in the ward with its newest unsmoothed Bluetooth position and when it was worked out
      * @param {Array<object>} [input.beds]  the ward's beds (x, y, width, length, rotation_deg)
-     * @returns {{positions: Array<{tagId, x, y, key, held, in_bed, reason}>, ended: string[]}}
-     *          positions: the wristbands that have a LiDAR position now; ended: those that lost it in this step
+     * @param {{x, y, w, l}|null} [input.door]  the ward's door zone (zones.js); without it nobody leaves
+     * @returns {{positions: Array<{tagId, x, y, key, held, in_bed, reason}>, ended: string[],
+     *            exits: Array<{tagId, x, y, lastSeenAt}>, returns: string[]}}
+     *          positions: the wristbands that have a LiDAR position now; ended: those that lost it in this step;
+     *          exits: patients who left through the door in this step (x, y: where last seen);
+     *          returns: patients who came back in through the door in this step
      */
-    update({ t, people, wristbands, beds = [] }) {
+    update({ t, people, wristbands, beds = [], door = null }) {
       const ended = [];
+      const exits = [];
+      const returns = [];
       const present = new Set();
       const byKey = new Map(people.map(p => [p.key, p]));
+
+      // A held position that ends in the door zone: the patient left the ward
+      const endHold = (tagId, hold) => {
+        if (!inDoorZone(door, hold.x, hold.y)) return;
+        exited.set(tagId, { at: t, x: hold.x, y: hold.y });
+        exits.push({ tagId, x: hold.x, y: hold.y, lastSeenAt: hold.lastSeenAt });
+      };
 
       // Bluetooth positions of the wristbands in the ward
       for (const w of wristbands) {
@@ -129,6 +155,7 @@ function createLidarLinker(options = {}) {
       for (const tagId of new Set([...links.keys(), ...holds.keys(), ...pending.keys(), ...ble.keys()])) {
         if (present.has(tagId)) continue;
         if (links.has(tagId) || holds.has(tagId)) ended.push(tagId);
+        if (holds.has(tagId)) endHold(tagId, holds.get(tagId));
         forget(tagId);
       }
 
@@ -151,7 +178,8 @@ function createLidarLinker(options = {}) {
           }
         } else {
           links.delete(tagId);
-          const bed = bedAt(beds, link.x, link.y, o.bedMarginM);
+          // Lost in the door zone: leaving, not lying down, even next to a bed
+          const bed = inDoorZone(door, link.x, link.y) ? null : bedAt(beds, link.x, link.y, o.bedMarginM);
           holds.set(tagId, {
             x: link.x, y: link.y, since: t, farSince: null, key: link.key,
             lastSeenAt: link.lastSeenAt, inBed: bed !== null, bed
@@ -196,6 +224,7 @@ function createLidarLinker(options = {}) {
         if (left || expired) {
           holds.delete(tagId);
           ended.push(tagId);
+          endHold(tagId, hold);
         }
       }
 
@@ -205,8 +234,17 @@ function createLidarLinker(options = {}) {
         if (links.has(tagId) || holds.has(tagId)) continue;
         const avg = bleAverage(tagId);
         if (!avg) continue;
+        // Left through the door: only someone who came in through it since
+        const out = exited.get(tagId);
+        const cameIn = (p) => {
+          if (!out) return true;
+          if (!Number.isFinite(p.first_at) || p.first_at < out.at) return false;
+          const fx = Number.isFinite(p.first_x) ? p.first_x : p.x;
+          const fy = Number.isFinite(p.first_y) ? p.first_y : p.y;
+          return inDoorZone(door, fx, fy, o.doorReturnM);
+        };
         const near = people
-          .filter(p => !taken.has(p.key))
+          .filter(p => !taken.has(p.key) && cameIn(p))
           .map(p => ({ p, d: dist(p, avg) }))
           .filter(c => c.d <= o.linkGateM)
           .sort((a, b) => a.d - b.d);
@@ -233,6 +271,7 @@ function createLidarLinker(options = {}) {
         pending.delete(tagId);
         links.set(tagId, { key: best.p.key, x: best.p.x, y: best.p.y, since: t, farSince: null, lastSeenAt: t });
         taken.add(best.p.key);
+        if (exited.delete(tagId)) returns.push(tagId);
       }
 
       const positions = [];
@@ -240,7 +279,13 @@ function createLidarLinker(options = {}) {
       for (const [tagId, h] of holds) {
         positions.push({ tagId, x: h.x, y: h.y, key: h.key, held: true, in_bed: h.inBed, reason: h.inBed ? 'in bed' : 'lost' });
       }
-      return { positions, ended };
+      return { positions, ended, exits, returns };
+    },
+
+    /** When this wristband's patient left through the door and has not come back in (ms), or null. */
+    leftAt(tagId) {
+      const e = exited.get(tagId);
+      return e ? e.at : null;
     },
 
     /** The person a wristband is linked to (key), or null. */
@@ -256,9 +301,10 @@ function createLidarLinker(options = {}) {
       holds.clear();
       pending.clear();
       ble.clear();
+      exited.clear();
       return had;
     }
   };
 }
 
-module.exports = { DEFAULTS, createLidarLinker, nearBed, bedAt };
+module.exports = { DEFAULTS, createLidarLinker, nearBed, bedAt, inDoorZone };

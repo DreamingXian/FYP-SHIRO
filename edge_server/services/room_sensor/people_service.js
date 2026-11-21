@@ -9,11 +9,14 @@
 //   - sends the people the LiDARs see to the dashboards (WebSocket
 //     ROOM_PEOPLE, at most 5 a second per ward), with the wristband each one
 //     is linked to; the ones without show as grey dots on the Live Map
+//   - reports a patient who left through the door, or stands at the door for
+//     10 s (onGeofence; services/alerts/geofence_alerts.js raises the alert)
 // A LiDAR whose empty room is being learned, or that has probably been moved,
 // is not used until it is fine again.
 // =============================================================================
 const logger = require('../../utils/logger');
 const { createWardPeople } = require('./ward_people');
+const { buildZones } = require('../ips/zones');
 
 const BROADCAST_INTERVAL_MS = 200;
 
@@ -23,16 +26,17 @@ const round2 = (v) => Math.round(v * 100) / 100;
  * @param {object} deps
  * @param {Function} deps.setupOf            (deviceId) => room_sensor_manager.peopleSetup result or null
  * @param {Function} deps.onFrame            (listener) => stop; listener({mac, deviceId, frame, at})
- * @param {Function} deps.getWardLayout      async (wardId) => { length_x, width_y, beds } or null
+ * @param {Function} deps.getWardLayout      async (wardId) => { length_x, width_y, beds, door } or null
  * @param {Function} deps.getWardBluetooth   (wardId) => [{tagId, x, y, at}]
  * @param {Function} deps.applyPosition      (tagId, {x, y, wardId, key, held, inBed}, now) => bool
  * @param {Function} deps.endPosition        (tagId, now) => void
  * @param {Function} [deps.broadcast]
+ * @param {Function} [deps.onGeofence]       ({kind: 'LEFT_WARD'|'AT_DOOR', tagId, wardId, x, y, at, seconds, door}) => void|Promise
  * @param {object}   [deps.options]          overrides for ward_people
  */
 function createPeopleService({
   setupOf, onFrame, getWardLayout, getWardBluetooth, applyPosition, endPosition,
-  broadcast = () => {}, options = {}
+  broadcast = () => {}, onGeofence = () => {}, options = {}
 } = {}) {
   const wards = new Map();       // ward_id -> { people: ward_people, latest: {at, people}, lastBroadcast, lastCount }
   const deviceWard = new Map();  // device_id -> ward_id it was used in
@@ -56,9 +60,13 @@ function createPeopleService({
     Promise.resolve()
       .then(() => getWardLayout(wardId))
       .then(layout => {
-        layouts.set(wardId, layout
-          ? { length_x: Number(layout.length_x), width_y: Number(layout.width_y), beds: layout.beds || [] }
-          : null);
+        if (!layout) {
+          layouts.set(wardId, null);
+          return;
+        }
+        const room = { length_x: Number(layout.length_x), width_y: Number(layout.width_y), beds: layout.beds || [] };
+        const doorZone = layout.door ? buildZones({ ...room, door: layout.door, beds: [] }).zones.find(z => z.type === 'DOOR') : null;
+        layouts.set(wardId, { ...room, door: doorZone ? doorZone.rect : null });
       })
       .catch(err => logger.warn(`[ROOM PEOPLE] Layout of ${wardId} not loaded: ${err.message}`))
       .finally(() => loading.delete(wardId));
@@ -77,6 +85,13 @@ function createPeopleService({
       wards.delete(wardId);
       broadcast({ type: 'ROOM_PEOPLE', ward_id: wardId, at: now, people: [] });
     }
+  }
+
+  /** Hands a door event on; a failure is logged, never thrown into the LiDAR loop. */
+  function report(event) {
+    Promise.resolve()
+      .then(() => onGeofence(event))
+      .catch(err => logger.warn(`[ROOM PEOPLE] ${event.kind} of ${event.tagId} not handled: ${err.message}`));
   }
 
   function send(wardId, w, people, at, force) {
@@ -114,12 +129,24 @@ function createPeopleService({
     const w = wardState(setup.ward_id);
     const out = w.people.turn({
       deviceId, distancesMm: frame.distancesMm, model: setup.model, pose: setup.pose,
-      room: layout, beds: layout.beds, t: at, wristbands: getWardBluetooth(setup.ward_id)
+      room: layout, beds: layout.beds, door: layout.door, t: at, wristbands: getWardBluetooth(setup.ward_id)
     });
     for (const p of out.positions) {
       applyPosition(p.tagId, { x: p.x, y: p.y, wardId: setup.ward_id, key: p.key, held: p.held, inBed: p.in_bed }, at);
     }
     for (const tagId of out.ended) endPosition(tagId, at);
+    const wardId = setup.ward_id;
+    for (const e of out.exits) {
+      const seconds = Math.round((at - e.lastSeenAt) / 1000);
+      logger.info(`[ROOM PEOPLE] The patient of ${e.tagId} left ${wardId} through the door (last seen at ${round2(e.x)}, ${round2(e.y)}, ${seconds} s ago).`);
+      report({ kind: 'LEFT_WARD', tagId: e.tagId, wardId, x: round2(e.x), y: round2(e.y), at, seconds, door: layout.door });
+    }
+    for (const e of out.atDoor) {
+      const seconds = Math.round((at - e.since) / 1000);
+      logger.info(`[ROOM PEOPLE] The patient of ${e.tagId} has been at the door of ${wardId} for ${seconds} s.`);
+      report({ kind: 'AT_DOOR', tagId: e.tagId, wardId, x: round2(e.x), y: round2(e.y), at, seconds, door: layout.door });
+    }
+    for (const tagId of out.returns) logger.info(`[ROOM PEOPLE] The patient of ${tagId} came back into ${wardId} through the door.`);
     w.latest = { at, people: out.people };
     send(setup.ward_id, w, out.people, at, out.people.length !== w.lastCount);
   }
@@ -168,7 +195,8 @@ function instance() {
       getWardBluetooth: (wardId) => ipsService.getWardBluetoothPositions(wardId),
       applyPosition: (tagId, pos, now) => ipsService.applyLidarPosition(tagId, pos, now),
       endPosition: (tagId, now) => ipsService.endLidarPosition(tagId, now),
-      broadcast: broadcastToClients
+      broadcast: broadcastToClients,
+      onGeofence: (event) => require('../alerts/geofence_alerts').instance().raise(event)
     });
   }
   return serverInstance;

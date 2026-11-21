@@ -97,7 +97,7 @@ function attentionReasons({ incidents = [], heartRate = null, spo2 = null }, thr
     const at = time(inc.trigger_timestamp);
     if (inc.incident_category === 'FALL_ACCIDENT') reasons.push(`fall at ${at}`);
     else if (inc.incident_category === 'CRITICAL_VITALS') reasons.push(`critical vitals alarm at ${at}`);
-    else if (inc.incident_category === 'GEOFENCE_BREACH') reasons.push(`left the ward at ${at}`);
+    else if (inc.incident_category === 'GEOFENCE_BREACH') reasons.push(inc.geofence_kind === 'AT_DOOR' ? `at the door at ${at}` : `left the ward at ${at}`);
     if (inc.resolution_status === 'PENDING') reasons.push(`alert of ${at} still waiting for a response`);
   }
   const moderate = thresholds.moderate;

@@ -299,7 +299,7 @@
       data: {
         tagId: tagId,
         targetMac: targetMac,
-        duration: 60
+        duration: 120
       }
     }));
 

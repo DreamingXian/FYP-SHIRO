@@ -156,6 +156,10 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
       const posX = optionalNumber(data.pos_x, 'pos_x', { min: -1000, max: 1000 });
       const posY = optionalNumber(data.pos_y, 'pos_y', { min: -1000, max: 1000 });
       const message = optionalText(data.message, 'message', 500);
+      // A simulated geofence alert is "left the ward" unless the test asks for "at the door"
+      const geofenceKind = category !== 'GEOFENCE_BREACH' ? null
+        : data.geofence_kind === undefined || data.geofence_kind === null ? 'LEFT_WARD'
+          : requireOneOf(data.geofence_kind, alertService.GEOFENCE_KINDS, 'geofence_kind');
 
       const patient = await patientService.getPatientById(patientId);
       if (!patient) throw new HttpError(404, `Patient "${patientId}" not found. A simulation needs an existing patient.`);
@@ -163,6 +167,7 @@ async function handleAlertRoutes(pathname, req, res, parsedUrl, body) {
 
       const created = await alertService.recordIncident({
         incident_category: category,
+        geofence_kind: geofenceKind,
         patient_id: patient.patient_id,
         patient_name: patient.full_name,
         ward_id: patient.assigned_ward_id || null,

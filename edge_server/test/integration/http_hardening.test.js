@@ -224,14 +224,14 @@ describe('input validation and web hardening', () => {
       const engaged = answers.find(m => m.type === 'ACTIVE_MODE_ENGAGED');
       assert.ok(engaged, JSON.stringify(answers));
       assert.equal(engaged.tag_id, tag);
-      assert.equal(engaged.duration, 60);
+      assert.equal(engaged.duration, 120);
       assert.equal(engaged.anchor_mac, ANCHOR_2);
 
       // Every anchor receives the command; it names the one that must carry it out
       for (const client of [mqtt, second]) {
         const commands = client.messages.filter(m => m.topic === 'shiro/control/mode').map(m => JSON.parse(m.payload));
         assert.equal(commands.length, 1, JSON.stringify(client.messages));
-        assert.deepEqual(commands[0], { cmd: 'SET_ACTIVE', target_tag: tag, target_mac: tag, target_anchor: ANCHOR_2, duration: 60 });
+        assert.deepEqual(commands[0], { cmd: 'SET_ACTIVE', target_tag: tag, target_mac: tag, target_anchor: ANCHOR_2, duration: 120 });
       }
     } finally {
       second.close();
