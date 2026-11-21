@@ -2,15 +2,15 @@
      SHIRO Dashboard - Devices (Setup, admins). Phase 11: plain words, 8 a page.
      ============================================================================= -->
 <div class="view-container">
-  <!-- New devices: switched on, not added yet -->
-  <div class="card" style="margin-bottom: 24px;">
+  <!-- New devices: switched on, not added yet. A slim line when there are none (Phase 11). -->
+  <div class="card discovery-card" id="discovery-card" style="margin-bottom: 24px;">
     <div class="card-header">
       <div>
         <div class="card-title">
           <span>New devices nearby</span>
           <span class="badge badge-live" id="radar-status-badge">● Listening</span>
         </div>
-        <div class="card-subtitle" style="margin-top: 4px;">
+        <div class="card-subtitle" style="margin-top: 4px;" id="discovery-summary">
           Wristbands, wall sensors and other SHIRO devices that are switched on but not added yet.
         </div>
       </div>
@@ -24,7 +24,7 @@
       </div>
     </div>
 
-    <div class="data-table-container">
+    <div class="data-table-container" id="discovery-table-wrap">
       <table class="data-table">
         <thead>
           <tr>
@@ -99,8 +99,7 @@
           <tr>
             <th>Device</th>
             <th>Type</th>
-            <th>Address (MAC, IP)</th>
-            <th>Model and version</th>
+            <th>Where</th>
             <th>Battery</th>
             <th>On / off</th>
             <th>Use</th>
@@ -109,7 +108,7 @@
         </thead>
         <tbody id="devices-table-body">
           <tr>
-            <td colspan="8" class="empty-state">Loading devices…</td>
+            <td colspan="7" class="empty-state">Loading devices…</td>
           </tr>
         </tbody>
       </table>

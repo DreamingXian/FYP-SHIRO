@@ -233,11 +233,11 @@ async function loadDevicesFleet() {
       filterDevicesTable();
       updateFleetCounts();
     } else {
-      tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--danger);">The devices could not be loaded: ${escapeHtml(data.error || 'server error')}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--danger);">The devices could not be loaded: ${escapeHtml(data.error || 'server error')}</td></tr>`;
     }
   } catch (err) {
     console.error('loadDevicesFleet error:', err);
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--danger);">The server does not answer. Check that it is running, then reload the page.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--danger);">The server does not answer. Check that it is running, then reload the page.</td></tr>`;
   }
 }
 
@@ -356,6 +356,17 @@ function getRadarBatteryHtml(d) {
 function renderDiscoveryTable(items) {
   const pagerEl = document.getElementById('unprovisioned-pager');
   const list = items || [];
+  // Nothing new: one slim line instead of an empty table; something new: a banner
+  const card = document.getElementById('discovery-card');
+  const wrap = document.getElementById('discovery-table-wrap');
+  const summary = document.getElementById('discovery-summary');
+  if (card) card.classList.toggle('has-new', list.length > 0);
+  if (wrap) wrap.style.display = list.length ? '' : 'none';
+  if (summary) {
+    summary.innerText = list.length
+      ? `${list.length} device${list.length === 1 ? ' is' : 's are'} switched on and waiting to be added. Press "Add" on the row.`
+      : 'No new devices. Switch a wristband or sensor on near a wall sensor; it appears here within a few seconds.';
+  }
   const pageData = window.ShiroUI.paginate(list, discoveryPage);
   discoveryPage = pageData.page;
   if (pagerEl) {
@@ -635,7 +646,7 @@ function renderDevicesTable(filtered) {
 
       msg = `No device matches the filters (${activeFilters.join(', ')}).`;
     }
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${escapeHtml(msg)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${escapeHtml(msg)}</td></tr>`;
     return;
   }
 
@@ -649,7 +660,10 @@ function renderDevicesTable(filtered) {
       statusBadge = `<span class="badge badge-neutral" title="Off, or out of reach">○ Off</span>`;
     }
 
-    let powerDisplay = `<span style="color:var(--text-muted); font-size:11px;">⚡ Mains / USB</span>`;
+    // Wall sensors run on mains; anything else that has not reported a battery level says so
+    let powerDisplay = d.device_type === 'ANCHOR'
+      ? '<span style="color:var(--text-muted); font-size:12px;">⚡ Mains / USB</span>'
+      : '<span style="color:var(--text-muted); font-size:12px;">not reported yet</span>';
     if (d.device_type === 'ROOM_SENSOR') {
       powerDisplay = lidarLiveHtml(roomSensorLive.get(d.device_id) || roomSensorLive.get(String(d.mac_address || '').toUpperCase()));
     } else if (d.battery_level !== null && d.battery_level !== undefined) {
@@ -670,33 +684,26 @@ function renderDevicesTable(filtered) {
     }
 
     const effectiveAvail = getEffectiveAvailability(d);
-    let availBadge = `<span class="badge badge-live" style="font-size:10px;">Available</span>`;
+    let availBadge = '<span class="badge badge-live">Free</span>';
     if (effectiveAvail === 'IN_USE') {
-      let inUseDetail = '';
-      if (d.bound_patient_name) {
-        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">👤 ${escapeHtml(d.bound_patient_name)}</div>`;
-      } else if (d.assigned_ward_id) {
-        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">📍 ${escapeHtml(d.assigned_ward_id)}</div>`;
-      }
-      availBadge = `<span class="badge badge-info" style="font-size:10px;">In Use</span>${inUseDetail}`;
+      availBadge = '<span class="badge badge-info">In use</span>';
     } else if (effectiveAvail === 'UNAVAILABLE') {
-      availBadge = `<span class="badge badge-alert" style="font-size:10px;">⚠️ Not Available</span>`;
+      availBadge = '<span class="badge badge-warning">Out of use</span>';
     }
+    // Where it is used: the patient wearing it, else its ward
+    const whereText = d.bound_patient_name ? `👤 ${d.bound_patient_name}` : d.assigned_ward_id ? `📍 ${d.assigned_ward_id}` : '–';
+    // Technical details on hover; nothing invented when unknown
+    const details = [`MAC ${d.mac_address || 'unknown'}`, `network ${d.ip_address || (d.device_type === 'WRISTBAND' ? 'none (Bluetooth only)' : 'unknown')}`,
+      `model ${d.hardware_model || 'unknown'}`, `firmware ${d.firmware_version || 'unknown'}`].join(' · ');
 
     return `
       <tr data-device-id="${escapeHtml(d.device_id)}">
-        <td>
-          <div style="font-weight: 700; color: var(--text-primary); font-size:13px;">${escapeHtml(d.device_id)}</div>
+        <td title="${escapeHtml(details)}">
+          <div style="font-weight: 700; color: var(--text-primary);">${escapeHtml(d.device_id)}</div>
+          <div class="mono" style="color: var(--text-muted); font-size: 12px;">${escapeHtml(d.mac_address || '')}</div>
         </td>
         <td>${typeBadge}</td>
-        <td>
-          <div class="mono" style="color: var(--primary); font-weight: 600; font-size:12px;">${escapeHtml(d.mac_address)}</div>
-          <div class="mono" style="color: var(--text-muted); font-size: 11px;">${escapeHtml(d.ip_address || 'BLE Beacon (No IP)')}</div>
-        </td>
-        <td>
-          <div style="font-size:12px; color:var(--text-primary);">${escapeHtml(d.hardware_model)}</div>
-          <span class="badge badge-neutral" style="font-size:10px;">${escapeHtml(d.firmware_version || 'v1.0.0')}</span>
-        </td>
+        <td>${escapeHtml(whereText)}</td>
         <td class="device-power-cell">${powerDisplay}</td>
         <td class="device-status-cell">
           ${statusBadge}
@@ -705,10 +712,10 @@ function renderDevicesTable(filtered) {
           ${availBadge}
         </td>
         <td style="text-align: right; white-space: nowrap;">
-          <button class="btn btn-outline btn-sm"${actionAttrs('openEditDeviceModal', [d.device_id])} title="Configure Availability &amp; Maintenance">
-            ⚙️ Edit
+          <button class="btn btn-outline btn-sm"${actionAttrs('openEditDeviceModal', [d.device_id])} title="Name, ward, model, in use or out of use">
+            ✏️ Edit
           </button>
-          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeleteDevice', [d.device_id])} title="Decommission &amp; Delete Device" style="margin-left:4px;">
+          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeleteDevice', [d.device_id])} title="Delete this device" style="margin-left:4px;">
             🗑️
           </button>
         </td>

@@ -752,3 +752,7 @@ table.data-table th {
 .bed-map-legend i.free { background: #DCFCE7; border-color: #16A34A; }
 .bed-map-legend i.taken { background: #E2E8F0; border-color: #94A3B8; }
 .bed-map-legend i.chosen { background: #2563EB; border-color: #1E3A8A; }
+
+/* Phase 11: new devices waiting to be added stand out; none = a slim line */
+.discovery-card.has-new { border: 2px solid var(--primary-border); background: var(--primary-subtle); }
+.discovery-card:not(.has-new) .card-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
