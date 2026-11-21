@@ -1,6 +1,6 @@
 /*
  * =========================================================================================
- *   SHIRO Wristband Tag - Physiological & Kinematic Telemetry Node (V5.1 - Protocol 2)
+ *   SHIRO Wristband Tag - Physiological & Kinematic Telemetry Node (V5.2 - Protocol 2)
  *   Hardware: Seeed Studio XIAO ESP32-C6
  *   Sensors:  HW-605 (MAX30102 PPG) + MPU-6050 (6-DOF IMU) via I2C (SDA: D4, SCL: D5)
  *   Battery:  100k/100k Divider on BAT+ to D0
@@ -9,8 +9,11 @@
  *   Protocol: BLE broadcast, telemetry packet version 2 (docs/protocol.md) + GATT control
  *   Project:  MR-Patient Connect (SHIRO) - Final Year Project (RSWG7)
  *
+ *   Serial log (USB, 115200): a [BROADCAST] line 5 times a second, and from V5.2 a
+ *   [FALL CHECK] line for every drop-like event, saying how it ended and why.
+ *
  *   Files in this sketch folder:
- *     fall_detector.h  - fall state machine and its self-test
+ *     fall_detector.h  - fall state machine, its fall-check report and its self-test
  *     shiro_packet.h   - telemetry packet (identical copy in shiro_anchor_node)
  *     vitals_filter.h  - accepted vitals range and beat smoothing
  *   The wristband and ALL anchors must run the same protocol version: flash them together.
@@ -456,6 +459,56 @@ void ppgPollSerial() {
 #endif  // SHIRO_PPG_RECORDER
 
 // -----------------------------------------------------------------------------
+// Fall-check report (V5.2): one Serial line for every drop-like event, saying
+// how it ended and why, so a drop that raised no alarm shows which phase failed.
+// Serial only; nothing is sent. Also says when the 45 s alert hold is over.
+// -----------------------------------------------------------------------------
+static uint16_t reportedFallChecks = 0;
+static bool reportedFallHold = false;
+
+void reportFallChecks() {
+  // Left out while a raw pulse recording runs (the lines would sit between the samples)
+  if (ppgRecording) {
+    reportedFallChecks = fallDetector.checkCount();
+    reportedFallHold = fallDetector.emergency();
+    return;
+  }
+  if (fallDetector.checkCount() != reportedFallChecks) {
+    reportedFallChecks = fallDetector.checkCount();
+    const FallCheck& c = fallDetector.lastCheck();
+    const FallConfig& k = fallDetector.config();
+    const char* mode = vitalsMode == MODE_ACTIVE_STREAM ? "1Hz ACTIVE" : (vitalsMode == MODE_PASSIVE_BURST ? "3m BURST" : "3m SLEEP");
+    switch (c.outcome) {
+      case FALL_CHECK_CONFIRMED:
+        Serial.printf("[FALL CHECK] FALL | free-fall %lu ms (needs %lu), lowest %.2f g | impact %.2f g (needs %.2f) | motion after %.2f g (limit %.2f) | largest sample gap %lu ms | %s\n",
+                      (unsigned long)c.freefallMs, (unsigned long)k.freefallMinMs, c.lowestG, c.impactG, k.impactG,
+                      c.motionG, c.limitG, (unsigned long)c.largestGapMs, mode);
+        break;
+      case FALL_CHECK_MOVING:
+        Serial.printf("[FALL CHECK] no alarm: MOVING after the impact | free-fall %lu ms, lowest %.2f g | impact %.2f g | motion after %.2f g, limit %.2f%s | largest sample gap %lu ms | %s\n",
+                      (unsigned long)c.freefallMs, c.lowestG, c.impactG, c.motionG, c.limitG,
+                      c.impactG < k.softImpactG ? " (impact below 4 g)" : "", (unsigned long)c.largestGapMs, mode);
+        break;
+      case FALL_CHECK_NO_IMPACT:
+        Serial.printf("[FALL CHECK] no alarm: NO IMPACT | free-fall %lu ms, lowest %.2f g | highest after it %.2f g, needs above %.2f within %lu ms | largest sample gap %lu ms | %s\n",
+                      (unsigned long)c.freefallMs, c.lowestG, c.impactG, k.impactG, (unsigned long)k.impactMaxMs,
+                      (unsigned long)c.largestGapMs, mode);
+        break;
+      case FALL_CHECK_FREEFALL_SHORT:
+        Serial.printf("[FALL CHECK] no alarm: FREE-FALL TOO SHORT | below %.2f g for %lu ms (needs %lu), lowest %.2f g | highest after it %.2f g | largest sample gap %lu ms | %s\n",
+                      k.freefallG, (unsigned long)c.freefallMs, (unsigned long)k.freefallMinMs, c.lowestG, c.impactG,
+                      (unsigned long)c.largestGapMs, mode);
+        break;
+      default:
+        break;
+    }
+  }
+  const bool hold = fallDetector.emergency();
+  if (reportedFallHold && !hold) Serial.println("[FALL] Alert hold over: watching for falls again.");
+  reportedFallHold = hold;
+}
+
+// -----------------------------------------------------------------------------
 // Arduino Setup
 // -----------------------------------------------------------------------------
 void setup() {
@@ -463,7 +516,7 @@ void setup() {
   delay(1500);
 
   Serial.println("\n==========================================================");
-  Serial.println("  SHIRO Wristband Tag - Adaptive Telemetry (V5.1 - Protocol 2)");
+  Serial.println("  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)");
   Serial.println("  Hardware: Seeed Studio XIAO ESP32-C6");
   Serial.println("==========================================================");
 
@@ -611,6 +664,7 @@ void loop() {
     }
 
     isFallEmergency = fallDetector.emergency();
+    reportFallChecks();
 
     if (isFallEmergency) {
       currentMotion = "FALL_EMERGENCY";

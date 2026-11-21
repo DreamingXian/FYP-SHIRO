@@ -256,7 +256,7 @@ The dashboard and every API address need a signed-in clinician. Two roles exist:
   * The folder must have the same name as its `.ino` file.
   * It must hold **every** `.h` file of the repository folder, plus your own `secrets.h` for the anchors and the LiDAR node.
   * Copy **all** of them again after every firmware update. A copy with one old `.h` file either fails to compile or runs old code.
-* The first lines on the Serial Monitor show the version that is running (for example `V5.1` on the wristband).
+* The first lines on the Serial Monitor show the version that is running (for example `V5.2` on the wristband).
 
 #### The Tools settings belong to the board type, not to the sketch
 Arduino IDE keeps the **Tools** settings you last chose for each board type, whichever sketch is open.
@@ -362,7 +362,7 @@ Uploading works with either setting: the chip's built-in loader receives the upl
 #### What the Serial Monitor shows at power-on (115200 baud):
 ```
 ==========================================================
-  SHIRO Wristband Tag - Adaptive Telemetry (V5.1 - Protocol 2)
+  SHIRO Wristband Tag - Adaptive Telemetry (V5.2 - Protocol 2)
   Hardware: Seeed Studio XIAO ESP32-C6
 ==========================================================
 [OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x68.
@@ -382,6 +382,22 @@ After that, a status line comes **5 times a second**, the same values the wristb
 * `[1Hz ACTIVE]`: live mode, started from the dashboard or by a fall.
 
 A fall shows as `[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! ...` with the measured free-fall, impact and stillness values.
+
+**Fall-check lines (V5.2).** Every movement that looks like a drop gives one `[FALL CHECK]` line, whether it raised an alarm or not. The line says how the check ended:
+
+| Line starts with | Meaning |
+| :--- | :--- |
+| `[FALL CHECK] FALL` | Free-fall, impact and stillness: a fall. The `[ALERT]` line comes with it. |
+| `[FALL CHECK] no alarm: MOVING after the impact` | Free-fall and impact were there, but the wrist moved more than the limit afterwards: 0.20 g, or 0.08 g after an impact below 4 g. |
+| `[FALL CHECK] no alarm: NO IMPACT` | The free-fall was long enough, but no impact above 2.50 g came within 0.5 s. |
+| `[FALL CHECK] no alarm: FREE-FALL TOO SHORT` | An impact came, or the wrist dipped below 0.50 g for 60 ms or more, but it was below 0.50 g for less than 150 ms (0 ms: it never got below 0.50 g). |
+
+Each line also gives:
+* the measured values;
+* `largest sample gap`: the longest time between two accelerometer readings during the check (normally 20 ms);
+* the vitals mode at that moment (`1Hz ACTIVE`, `3m BURST` or `3m SLEEP`).
+
+After a fall, `[FALL] Alert hold over: watching for falls again.` shows when the 45 s hold has ended and the next fall can be detected.
 
 A `[FAIL]` line for a sensor means that sensor is reported as faulty in every packet and shown as **SENSOR FAULT** on the dashboard. The wristband keeps running with the sensors that work.
 

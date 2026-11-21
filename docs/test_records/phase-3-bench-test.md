@@ -330,10 +330,53 @@ Candidate rules replayed on these values:
 
 | Check | Result |
 | :--- | :--- |
-| At power-on the Serial Monitor shows `V5.1` and `[SELF-TEST] Fall detector: PASS (… arm drop while standing: ignored)` | |
-| 5 arm drops onto the table as in Part A, arm kept still for 3 s: falls detected | / 5 |
-| 10 times, standing: turn on the spot, let the arm drop quickly against the leg, then keep moving the hand a little for 5 s: fall alarms (expected 0) | / 10 |
-| 10 times, the same, then stand completely still for 5 s: fall alarms (known limit, counted for the record) | / 10 |
+| At power-on the Serial Monitor shows `V5.1` and `[SELF-TEST] Fall detector: PASS (… arm drop while standing: ignored)` | Y (21 Nov, once **USB CDC On Boot** was set to Enabled; with it Disabled the Serial Monitor stayed empty) |
+| 5 arm drops onto the table as in Part A, arm kept still for 3 s: falls detected | about 5 / 10 (the tester did 10; see below) |
+| 10 times, standing: turn on the spot, let the arm drop quickly against the leg, then keep moving the hand a little for 5 s: fall alarms (expected 0) | not done yet |
+| 10 times, the same, then stand completely still for 5 s: fall alarms (known limit, counted for the record) | not done yet |
+| Fall alarms during the 31 runs of position-test session `PT-20261121-100601` (10:06–10:35: walking between spots, turning, standing, sitting, lying) | 0 (2 in the 31 runs of the morning session with V5.0) |
+
+#### First check of V5.1: half of the drops missed, reason not recorded
+
+- The tester counted about 5 alarms in 10 arm drops. Before each drop they waited until the 45 s hold was over (status back to 1 Hz or 3-minute mode), so the hold does not explain the misses.
+- The server stored 8 falls between 09:38 and 10:03:
+  - free-fall minimum 0.02–0.28 g;
+  - impact 3.94–22.64 g, 7 of 8 at 4.63 g or more;
+  - post-impact motion 0.02–0.03 g.
+- V5.1 can only reject a drop whose impact stays below 4 g and that moves 0.08 g or more afterwards. The detected drops are far from that limit: 7 of 8 hit at 4.63 g or more, and the one at 3.94 g moved only 0.02 g.
+- A missed drop leaves no record, so why the other drops were missed is not known (as in Round 2, finding 7). Earlier detection rates: 9 / 10 (Round 1), 41 / 47 and 18 / 20 (Round 2).
+
+### Fall-check report (wristband firmware V5.2)
+
+V5.2 adds a Serial Monitor line for every drop-like movement, so that a missed drop shows which phase failed. Detection itself is unchanged: the 316 earlier host-test checks still pass, and 42 new ones check the report.
+
+| Line | Meaning |
+| :--- | :--- |
+| `[FALL CHECK] FALL` | free-fall, impact and stillness: alarm |
+| `[FALL CHECK] no alarm: MOVING after the impact` | motion after the impact above the limit (0.20 g, or 0.08 g after an impact below 4 g) |
+| `[FALL CHECK] no alarm: NO IMPACT` | free-fall of 150 ms or more, but no impact above 2.50 g within 0.5 s |
+| `[FALL CHECK] no alarm: FREE-FALL TOO SHORT` | an impact (or a dip below 0.50 g of 60 ms or more) after less than 150 ms below 0.50 g; 0 ms means it never got below 0.50 g |
+
+Each line also gives the values, the largest time between two accelerometer readings during the check (normally 20 ms), and the vitals mode. `[FALL] Alert hold over: watching for falls again.` marks the end of the 45 s hold.
+
+#### Check with V5.2
+
+Wristband on USB with the Serial Monitor open; keep the cable slack so that it does not hold the arm back. The banner must show `V5.2` and `[SELF-TEST] Fall detector: PASS`. Drop the relaxed arm from about 0.5 m onto the table and keep it still for 3 s, as in Part A. Before the next drop, wait for `[FALL] Alert hold over` after an alarm, or 5 s after a drop without one.
+
+| # | Alarm (Y/N) | `[FALL CHECK]` result | Free-fall (ms) | Lowest (g) | Impact (g) | Motion after (g) | Largest sample gap (ms) | Mode |
+| :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: | :--- |
+| 1 | | | | | | | | |
+| 2 | | | | | | | | |
+| 3 | | | | | | | | |
+| 4 | | | | | | | | |
+| 5 | | | | | | | | |
+| 6 | | | | | | | | |
+| 7 | | | | | | | | |
+| 8 | | | | | | | | |
+| 9 | | | | | | | | |
+| 10 | | | | | | | | |
+
+Then the two standing checks of the table above (10 + 10), with their `[FALL CHECK]` lines.
 
 ## Decision
 
@@ -345,3 +388,4 @@ Candidate rules replayed on these values:
 - [ ] Open, outside Phase 3: stability of the heart-rate value (finding 15).
 - [x] Round 4 (21 Nov 2026): after three false alarms while standing, an impact below 4 g now needs post-impact motion below 0.08 g (wristband firmware V5.1). This departs from the single 0.20 g limit of the thesis (Chapter 4, Algorithm 3); all other thresholds are unchanged.
 - [ ] Round 4 hardware check (table above).
+- [ ] With V5.2: the reason for every missed drop (table "Check with V5.2"); only then decide whether a threshold changes.

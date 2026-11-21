@@ -14,6 +14,12 @@
  *                    clearly still: below softStillnessG.
  *
  *   Feed one sample per call to update(). Time is passed in, never read here.
+ *
+ *   Fall-check report (V5.2, diagnostics only): every event that looks like a drop
+ *   leaves one record (lastCheck(), counted by checkCount()) saying how it ended and
+ *   with which values: a fall, moving after the impact, no impact, or a free-fall too
+ *   short (including a dip that never went below freefallG) followed by an impact.
+ *   A missed drop then shows which phase failed. The records never change a decision.
  * =========================================================================================
  */
 #ifndef SHIRO_FALL_DETECTOR_H
@@ -68,6 +74,27 @@ enum FallPhase {
   FALL_PHASE_CONFIRMED = 4      // fall confirmed, flag held for alertHoldMs
 };
 
+// How a fall check ended (diagnostics, see lastCheck())
+enum FallCheckOutcome {
+  FALL_CHECK_NONE = 0,
+  FALL_CHECK_CONFIRMED = 1,       // free-fall, impact, then still: a fall
+  FALL_CHECK_MOVING = 2,          // free-fall and impact, then more movement than the limit
+  FALL_CHECK_NO_IMPACT = 3,       // free-fall long enough, but no impact within impactMaxMs
+  FALL_CHECK_FREEFALL_SHORT = 4   // a dip below 0.80 g that stayed below freefallG too briefly (or never),
+                                  // followed by an impact or below freefallG for at least 60 ms
+};
+
+struct FallCheck {
+  FallCheckOutcome outcome;
+  uint32_t atMs;          // when the check ended
+  uint32_t freefallMs;    // time below freefallG (the longest stretch for FREEFALL_SHORT; 0 if never below)
+  float lowestG;          // lowest acceleration of the free-fall or dip
+  float impactG;          // highest acceleration after it: the impact, or the highest value seen when there was none
+  float motionG;          // mean post-impact motion (CONFIRMED, MOVING)
+  float limitG;           // the stillness limit that applied (CONFIRMED, MOVING)
+  uint32_t largestGapMs;  // largest time between two samples during the check (50 Hz: 20 ms)
+};
+
 class FallDetector {
  public:
   explicit FallDetector(const FallConfig& config = defaultFallConfig())
@@ -77,16 +104,21 @@ class FallDetector {
     lastPeakImpactG = 0.0f;
     lastMinFreefallG = 0.0f;
     lastStillnessG = 0.0f;
+    checks = 0;
+    check = FallCheck();
   }
 
   // Feeds one acceleration sample (total magnitude in g) taken at nowMs.
   // Returns true exactly once per fall: on the sample that confirms it.
   bool update(float smv, uint32_t nowMs) {
+    const uint32_t gapMs = noteSample(nowMs);  // diagnostics only
     if (phase == FALL_PHASE_CONFIRMED) {
       service(nowMs);
       return false;
     }
     if (!(smv >= 0.0f)) return false;  // rejects NaN and negative values
+    const FallPhase before = phase;
+    if (phase != FALL_PHASE_MONITORING && gapMs > checkGapMs) checkGapMs = gapMs;
 
     switch (phase) {
       case FALL_PHASE_MONITORING:
@@ -95,6 +127,7 @@ class FallDetector {
           freefallStartMs = nowMs;
           freefallEndMs = nowMs;
           runMinFreefallG = smv;
+          checkGapMs = gapMs;
         }
         break;
 
@@ -105,6 +138,8 @@ class FallDetector {
         } else if ((uint32_t)(nowMs - freefallStartMs) >= cfg.freefallMinMs) {
           // Free-fall lasted long enough and has just ended
           freefallEndMs = nowMs;
+          freefallMs = nowMs - freefallStartMs;
+          afterFreefallPeakG = smv;
           phase = FALL_PHASE_AWAIT_IMPACT;
           checkImpact(smv, nowMs);
         } else {
@@ -116,10 +151,13 @@ class FallDetector {
         if (smv < cfg.freefallG) {
           // Still falling (or falling again): the impact window restarts
           freefallEndMs = nowMs;
+          freefallMs = nowMs - freefallStartMs;
           if (smv < runMinFreefallG) runMinFreefallG = smv;
         } else if ((uint32_t)(nowMs - freefallEndMs) > cfg.impactMaxMs) {
           phase = FALL_PHASE_MONITORING;  // no impact followed
+          record(FALL_CHECK_NO_IMPACT, nowMs, freefallMs, runMinFreefallG, afterFreefallPeakG, 0.0f, 0.0f, checkGapMs);
         } else {
+          if (smv > afterFreefallPeakG) afterFreefallPeakG = smv;
           checkImpact(smv, nowMs);
         }
         break;
@@ -139,15 +177,20 @@ class FallDetector {
             lastPeakImpactG = runPeakImpactG;
             lastMinFreefallG = runMinFreefallG;
             lastStillnessG = meanMotion;
+            record(FALL_CHECK_CONFIRMED, nowMs, freefallMs, runMinFreefallG, runPeakImpactG, meanMotion,
+                   stillnessLimit(runPeakImpactG), checkGapMs);
             return true;
           }
           phase = FALL_PHASE_MONITORING;  // the person is moving: not incapacitated
+          record(FALL_CHECK_MOVING, nowMs, freefallMs, runMinFreefallG, runPeakImpactG, meanMotion,
+                 stillnessLimit(runPeakImpactG), checkGapMs);
         }
         break;
 
       default:
         break;
     }
+    watchDip(smv, nowMs, gapMs, before);
     return false;
   }
 
@@ -186,6 +229,11 @@ class FallDetector {
     return peakImpactG < cfg.softImpactG ? cfg.softStillnessG : cfg.stillnessG;
   }
 
+  // Fall-check report (diagnostics): the number of checks recorded so far (wraps),
+  // and the most recent one. A caller prints a check when the count changes.
+  uint16_t checkCount() const { return checks; }
+  const FallCheck& lastCheck() const { return check; }
+
  private:
   void reset() {
     phase = FALL_PHASE_MONITORING;
@@ -197,6 +245,98 @@ class FallDetector {
     runPeakImpactG = 0.0f;
     stillnessSum = 0.0f;
     stillnessSamples = 0;
+    // Diagnostics
+    haveSample = false;
+    lastSampleMs = 0;
+    checkGapMs = 0;
+    freefallMs = 0;
+    afterFreefallPeakG = 0.0f;
+    dipOpen = false;
+    dipTaken = false;
+    dipLastMs = 0;
+    dipLowG = 0.0f;
+    dipInBelow = false;
+    dipBelowStartMs = 0;
+    dipBelowRunMs = 0;
+    dipPeakG = 0.0f;
+    dipImpactMs = 0;
+    dipGapMs = 0;
+  }
+
+  // ---- Diagnostics only: nothing below changes a decision ----
+
+  // Time since the previous sample (0 for the first one)
+  uint32_t noteSample(uint32_t nowMs) {
+    const uint32_t gap = haveSample ? (uint32_t)(nowMs - lastSampleMs) : 0;
+    haveSample = true;
+    lastSampleMs = nowMs;
+    return gap;
+  }
+
+  void record(FallCheckOutcome outcome, uint32_t nowMs, uint32_t ffMs, float lowestG, float highestG,
+              float motionG, float limitG, uint32_t gapMs) {
+    check.outcome = outcome;
+    check.atMs = nowMs;
+    check.freefallMs = ffMs;
+    check.lowestG = lowestG;
+    check.impactG = highestG;
+    check.motionG = motionG;
+    check.limitG = limitG;
+    check.largestGapMs = gapMs;
+    checks++;
+  }
+
+  // A dip below 0.80 g, and everything up to impactMaxMs after its last sample (or
+  // 200 ms after an impact), is watched. When it ends it is recorded as
+  // FREEFALL_SHORT, unless the state machine took it (a free-fall long enough: the
+  // machine records its own outcome) or it was a small one: never below freefallG
+  // for 60 ms and no impact after it.
+  void watchDip(float smv, uint32_t nowMs, uint32_t gapMs, FallPhase before) {
+    const float dipG = 0.80f;
+    const uint32_t reportMinMs = 60;
+    const uint32_t impactPeakMs = 200;
+    if (smv < dipG) {
+      if (!dipOpen) {
+        dipOpen = true;
+        dipTaken = false;
+        dipLowG = smv;
+        dipInBelow = false;
+        dipBelowRunMs = 0;
+        dipPeakG = 0.0f;
+        dipImpactMs = 0;
+        dipGapMs = gapMs;
+      }
+      dipLastMs = nowMs;
+      if (smv < dipLowG) dipLowG = smv;
+    }
+    if (!dipOpen) return;
+    if (phase == FALL_PHASE_AWAIT_IMPACT || phase == FALL_PHASE_POST_IMPACT || phase == FALL_PHASE_CONFIRMED) {
+      dipTaken = true;
+    }
+    if (gapMs > dipGapMs) dipGapMs = gapMs;
+    // Stretches below freefallG, measured as the state machine does: from the first
+    // sample below to the first sample above
+    if (smv < cfg.freefallG) {
+      if (!dipInBelow) {
+        dipInBelow = true;
+        dipBelowStartMs = nowMs;
+      }
+    } else if (dipInBelow) {
+      dipInBelow = false;
+      const uint32_t run = nowMs - dipBelowStartMs;
+      if (run > dipBelowRunMs) dipBelowRunMs = run;
+    }
+    if (smv >= dipG && smv > dipPeakG) dipPeakG = smv;
+    if (smv > cfg.impactG && dipImpactMs == 0 && before != FALL_PHASE_AWAIT_IMPACT && before != FALL_PHASE_POST_IMPACT) {
+      dipImpactMs = nowMs;
+    }
+    const bool ended = (uint32_t)(nowMs - dipLastMs) > cfg.impactMaxMs ||
+                       (dipImpactMs != 0 && (uint32_t)(nowMs - dipImpactMs) >= impactPeakMs);
+    if (!ended) return;
+    dipOpen = false;
+    if (dipTaken) return;
+    if (dipImpactMs == 0 && dipBelowRunMs < reportMinMs) return;
+    record(FALL_CHECK_FREEFALL_SHORT, nowMs, dipBelowRunMs, dipLowG, dipPeakG, 0.0f, 0.0f, dipGapMs);
   }
 
   void checkImpact(float smv, uint32_t nowMs) {
@@ -223,6 +363,24 @@ class FallDetector {
   float lastPeakImpactG;
   float lastMinFreefallG;
   float lastStillnessG;
+  // Diagnostics
+  uint16_t checks;
+  FallCheck check;
+  bool haveSample;
+  uint32_t lastSampleMs;
+  uint32_t checkGapMs;
+  uint32_t freefallMs;
+  float afterFreefallPeakG;
+  bool dipOpen;
+  bool dipTaken;
+  uint32_t dipLastMs;
+  float dipLowG;
+  bool dipInBelow;
+  uint32_t dipBelowStartMs;
+  uint32_t dipBelowRunMs;
+  float dipPeakG;
+  uint32_t dipImpactMs;
+  uint32_t dipGapMs;
 };
 
 // -----------------------------------------------------------------------------

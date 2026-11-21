@@ -466,6 +466,103 @@ static void testRecordedFallValues() {
   CHECK(falseRaisedBefore == falseAlarms);  // the stored values really exercise the change
 }
 
+// The fall-check report (V5.2): one record per drop-like event, with the reason
+static void testFallCheckReport() {
+  section("fall-check report: one record per drop-like event, saying how it ended");
+  {  // A fall
+    Trace tr;
+    tr.fall();
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_CONFIRMED);
+    CHECK(c.freefallMs == 300);
+    CHECK(nearly(c.lowestG, 0.15f));
+    CHECK(nearly(c.impactG, 4.0f));
+    CHECK(nearly(c.motionG, 0.02f));
+    CHECK(nearly(c.limitG, 0.20f));
+    CHECK(c.largestGapMs == 20);
+    // Nothing is checked during the 45 s hold
+    tr.fall();
+    CHECK(tr.detector.checkCount() == 1);
+  }
+  {  // Free-fall and impact, then moving
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(4.0f, 40);
+    for (int i = 0; i < 150; i++) tr.sample(i % 2 == 0 ? 0.6f : 1.6f);
+    tr.hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 0);
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_MOVING);
+    CHECK(nearly(c.motionG, 0.5f));
+    CHECK(nearly(c.limitG, 0.20f));
+  }
+  {  // Arm dropped while standing: soft impact, then small hand movements
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.25f, 250).hold(3.0f, 40);
+    for (int i = 0; i < 150; i++) tr.sample(i % 2 == 0 ? 0.88f : 1.12f);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 0);
+    CHECK(c.outcome == FALL_CHECK_MOVING);
+    CHECK(c.freefallMs == 260);
+    CHECK(nearly(c.impactG, 3.0f));
+    CHECK(nearly(c.motionG, 0.12f));
+    CHECK(nearly(c.limitG, 0.08f));
+  }
+  {  // Free-fall long enough, no impact
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.15f, 300).hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_NO_IMPACT);
+    CHECK(c.freefallMs == 300);
+    CHECK(nearly(c.impactG, 1.0f));
+  }
+  {  // Free-fall too short, then an impact
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.2f, 100).hold(4.0f, 40).hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 0);
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_FREEFALL_SHORT);
+    CHECK(c.freefallMs == 100);
+    CHECK(nearly(c.lowestG, 0.2f));
+    CHECK(nearly(c.impactG, 4.0f));
+  }
+  {  // A dip that never goes below 0.50 g, then an impact
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.6f, 200).hold(5.0f, 40).hold(1.0f, 1000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.detector.checkCount() == 1);
+    CHECK(c.outcome == FALL_CHECK_FREEFALL_SHORT);
+    CHECK(c.freefallMs == 0);
+    CHECK(nearly(c.lowestG, 0.6f));
+    CHECK(nearly(c.impactG, 5.0f));
+  }
+  {  // Not drop-like, not recorded: a knock without a dip, a 40 ms dip, an arm swing
+    Trace knock;
+    knock.hold(1.0f, 1000).hold(3.0f, 40).hold(1.0f, 1000);
+    CHECK(knock.detector.checkCount() == 0);
+    Trace dip;
+    dip.hold(1.0f, 1000).hold(0.3f, 40).hold(1.0f, 1000);
+    CHECK(dip.detector.checkCount() == 0);
+    Trace swing;
+    swing.hold(1.0f, 1000).swing(0.3f, 1000, 5000);
+    CHECK(swing.detector.checkCount() == 0);
+  }
+  {  // The largest time between two samples (a busy loop)
+    Trace tr;
+    tr.hold(1.0f, 1000).hold(0.15f, 100);
+    tr.t += 40;  // the next sample comes 60 ms after the previous one
+    tr.hold(0.15f, 100).hold(4.0f, 40).hold(1.02f, 3000);
+    const FallCheck& c = tr.detector.lastCheck();
+    CHECK(tr.confirmations == 1);
+    CHECK(c.outcome == FALL_CHECK_CONFIRMED);
+    CHECK(c.largestGapMs == 60);
+    CHECK(c.freefallMs == 240);
+  }
+}
+
 // ---------------------------------------------------------------------------
 static shiro::Telemetry sampleTelemetry() {
   shiro::Telemetry t;
@@ -1118,6 +1215,7 @@ int main() {
   testEverydayActivities();
   testSoftImpact();
   testRecordedFallValues();
+  testFallCheckReport();
   testPacketLayout();
   testPacketRoundTrip();
   testPacketFallFlag();
