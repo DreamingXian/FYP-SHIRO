@@ -243,9 +243,69 @@ The dashboard and every API address need a signed-in clinician. Two roles exist:
    ```text
    https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
    ```
-4. Open **Library Manager** (`Ctrl + Shift + I`) and install:
+4. Open **Boards Manager** (`Ctrl + Shift + B`), search for `esp32` and install **esp32 by Espressif Systems**. Tested version: **3.3.13**. Use the same version for every board: the Bluetooth stack and the board menus change between versions.
+5. Open **Library Manager** (`Ctrl + Shift + I`) and install:
    * **`SparkFun MAX3010x Sensor Library`** (by SparkFun)
    * **`PubSubClient`** (by Nick O'Leary)
+
+   Bluetooth (BLE), Wi-Fi and I2C come with the ESP32 package. Do not install another BLE library: it would be used instead of the package's own.
+
+#### Opening a sketch
+* Open the `.ino` file in its repository folder, for example `firmware/shiro_wristband_vitals/shiro_wristband_vitals.ino`. The `.h` files in the same folder open as tabs and are compiled with it.
+* If you keep a copy in another folder (for example under `Documents\Arduino`):
+  * The folder must have the same name as its `.ino` file.
+  * It must hold **every** `.h` file of the repository folder, plus your own `secrets.h` for the anchors and the LiDAR node.
+  * Copy **all** of them again after every firmware update. A copy with one old `.h` file either fails to compile or runs old code.
+* The first lines on the Serial Monitor show the version that is running (for example `V5.1` on the wristband).
+
+#### The Tools settings belong to the board type, not to the sketch
+Arduino IDE keeps the **Tools** settings you last chose for each board type, whichever sketch is open.
+* A setting meant for one board is easily left on another. For example, **USB CDC On Boot: Disabled** is right for the ESP32-S3 but wrong for the XIAO ESP32-C6.
+* **Before every upload, read the whole Tools menu against the table below.**
+
+#### Board settings at a glance (esp32 package 3.3.13)
+Leave every item that is not listed at the value its menu starts with:
+* CPU Frequency: the top "(WiFi)" value;
+* Flash Mode: QIO;
+* Core Debug Level: None;
+* Erase All Flash Before Sketch Upload: Disabled;
+* JTAG Adapter: Disabled;
+* Zigbee Mode: Disabled.
+
+| Tools menu item | Wristband: XIAO ESP32-C6 | Anchor: ESP32-WROOM-32E | Anchor: ESP32-S3 N16R8 | Anchor: XIAO ESP32-C3 | LiDAR node: ESP32-S3 N16R8 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Board | **XIAO_ESP32C6** | **ESP32 Dev Module** | **ESP32S3 Dev Module** | **XIAO_ESP32C3** (or ESP32C3 Dev Module) | **ESP32S3 Dev Module** |
+| USB CDC On Boot | **Enabled** | not in the menu | **Disabled** | **Enabled** (also on ESP32C3 Dev Module, where the menu starts at Disabled) | **Disabled** |
+| USB Mode | not in the menu | not in the menu | Hardware CDC and JTAG | not in the menu | Hardware CDC and JTAG |
+| Upload Mode | not in the menu | not in the menu | UART0 / Hardware CDC | not in the menu | UART0 / Hardware CDC |
+| Flash Size | 4MB | 4MB | **16MB** | 4MB | **16MB** |
+| PSRAM | not in the menu | Disabled | **Disabled** | not in the menu | **Disabled** |
+| Partition Scheme | Default 4MB with spiffs (Huge APP works too) | **Huge APP** | **Huge APP** | **Huge APP** | **Huge APP** |
+| Upload Speed | 921600 | 921600 | 921600 | 921600 | 921600 (115200 if the upload stops with an error) |
+| Port | USB Serial Device | the board's USB-to-serial chip (CP210x or CH340) | the USB-C socket marked **COM** | USB Serial Device | the USB-C socket marked **COM** |
+| Sketch | `shiro_wristband_vitals` | `shiro_anchor_node` | `shiro_anchor_node` | `shiro_anchor_node` | `shiro_lidar_node` |
+
+"Huge APP" is **Huge APP (3MB No OTA/1MB SPIFFS)**. The anchor and LiDAR sketches do not fit in the default partition. The wristband sketch uses about 60 % of it.
+
+#### Where the Serial Monitor output goes
+Every board prints its log on `Serial` at **115200** baud. Which USB socket that output reaches depends on the board and on **USB CDC On Boot**:
+
+| Board | What is behind its USB socket | USB CDC On Boot | If it is set wrong |
+| :--- | :--- | :--- | :--- |
+| XIAO ESP32-C6, XIAO ESP32-C3 | the chip's own USB | **Enabled** | With Disabled, `Serial` goes to pins D6/D7 instead. Uploading still works and the board runs normally (the wristband still shows on the dashboard), but the Serial Monitor stays **empty**. |
+| ESP32-S3 N16R8, socket **COM** | a USB-to-serial chip | **Disabled** | With Enabled, `Serial` goes to the other socket (marked **USB**) and the COM socket stays empty. |
+| ESP32-WROOM-32E | a USB-to-serial chip | (no such setting) | — |
+
+Uploading works with either setting: the chip's built-in loader receives the upload, not the sketch.
+
+#### Using the Serial Monitor
+* **Tools → Serial Monitor** (`Ctrl + Shift + M`), set to **115200 baud**. Any line ending works.
+* Only one program can use a COM port at a time. Close the Serial Monitor before running `firmware/tools/record_ppg.bat`, and close PuTTY or a second Arduino IDE window before uploading.
+* The start-up lines are printed once, 1.5 s after the board starts. To see them again, keep the Serial Monitor open and press the board's reset button: **R** on the XIAO boards, **EN** or **RST** on the others. A XIAO's port disappears for a moment at the reset; the Serial Monitor connects again by itself.
+* **Finding the port:** unplug the board, open **Tools → Port**, and plug it in again; the entry that appears is the board.
+  * In Windows Device Manager → **Ports (COM & LPT)**, the XIAO boards show as **USB Serial Device (COMx)**.
+  * Boards with a USB-to-serial chip show under the chip's name (Silicon Labs CP210x, USB-SERIAL CH340, CH343).
+* A charge-only USB cable powers the board but gives no port: use a data cable.
 
 ---
 
@@ -271,20 +331,65 @@ The dashboard and every API address need a signed-in clinician. Two roles exist:
 *Both sensors share the same hardware I2C bus lines.*
 
 #### Arduino IDE Settings:
-1. Connect XIAO ESP32-C6 via USB-C cable.
-2. Select **Tools --> Board --> esp32 --> "XIAO_ESP32C6"**.
-3. Select **Tools --> Port** (COM port for XIAO).
-4. Select **Tools --> Upload Speed --> "921600"**.
-5. Click **Upload** (`Ctrl + U`).
+1. Connect the XIAO ESP32-C6 to the PC with a USB-C **data** cable.
+2. Open `firmware/shiro_wristband_vitals/shiro_wristband_vitals.ino` (or your copy; see "Opening a sketch" in 4.1).
+3. In the **Tools** menu, set:
+
+   | Tools menu item | Setting |
+   | :--- | :--- |
+   | Board | esp32 → **XIAO_ESP32C6** |
+   | **USB CDC On Boot** | **Enabled**. Needed for the Serial Monitor. With Disabled, the upload works and the wristband runs, but nothing is printed to the PC. |
+   | CPU Frequency | 160MHz (WiFi) |
+   | Flash Frequency | 80MHz |
+   | Flash Mode | QIO |
+   | Flash Size | 4MB (32Mb) |
+   | Partition Scheme | Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS). Huge APP works too. |
+   | Upload Speed | 921600 |
+   | Core Debug Level | None |
+   | Erase All Flash Before Sketch Upload | Disabled |
+   | JTAG Adapter | Disabled |
+   | Zigbee Mode | Disabled |
+   | Port | the XIAO's port (**USB Serial Device (COMx)** in Device Manager) |
+
+4. Click **Upload** (`Ctrl + U`). When the upload finishes, the wristband restarts by itself with the new firmware.
+5. Open the Serial Monitor (`Ctrl + Shift + M`) at **115200** baud and press **R** on the XIAO to see the start-up lines.
+
+**If the upload stops** with `Failed to connect` or `No serial data received`:
+1. Close every other program that uses the port.
+2. Hold the **B** (boot) button, plug the USB cable in, release **B**, and upload again.
+3. After this kind of upload, press **R** once so the new firmware starts.
 
 #### What the Serial Monitor shows at power-on (115200 baud):
 ```
+==========================================================
+  SHIRO Wristband Tag - Adaptive Telemetry (V5.1 - Protocol 2)
+  Hardware: Seeed Studio XIAO ESP32-C6
+==========================================================
 [OK] MPU-6050 ready: +/-16 g range, WHO_AM_I = 0x68.
 [SELF-TEST] Fall detector: PASS (fall: detected, soft fall: detected, short dip: ignored, movement: ignored, arm drop while standing: ignored)
 [OK] HW-605 (MAX30102) Initialized.
+[OK] Battery Monitoring Initialized: ...V (...%)
+[OK] Dual BLE Broadcast + GATT Server Active! MAC: ...
 [OK] Telemetry packet version 2, 15 bytes.
+>>> Ready: 3-min passive cycle + 1Hz on-demand/fall escalation <<<
 ```
-A `[FAIL]` line for a sensor means that sensor is reported as faulty in every packet and shown as **SENSOR FAULT** on the dashboard; the wristband keeps running with the sensors that work.
+After that, a status line comes **5 times a second**, the same values the wristband broadcasts:
+```
+[BROADCAST ...] BPM: 0 | SpO2: 0% | Bat: 85% | G: 1.01 | Motion: STATIONARY [3m SLEEP]
+```
+* `[3m SLEEP]`: the pulse sensor is resting.
+* `[3m BURST]`: it is in a scheduled measurement.
+* `[1Hz ACTIVE]`: live mode, started from the dashboard or by a fall.
+
+A fall shows as `[ALERT] *** ON-CHIP KINEMATIC FALL CONFIRMED! ...` with the measured free-fall, impact and stillness values.
+
+A `[FAIL]` line for a sensor means that sensor is reported as faulty in every packet and shown as **SENSOR FAULT** on the dashboard. The wristband keeps running with the sensors that work.
+
+**If the Serial Monitor stays empty** while the dashboard shows the wristband, check in this order:
+1. **USB CDC On Boot** is **Enabled** (Tools menu). If not, set it and upload again. This is the usual cause.
+2. **Tools → Port** is the wristband's port, not an anchor's.
+3. No other program has the port open (`record_ppg.bat`, PuTTY, another IDE window).
+4. Press **R**: the start-up lines come 1.5 s later.
 
 > [!NOTE]
 > The "firm shake starts 1 Hz active mode" shortcut is now a bench-test option. It is off by default; set `SHIRO_DEBUG_SHAKE_WAKE` to `1` at the top of the sketch to use it. Start active mode from the dashboard instead.
@@ -324,18 +429,24 @@ If `secrets.h` is missing, or lacks `SHIRO_MQTT_USER` or `SHIRO_MQTT_PASSWORD`, 
 1. Connect ESP32-WROOM-32E via USB cable.
 2. Select **Tools --> Board --> esp32 --> "ESP32 Dev Module"**.
 3. Select **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**.
-4. Select **Tools --> Upload Speed --> "921600"**.
-5. Select **Tools --> Port** (physical USB serial port, e.g., `COM10+`).
-6. Click **Upload** (`Ctrl + U`). *(If `Connecting........_____`, press and hold the physical **BOOT** button for 1 second).*
+4. Check **Flash Size "4MB (32Mb)"** and **PSRAM "Disabled"**; leave the other items at their first value (table in 4.1).
+5. Select **Tools --> Upload Speed --> "921600"**.
+6. Select **Tools --> Port** (the board's USB-to-serial chip, CP210x or CH340, e.g., `COM10+`).
+7. Click **Upload** (`Ctrl + U`). *(If `Connecting........_____`, press and hold the physical **BOOT** button for 1 second).*
+8. Open the Serial Monitor at **115200** baud and press **EN**. The anchor prints:
+   * its version (`V4.1`);
+   * `[OK] Wi-Fi Connected!` and its MAC address;
+   * `[OK] Connected to MQTT Broker!`;
+   * a health line every 30 s.
 
 #### Other anchor boards (Phase 10)
-There were not enough ESP32-WROOM-32E boards for six anchors, so ESP32-S3 and XIAO ESP32-C3 boards are used as well. The firmware is the same; only the Arduino IDE settings differ. All three compile with the Huge APP partition (checked 20 Nov 2026: S3 36 %, C3 40 % of 3 MB; the C3's default partition would be 97 % full).
+There were not enough ESP32-WROOM-32E boards for six anchors, so ESP32-S3 and XIAO ESP32-C3 boards are used as well. The firmware is the same; only the Arduino IDE settings differ. All three compile with the Huge APP partition (checked 20 Nov 2026: S3 36 %, C3 40 % of 3 MB; the C3's default partition would be 97 % full). The full Tools settings of each board are in the table in 4.1.
 
-| Board | Tools → Board | Partition Scheme | Notes |
-| :--- | :--- | :--- | :--- |
-| ESP32-WROOM-32E | ESP32 Dev Module | Huge APP | As above |
-| ESP32-S3 (N16R8) | ESP32S3 Dev Module | Huge APP | Flash Size 16MB, PSRAM Disabled, USB CDC On Boot Disabled; upload through the USB-C port marked **COM** |
-| Seeed XIAO ESP32-C3 | XIAO_ESP32C3 | Huge APP | The board has no antenna of its own: clip the FPC antenna onto its connector **before** powering it. No code change. If upload fails, hold **BOOT** while plugging in USB. |
+| Board | Tools → Board | Partition Scheme | USB CDC On Boot | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| ESP32-WROOM-32E | ESP32 Dev Module | Huge APP | not in the menu | As above |
+| ESP32-S3 (N16R8) | ESP32S3 Dev Module | Huge APP | **Disabled** | Flash Size 16MB, PSRAM Disabled, USB Mode Hardware CDC and JTAG, Upload Mode UART0 / Hardware CDC. Upload and Serial Monitor through the USB-C socket marked **COM**. |
+| Seeed XIAO ESP32-C3 | XIAO_ESP32C3, or ESP32C3 Dev Module | Huge APP | **Enabled** (on ESP32C3 Dev Module the menu starts at Disabled: change it) | The board has no antenna of its own: clip the FPC antenna onto its connector **before** powering it. No code change. If upload fails, hold **B** (boot) while plugging in USB, then press **R** after the upload. |
 
 Mounting, for every anchor the same way: board upright against the wall (1–2 cm off it, for example on a foam pad), components facing into the room, antenna end pointing **up**, nothing within 5 cm of the antenna (cables, step-down module, metal). On a XIAO C3, stick the FPC antenna upright above the board. Boards with different antennas read a wristband a few dB stronger or weaker; each anchor's own calibration value (🎯 Calibrate Anchors) takes care of that.
 
@@ -379,8 +490,21 @@ The C1's signals are 3.3 V and connect directly. It needs 4.8–5.2 V, up to **8
 
 #### Flashing
 1. Plug the S3's **COM** USB-C port into the PC.
-2. Arduino IDE: **ESP32S3 Dev Module**, Flash Size **16MB**, PSRAM **Disabled**, Partition Scheme **Huge APP**, USB CDC On Boot **Disabled**, Port: the new COM port.
-3. Upload `shiro_lidar_node.ino`, then open the Serial Monitor at **115200** baud.
+2. Arduino IDE, Tools menu (the full list is in the table in 4.1):
+
+   | Tools menu item | Setting |
+   | :--- | :--- |
+   | Board | **ESP32S3 Dev Module** |
+   | USB CDC On Boot | **Disabled** (the log goes to the COM socket) |
+   | USB Mode | Hardware CDC and JTAG |
+   | Upload Mode | UART0 / Hardware CDC |
+   | Flash Size | **16MB (128Mb)** |
+   | PSRAM | **Disabled** |
+   | Partition Scheme | **Huge APP (3MB No OTA/1MB SPIFFS)** |
+   | Upload Speed | 921600; 115200 if the upload stops with an error |
+   | Port | the COM port that appeared when you plugged in the **COM** socket |
+
+3. Upload `shiro_lidar_node.ino`, then open the Serial Monitor at **115200** baud and press **RST**.
 
 #### Test, stage 1: on the PC (option B)
 With the LM2596S module powered and the S3 on USB, the Serial Monitor shows:
@@ -754,6 +878,10 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | Live Map: 📡 positions stop while the LiDAR is scanning | The LiDAR is flagged as probably moved, or its empty room is being learned. | See the warning in Panel 3b (4.6): put the LiDAR back, align it, learn the empty room again. |
 | Live Lab simulation button answers "Simulation is disabled" | `ENABLE_SIMULATION=false` in `edge_server/.env`. | Set it to `true` and restart the server. Simulated incidents are always marked as simulated. |
 | ESP32 compiler error: `text section exceeds available space in board` | Default 1.3 MB partition table selected. | In Arduino IDE: **Tools --> Partition Scheme --> "Huge APP (3MB No OTA/1MB SPIFFS)"**. |
+| Upload works and the board runs (the wristband shows on the dashboard), but the Serial Monitor stays empty | On a XIAO ESP32-C6 or C3: **USB CDC On Boot** is Disabled, so the log goes to pins D6/D7 instead of the USB socket. On an ESP32-S3: the cable is in the wrong socket for the setting. | XIAO: **Tools → USB CDC On Boot → Enabled**, upload again. S3: use the **COM** socket with USB CDC On Boot Disabled. Also check **Tools → Port** and that no other program holds the port (4.1, "Where the Serial Monitor output goes"). |
+| Serial Monitor shows only unreadable characters | The baud rate is not 115200 (boards with a USB-to-serial chip: WROOM-32E, S3 on its COM socket). | Set **115200 baud** in the Serial Monitor. |
+| Upload: `Failed to connect`, `No serial data received`, or the port is busy | Another program holds the port, the cable is charge-only, or the board is not in its loader. | Close the other Serial Monitor, `record_ppg.bat` or PuTTY. Use a data cable. Hold **BOOT** (**B** on a XIAO) while plugging in or while `Connecting...` shows, then upload; afterwards press reset. Try Upload Speed 115200. |
+| An old firmware still runs after uploading (the banner shows the old version) | The upload came from a copy of the sketch with old files, or from another folder than the one edited. | Open the `.ino` in the repository folder, or copy **all** `.h` files of the repository folder into your copy again (4.1, "Opening a sketch"). |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | One persistent connection per headset, with heartbeats. Ensure only one Unity instance is playing. |
 | Hand slate shows `Edge Server: 🔑 NOT PAIRED` | The headset has no pairing, or its pairing was revoked, or the database was recreated. | Section 6.2 step 6: create a code on the ADMIN tab and enter it on the System tab. |
