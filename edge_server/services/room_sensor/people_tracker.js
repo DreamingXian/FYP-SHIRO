@@ -20,12 +20,14 @@ const DEFAULTS = Object.freeze({
 function createPeopleTracker(options = {}) {
   const o = { ...DEFAULTS, ...options };
   let nextId = 1;
-  let tracks = [];   // { id, x, y, seen: [bool], firstAt, lastAt, confirmed, width_m }
+  let tracks = [];   // { id, x, y, seen: [bool], firstAt, firstX, firstY, lastAt, confirmed, width_m }
 
+  // first_x / first_y: where the person was first seen (a patient getting out of
+  // bed is first seen at the bed, a visitor where they came into view)
   function view(tr) {
     return {
-      id: tr.id, x: tr.x, y: tr.y, first_at: tr.firstAt, last_at: tr.lastAt,
-      width_m: tr.width_m
+      id: tr.id, x: tr.x, y: tr.y, first_at: tr.firstAt, first_x: tr.firstX, first_y: tr.firstY,
+      last_at: tr.lastAt, width_m: tr.width_m
     };
   }
 
@@ -66,7 +68,7 @@ function createPeopleTracker(options = {}) {
       people.forEach((p, b) => {
         if (usedPeople.has(b)) return;
         tracks.push({
-          id: nextId++, x: p.x, y: p.y, seen: [true], firstAt: t, lastAt: t,
+          id: nextId++, x: p.x, y: p.y, seen: [true], firstAt: t, firstX: p.x, firstY: p.y, lastAt: t,
           confirmed: o.confirmHits <= 1, width_m: p.width_m
         });
       });

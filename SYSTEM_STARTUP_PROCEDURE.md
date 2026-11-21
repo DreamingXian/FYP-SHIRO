@@ -630,7 +630,7 @@ Once a LiDAR is placed, aligned and has its empty room, the server finds the peo
 
 On the **Live Map**:
 * **📡 before the patient's name**, violet dot: the position comes from the LiDAR (about ±0.1 m). The text under the map says "📡 seen by the LiDAR" and how far the Bluetooth estimate is from it; the faint teal circle is that estimate.
-* **🛏**: the patient was last seen at the bed and the LiDAR no longer sees them, normally because they lay down (a lying person is below the scan slice). The position stays there until they get up or Bluetooth clearly shows they left.
+* **🛏**: the patient was last seen at the bed and the LiDAR no longer sees them, normally because they lay down (a lying person is below the scan slice). The position stays there until they get up, or until Bluetooth clearly shows they left. Getting up, they are first seen at the bed, on whichever side they get out, and the violet dot goes with them within about 1 s.
 * **⏸**: the LiDAR lost the patient away from a bed (someone in front of them, or they went down). The last position is held for 10 s, then Bluetooth.
 * **Grey dot, "person (no wristband)"**: someone the LiDAR sees who is not linked to a wristband: a visitor, staff, or a patient whose Bluetooth position is still more than 2 m away.
 * No symbol (teal dot, 🔒 when still): Bluetooth only.
@@ -639,7 +639,8 @@ How linking behaves:
 * A patient who walks in is linked within about 1–2 s, when they are the only person near their wristband's Bluetooth position (within 2 m) or clearly the nearest one.
 * While the LiDAR follows them, the link stays, even when Bluetooth is far off.
 * Several people close together near one wristband: no link until one is clearly nearer. They show as grey dots, and the patient's dot stays on Bluetooth.
-* Known limit: a person who appears right at the bed while the patient is held there (lying down) is taken for the patient getting up.
+* While a patient lies in bed (🛏), a person counts as that patient getting up only if the LiDAR first saw them **at that bed** (within 0.6 m of it), after the patient lay down. A nurse or visitor who walks up to the bed was first seen where they came into view, usually the door, and stays a grey dot. So does someone who was already in the room, and someone getting out of another bed.
+* Known limit: someone the LiDAR first sees right at the bed while the patient lies there is taken for the patient getting up. This happens, for example, when they step out from behind another person standing at the bed.
 
 Things that stop the LiDAR positions (the map falls back to Bluetooth): the empty room being learned, the "may have been moved" warning (4.6), the node not sending turns. Things that put grey dots where nobody is: furniture moved since the empty room was learned (learn it again).
 

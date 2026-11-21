@@ -80,6 +80,15 @@ describe('following people from turn to turn', () => {
     assert.equal(tr.update([], 1800).length, 0, 'let go');
   });
 
+  test('remembers when and where a person was first seen', () => {
+    const tr = createPeopleTracker();
+    let out = [];
+    for (let k = 0; k < 10; k++) out = tr.update([{ x: 1.0 + 0.1 * k, y: 1.2 }], 1000 + k * 100);
+    assert.equal(out.length, 1);
+    assert.deepEqual([out[0].first_at, out[0].first_x, out[0].first_y], [1000, 1.0, 1.2]);
+    assert.ok(out[0].x > 1.7, 'the present position moves on');
+  });
+
   test('a single stray group never shows; two people keep their identities', () => {
     const tr = createPeopleTracker();
     tr.update([{ x: 2, y: 3 }], 0);
@@ -173,6 +182,77 @@ describe('linking people to wristbands, by position only', () => {
     out = run(l, 62000, 300, (t) => [{ ...nurse, last_at: t }, { key: 'A#3', x: 1.2, y: 1.1, first_at: 62000, last_at: t }], band, [BED]);
     assert.equal(l.linkOf('TAG-1'), 'A#3');
     assert.equal(out.positions.find(p => p.tagId === 'TAG-1').held, false);
+  });
+
+  // Session PT-20261121-100601 (21 Nov 2026): last seen at (1.79, 0.73) while lying down,
+  // Bluetooth at about (1.24, 1.94). Getting out on the west side, the tester was first
+  // seen about 0.9 m from the held position and stayed a person without a wristband.
+  const HELD = { x: 1.79, y: 0.73 };
+  const lieDown = (l, band, beds = [BED]) => {
+    run(l, 0, 2000, (t) => [{ key: 'A#1', ...HELD, first_at: 0, first_x: 1.4, first_y: 1.6, last_at: t }], band, beds);
+    const out = run(l, 2000, 10000, () => [], band, beds);
+    assert.deepEqual(out.positions.map(p => [p.held, p.in_bed]), [[true, true]], 'held in bed');
+  };
+  // A person who appears at first, at time from, and walks to the given point within 2 s
+  const walker = (key, from, first, to) => (t) => {
+    const k = Math.min(1, Math.max(0, (t - from) / 2000));
+    return t < from ? [] : [{ key, x: first.x + k * (to.x - first.x), y: first.y + k * (to.y - first.y), first_at: from, first_x: first.x, first_y: first.y, last_at: t }];
+  };
+
+  test('held in bed: the patient getting out on either side or at the foot end is the patient again', () => {
+    const band = (t) => [ble('TAG-1', 1.24, 1.94, t)];
+    for (const [side, first, to] of [
+      ['west side', { x: 0.95, y: 1.2 }, { x: 0.9, y: 2.3 }],    // 0.89 m from the held position
+      ['foot end', { x: 1.7, y: 2.4 }, { x: 0.9, y: 2.3 }],      // 1.67 m
+      ['sitting up', { x: 1.6, y: 0.9 }, { x: 1.35, y: 1.0 }]    // 0.25 m
+    ]) {
+      const l = createLidarLinker();
+      lieDown(l, band);
+      const out = run(l, 12000, 2500, walker('A#2', 12000, first, to), band, [BED]);
+      assert.equal(l.linkOf('TAG-1'), 'A#2', side);
+      const pos = out.positions.find(p => p.tagId === 'TAG-1');
+      assert.equal(pos.held, false, side);
+      assert.ok(near(pos, to, 0.01), `${side}: follows the person`);
+    }
+  });
+
+  test('held in bed: a visitor who walks in and stands at the bedside is not taken for the patient', () => {
+    const l = createLidarLinker();
+    const band = (t) => [ble('TAG-1', 1.24, 1.94, t)];
+    lieDown(l, band);
+    // From the door to 0.7 m from the held position (the old rule, 0.8 m, took her for the patient)
+    let out = run(l, 12000, 20000, walker('A#2', 12000, { x: 1.9, y: 3.0 }, { x: 1.1, y: 0.9 }), band, [BED]);
+    assert.equal(l.linkOf('TAG-1'), null);
+    assert.deepEqual(out.positions.map(p => [p.tagId, p.held, p.in_bed, p.x, p.y]), [['TAG-1', true, true, HELD.x, HELD.y]]);
+    // She leaves; the patient gets up
+    out = run(l, 32000, 2500, walker('A#3', 32000, { x: 0.95, y: 1.2 }, { x: 0.9, y: 2.3 }), band, [BED]);
+    assert.equal(l.linkOf('TAG-1'), 'A#3');
+  });
+
+  test('held in bed: someone getting up from another bed is not the patient', () => {
+    const BED_2 = { bed_id: 'BED-X-02', x: 3.4, y: 0, width: 1.0, length: 2, rotation_deg: 0 };
+    const l = createLidarLinker();
+    const band = (t) => [ble('TAG-1', 1.6, 1.3, t)];
+    lieDown(l, band, [BED, BED_2]);
+    run(l, 12000, 5000, walker('A#2', 12000, { x: 3.2, y: 1.0 }, { x: 2.5, y: 1.0 }), band, [BED, BED_2]);
+    assert.equal(l.linkOf('TAG-1'), null);
+  });
+
+  test('held away from a bed: a new person must be within 0.8 m of the held position', () => {
+    const band = (t) => [ble('TAG-1', 0.7, 2.6, t)];
+    const hold = (l) => {
+      run(l, 0, 2000, (t) => [{ key: 'A#1', x: 0.5, y: 2.5, first_at: 0, last_at: t }], band, [BED]);
+      run(l, 2000, 2000, () => [], band, [BED]);
+    };
+    const nearBy = createLidarLinker();
+    hold(nearBy);
+    run(nearBy, 4000, 500, (t) => [{ key: 'A#2', x: 0.9, y: 2.8, first_at: 4000, last_at: t }], band, [BED]);
+    assert.equal(nearBy.linkOf('TAG-1'), 'A#2', '0.5 m away');
+
+    const farOff = createLidarLinker();
+    hold(farOff);
+    run(farOff, 4000, 500, (t) => [{ key: 'A#2', x: 1.4, y: 2.9, first_at: 4000, last_at: t }], band, [BED]);
+    assert.equal(farOff.linkOf('TAG-1'), null, '0.99 m away');
   });
 
   test('lost away from a bed: held for 10 s, then Bluetooth; a held position also ends when Bluetooth leaves', () => {

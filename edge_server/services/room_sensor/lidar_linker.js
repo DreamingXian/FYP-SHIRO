@@ -18,11 +18,16 @@
 //            - near a bed (0.5 m around it): as long as Bluetooth does not leave
 //              (the patient lay down, below the scan slice)
 //            - elsewhere: for 10 s (someone in front of them, or they fell)
-//            A person who appears (after the patient was last seen) within 0.8 m
-//            of a held position is the same person again; someone who was
-//            already in the room, such as a nurse at the bedside, is not. A held
-//            position ends when the Bluetooth position stays more than 2 m away
-//            from it for 5 s.
+//            Only someone who appears after the patient was last seen can be the
+//            patient again; someone already in the room, such as a nurse at the
+//            bedside, is not.
+//            - Held in bed: a person first seen at that bed (0.6 m around it) is
+//              the patient getting up, wherever on the bed they lay and on
+//              whichever side they get out. A visitor who walks up to the bed
+//              was first seen where they came into view, not at the bed.
+//            - Held elsewhere: a person within 0.8 m of the held position.
+//            A held position ends when the Bluetooth position stays more than
+//            2 m away from it for 5 s.
 //   Nothing  Otherwise the wristband keeps its Bluetooth position, and the
 //            people the LiDAR sees are shown without a name.
 //
@@ -40,20 +45,29 @@ const DEFAULTS = Object.freeze({
   unlinkM: 2.5,            // Bluetooth this far from the linked person ...
   unlinkMs: 5000,          // ... for this long ends the link
   bedMarginM: 0.5,         // lost this close to a bed: held as lying in bed
+  bedsideM: 0.6,           // held in bed: a new person first seen this close to that bed got up from it
   lostHoldMs: 10000,       // lost elsewhere: held this long
-  reacquireM: 0.8,         // a person this close to a held position is the same person
+  reacquireM: 0.8,         // held elsewhere: a new person this close to the held position is the same person
   leaveM: 2.0,             // Bluetooth this far from a held position ...
   leaveMs: 5000            // ... for this long ends the hold
 });
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-function nearBed(beds, x, y, margin) {
+const inFootprint = (f, x, y, margin) =>
+  x >= f.x - margin && x <= f.x + f.w + margin && y >= f.y - margin && y <= f.y + f.l + margin;
+
+/** The footprint of the bed at (x, y), within margin of it, or null. */
+function bedAt(beds, x, y, margin) {
   for (const bed of beds) {
     const f = bedFootprint(bed);
-    if (x >= f.x - margin && x <= f.x + f.w + margin && y >= f.y - margin && y <= f.y + f.l + margin) return true;
+    if (inFootprint(f, x, y, margin)) return f;
   }
-  return false;
+  return null;
+}
+
+function nearBed(beds, x, y, margin) {
+  return bedAt(beds, x, y, margin) !== null;
 }
 
 /**
@@ -63,7 +77,7 @@ function createLidarLinker(options = {}) {
   const o = { ...DEFAULTS, ...options };
   const ble = new Map();      // tagId -> [{ at, x, y }]
   const links = new Map();    // tagId -> { key, x, y, since, farSince }
-  const holds = new Map();    // tagId -> { x, y, since, inBed, farSince, key }
+  const holds = new Map();    // tagId -> { x, y, since, inBed, bed, farSince, key, lastSeenAt }
   const pending = new Map();  // tagId -> { key, since }
 
   function bleAverage(tagId) {
@@ -88,8 +102,9 @@ function createLidarLinker(options = {}) {
      * One step, after a LiDAR turn.
      * @param {object} input
      * @param {number} input.t
-     * @param {Array<{key: string, x: number, y: number, first_at?: number, last_at?: number}>} input.people
-     *        confirmed people of the ward's LiDARs; first_at: first seen, last_at: last seen
+     * @param {Array<{key: string, x: number, y: number, first_at?: number, first_x?: number, first_y?: number, last_at?: number}>} input.people
+     *        confirmed people of the ward's LiDARs; first_at / first_x / first_y: when and where first seen
+     *        (without first_x / first_y, the present position counts as where they were first seen); last_at: last seen
      * @param {Array<{tagId: string, x: number, y: number, at: number}>} input.wristbands
      *        each wristband in the ward with its newest unsmoothed Bluetooth position and when it was worked out
      * @param {Array<object>} [input.beds]  the ward's beds (x, y, width, length, rotation_deg)
@@ -136,10 +151,10 @@ function createLidarLinker(options = {}) {
           }
         } else {
           links.delete(tagId);
+          const bed = bedAt(beds, link.x, link.y, o.bedMarginM);
           holds.set(tagId, {
             x: link.x, y: link.y, since: t, farSince: null, key: link.key,
-            lastSeenAt: link.lastSeenAt,
-            inBed: nearBed(beds, link.x, link.y, o.bedMarginM)
+            lastSeenAt: link.lastSeenAt, inBed: bed !== null, bed
           });
         }
       }
@@ -154,7 +169,15 @@ function createLidarLinker(options = {}) {
           // Only someone who appeared after the patient was last seen
           if (Number.isFinite(p.first_at) && p.first_at < hold.lastSeenAt) continue;
           const d = dist(p, hold);
-          if (d <= o.reacquireM && (!again || d < again.d)) again = { p, d };
+          if (hold.bed) {
+            // Held in bed: someone first seen at that bed got up from it
+            const fx = Number.isFinite(p.first_x) ? p.first_x : p.x;
+            const fy = Number.isFinite(p.first_y) ? p.first_y : p.y;
+            if (!inFootprint(hold.bed, fx, fy, o.bedsideM)) continue;
+          } else if (d > o.reacquireM) {
+            continue;
+          }
+          if (!again || d < again.d) again = { p, d };
         }
         if (again) {
           holds.delete(tagId);
@@ -238,4 +261,4 @@ function createLidarLinker(options = {}) {
   };
 }
 
-module.exports = { DEFAULTS, createLidarLinker, nearBed };
+module.exports = { DEFAULTS, createLidarLinker, nearBed, bedAt };
