@@ -365,5 +365,97 @@ namespace ShiroMR
         public string attending_clinician;
         public string error;
     }
+
+    // ----- Patient view (version 2, stage 3: UC-05, FR-MR-03) -----
+    // Only what the headset shows: no ID card number and no phone number.
+
+    /// <summary>GET /api/patients/get?id=: a patient's profile. A null number arrives as 0.</summary>
+    [Serializable]
+    public class PatientProfile
+    {
+        public string patient_id;
+        public string full_name;
+        public string dob;              // yyyy-MM-dd
+        public string gender;
+        public string assigned_ward_id;
+        public string assigned_bed_id;
+        public int height_cm;
+        public float weight_kg;
+        public string medical_history;
+        public string admission_date;   // yyyy-MM-dd HH:mm
+        public string status;
+        public string ward_title;
+        public string bed_code;
+        public int age;
+    }
+
+    [Serializable]
+    public class PatientGetResponse
+    {
+        public bool success;
+        public PatientProfile patient;
+        public string error;
+    }
+
+    /// <summary>One point of the history: the median of a window. 0 = no reading in it.</summary>
+    [Serializable]
+    public class VitalsPoint
+    {
+        public string time;             // the window's start, UTC (RFC 3339)
+        public int heart_rate;
+        public float spo2;
+    }
+
+    /// <summary>GET /api/patients/vitals-history?id=&range=: one point per window (range -1h, -6h, -24h).</summary>
+    [Serializable]
+    public class VitalsHistoryResponse
+    {
+        public bool success;
+        public string range;
+        public string window;           // 10s, 1m, 5m
+        public int count;
+        public List<VitalsPoint> vitals;
+        public string error;
+    }
+
+    /// <summary>A row of GET /api/alerts/history: the incident and how it was answered.</summary>
+    [Serializable]
+    public class IncidentHistoryRow : IncidentAlert
+    {
+        public string acknowledgment_time;
+        public float response_latency_seconds;
+        public int is_simulated;        // 0 / 1 in database rows
+
+        public bool IsTest => is_simulated == 1 || IsSimulated;
+    }
+
+    [Serializable]
+    public class IncidentHistorySummary
+    {
+        public int total;
+        public int falls;
+        public int critical_vitals;
+        public int geofence;
+        public int pending;
+        public int simulated;
+    }
+
+    [Serializable]
+    public class IncidentHistoryResponse
+    {
+        public bool success;
+        public int count;
+        public bool truncated;
+        public IncidentHistorySummary summary;
+        public List<IncidentHistoryRow> history;
+        public string error;
+    }
+
+    /// <summary>The error text of a refused request ({ success: false, error }).</summary>
+    [Serializable]
+    public class ErrorAnswer
+    {
+        public string error;
+    }
 }
 

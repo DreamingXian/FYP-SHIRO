@@ -9,10 +9,12 @@
 // version 1 for everyday use:
 //   Patients - the ward's patients with a wristband: name, bed, heart rate in
 //              the same words as their tag, alerts first; four per page with
-//              the web dashboard's pager. A tap shows where they are (their tag
-//              pulses blue and an arrow points to it, or to their bed); a
-//              patient with an alert opens the alert card.
-//   Map      - the ward from above: beds, door, patients, you.
+//              the web dashboard's pager. A tap opens the patient (stage 3,
+//              ShiroPatientView): now (with "Show me": their tag pulses blue
+//              and an arrow points to it, or to their bed), the last 24 hours,
+//              alerts, profile.
+//   Map      - the ward from above: beds, door, patients, you (a tap on a
+//              patient opens them too).
 //   Settings - the ward, found automatically (ShiroWardAutoDetect) where this
 //              headset has aligned it, chosen by hand only for a ward not
 //              aligned yet; the connection; the version 1 menu for room setup,
@@ -69,14 +71,14 @@ namespace ShiroMR.UI
         private readonly List<RowView> _rows = new List<RowView>();
         private readonly List<PatientRow> _data = new List<PatientRow>();
         private int _pageIndex;
-        private TextMeshProUGUI _note, _empty, _pagerInfo;
-        private ShiroButton _prevBtn, _nextBtn;
-        private readonly List<ShiroButton> _pageBtns = new List<ShiroButton>();
-        private readonly List<TextMeshProUGUI> _pageGaps = new List<TextMeshProUGUI>();
-        private readonly int[] _pageOfBtn = new int[MaxPageButtons];
-        private const int MaxPageButtons = 5;
+        private TextMeshProUGUI _note, _empty;
+        private readonly ShiroPager _pager = new ShiroPager();
         private string _noteText;
         private float _noteUntil;
+
+        // The list, map and settings (with the header and tabs), or one patient (stage 3)
+        private GameObject _mainRoot;
+        private readonly ShiroPatientView _patientView = new ShiroPatientView();
 
         // Map
         private ShiroWardMapView _map;
@@ -147,10 +149,43 @@ namespace ShiroMR.UI
         public void Close()
         {
             _open = false;
+            if (_patientView.IsShown) ShowList();   // opens on the list next time
             UpdateVisible();
         }
 
         public void Toggle() { if (_open) Close(); else Open(); }
+
+        /// <summary>
+        /// Stage 3 (UC-05): one patient: now, the last 24 hours, alerts, profile. From a row of
+        /// the list, a dot on the map, or "Profile and history" on the patient's tag.
+        /// </summary>
+        public void OpenPatient(string tagId)
+        {
+            if (string.IsNullOrEmpty(tagId)) return;
+            if (!_open) Open();
+            _mainRoot.SetActive(false);
+            _patientView.Show(tagId);
+            _refreshIn = 0f;
+        }
+
+        /// <summary>Back from a patient to the list (or the page it was opened from).</summary>
+        internal void ShowList()
+        {
+            _patientView.Hide();
+            _mainRoot.SetActive(true);
+            _refreshIn = 0f;
+        }
+
+        /// <summary>The preview tool: the patient view with sample data (nothing is asked from the edge server).</summary>
+        internal ShiroPatientView PreviewPatient(TrackedSubject s)
+        {
+            _mainRoot.SetActive(false);
+            _patientView.PreviewOpen(s);
+            return _patientView;
+        }
+
+        /// <summary>The note of the last "Show me" while it is fresh, else null (the patient view shows it too).</summary>
+        internal string FreshNote => Time.time < _noteUntil ? _noteText : null;
 
         /// <summary>Shown while open, except while the alert card is shown (it comes first).</summary>
         private void UpdateVisible()
@@ -181,6 +216,11 @@ namespace ShiroMR.UI
             if (_head != null) Place();
 
             _refreshIn -= Time.deltaTime;
+            if (_patientView.IsShown)
+            {
+                if (_refreshIn <= 0f) { _refreshIn = 0.5f; _patientView.Refresh(); }
+                return;
+            }
             if (_refreshIn <= 0f)
             {
                 _refreshIn = _page == Page.Map ? 0.25f : 1f;
@@ -346,7 +386,7 @@ namespace ShiroMR.UI
             rows.Sort((a, b) => a.Order != b.Order ? a.Order.CompareTo(b.Order) : string.CompareOrdinal(a.SortKey, b.SortKey));
         }
 
-        private static ShiroAlertManager.HeadsetAlert PendingAlertFor(ShiroAlertManager am, TrackedSubject s)
+        internal static ShiroAlertManager.HeadsetAlert PendingAlertFor(ShiroAlertManager am, TrackedSubject s)
         {
             if (am == null) return null;
             foreach (var a in am.Alerts)
@@ -372,7 +412,7 @@ namespace ShiroMR.UI
         internal void ShowRows(List<PatientRow> data)
         {
             int total = data.Count;
-            int pages = Mathf.Max(1, Mathf.CeilToInt(total / (float)RowsPerPage));
+            int pages = ShiroPager.Pages(total, RowsPerPage);
             _pageIndex = Mathf.Clamp(_pageIndex, 0, pages - 1);
             for (int i = 0; i < RowsPerPage; i++)
             {
@@ -396,99 +436,16 @@ namespace ShiroMR.UI
             if (empty != null) _empty.text = empty;
 
             bool noting = Time.time < _noteUntil;
-            _note.text = noting ? _noteText : total > 0 ? "Tap a patient to see where they are." : "";
+            _note.text = noting ? _noteText : total > 0 ? "Tap a patient for their details, history and alerts." : "";
             _note.color = noting ? ShiroTheme.OkText : ShiroTheme.TextDim;
 
-            LayoutPager(total, pages);
+            _pager.Layout(_pageIndex, RowsPerPage, total);
         }
 
         private static int SubjectCount()
         {
             var net = ShiroNetworkManager.Instance;
             return net != null && net.LastLoadedSubjects != null ? net.LastLoadedSubjects.Count : 0;
-        }
-
-        /// <summary>
-        /// As on the web dashboard: "Showing 1–4 of 6 patients" on the left; Previous, the page
-        /// numbers (the current one blue; first, last and the neighbours, "…" between) and Next
-        /// on the right. The buttons are kept between refreshes, so a press is never lost.
-        /// </summary>
-        private void LayoutPager(int total, int pages)
-        {
-            int current = _pageIndex + 1;
-            int from = total == 0 ? 0 : _pageIndex * RowsPerPage + 1;
-            int to = Mathf.Min(total, current * RowsPerPage);
-            bool paged = pages > 1;
-
-            float right = W - Pad;
-            const float gap = 8f;
-            if (paged)
-            {
-                ShiroUIKit.Place(_nextBtn, right - 56f, PagerY, 56f, PagerH);
-                right -= 56f + gap;
-                var items = PageItems(current, pages);
-                int b = 0, g = 0;
-                for (int i = items.Count - 1; i >= 0; i--)
-                {
-                    if (items[i] == 0)
-                    {
-                        var label = _pageGaps[g++];
-                        ShiroUIKit.Place(label, right - 14f, PagerY, 14f, PagerH);
-                        label.gameObject.SetActive(true);
-                        right -= 14f + gap;
-                        continue;
-                    }
-                    var btn = _pageBtns[b];
-                    _pageOfBtn[b] = items[i];
-                    b++;
-                    btn.SetText(items[i].ToString());
-                    btn.SetKind(items[i] == current ? ButtonKind.Primary : ButtonKind.Secondary);
-                    ShiroUIKit.Place(btn, right - PagerH, PagerY, PagerH, PagerH);
-                    if (!btn.gameObject.activeSelf) btn.gameObject.SetActive(true);
-                    right -= PagerH + gap;
-                }
-                for (; b < _pageBtns.Count; b++) if (_pageBtns[b].gameObject.activeSelf) _pageBtns[b].gameObject.SetActive(false);
-                for (; g < _pageGaps.Count; g++) _pageGaps[g].gameObject.SetActive(false);
-                ShiroUIKit.Place(_prevBtn, right - 80f, PagerY, 80f, PagerH);
-                right -= 80f + gap;
-                _prevBtn.SetInteractable(current > 1);
-                _nextBtn.SetInteractable(current < pages);
-            }
-            else
-            {
-                foreach (var btn in _pageBtns) if (btn.gameObject.activeSelf) btn.gameObject.SetActive(false);
-                foreach (var label in _pageGaps) label.gameObject.SetActive(false);
-            }
-            if (_prevBtn.gameObject.activeSelf != paged) _prevBtn.gameObject.SetActive(paged);
-            if (_nextBtn.gameObject.activeSelf != paged) _nextBtn.gameObject.SetActive(paged);
-
-            float infoW = right - Pad;
-            bool info = total > 0 && infoW >= 60f;
-            _pagerInfo.gameObject.SetActive(info);
-            if (info)
-            {
-                ShiroUIKit.Place(_pagerInfo, Pad, PagerY, infoW, PagerH);
-                // Short when many page numbers leave little room ("1–4 of 14")
-                _pagerInfo.text = infoW >= 120f
-                    ? $"Showing {from}–{to} of {total} patient{(total == 1 ? "" : "s")}"
-                    : $"{from}–{to} of {total}";
-            }
-        }
-
-        /// <summary>Page numbers to show (0 = "…"): the first, the last, the current and its neighbours.</summary>
-        internal static List<int> PageItems(int current, int pages)
-        {
-            var wanted = new SortedSet<int> { 1, pages, current - 1, current, current + 1 };
-            var list = new List<int>();
-            int prev = 0;
-            foreach (int n in wanted)
-            {
-                if (n < 1 || n > pages) continue;
-                if (prev > 0 && n - prev > 1) list.Add(0);
-                list.Add(n);
-                prev = n;
-            }
-            return list;
         }
 
         private static string EmptyWords(int count, bool noneWithWristband)
@@ -501,12 +458,12 @@ namespace ShiroMR.UI
             return noneWithWristband ? "No patient in this ward has a wristband." : "No patients in this ward.";
         }
 
+        /// <summary>A row: the patient (an alert waiting shows at the top there, with "I'm responding").</summary>
         private void TapRow(int i)
         {
             var r = _rows[i].Data;
             if (r == null) return;
-            if (r.Alert && ShiroAlertCard.Instance != null) { ShiroAlertCard.Instance.Open(); return; }
-            ShowPatient(r.TagId, r.BedId, r.Name);
+            OpenPatient(r.TagId);
         }
 
         private void GoToPage(int page)
@@ -521,14 +478,19 @@ namespace ShiroMR.UI
         /// </summary>
         public void ShowPatient(string tagId, string bedId, string name)
         {
+            Note(PointTo(tagId, bedId, name));
+        }
+
+        /// <summary>"Show me" and what it did, in words (for the note).</summary>
+        internal static string PointTo(string tagId, string bedId, string name)
+        {
             var mr = ShiroMRManager.Instance;
             var holo = mr != null && !string.IsNullOrEmpty(tagId) ? mr.GetHologram(tagId) : null;
             if (holo != null)
             {
                 holo.Highlight(6f);
                 ShiroGuideArrow.Show(() => holo != null ? holo.GuidePoint : (Vector3?)null, 8f);
-                Note($"{FirstName(name)}: their tag is pulsing blue.");
-                return;
+                return $"{FirstName(name)}: their tag is pulsing blue.";
             }
             var net = ShiroNetworkManager.Instance;
             var ward = net != null ? net.LastLoadedWardConfig : null;
@@ -540,13 +502,12 @@ namespace ShiroMR.UI
             {
                 Vector3 p = space.GetBedHeadboardWorldPosition(bed);
                 ShiroGuideArrow.Show(() => p, 8f);
-                Note($"{FirstName(name)}: no position yet; the arrow shows their bed.");
-                return;
+                return $"{FirstName(name)}: no position yet; the arrow shows their bed.";
             }
-            Note($"{FirstName(name)}: no position in this room yet.");
+            return $"{FirstName(name)}: no position in this room yet.";
         }
 
-        private static string FirstName(string full)
+        internal static string FirstName(string full)
         {
             if (string.IsNullOrEmpty(full)) return "Patient";
             string t = full.Trim();
@@ -554,7 +515,7 @@ namespace ShiroMR.UI
             return sp > 0 ? t.Substring(0, sp) : t;
         }
 
-        private void Note(string text)
+        internal void Note(string text)
         {
             _noteText = text;
             _noteUntil = Time.time + 5f;
@@ -681,8 +642,11 @@ namespace ShiroMR.UI
             _built = true;
             _canvas = ShiroUIKit.WorldCanvas("WardPanel", transform, new Vector2(W, H));
             _canvas.transform.localScale = Vector3.one * 0.001f * PanelScale;
-            Transform root = _canvas.transform;
-            ShiroUIKit.Fill(ShiroUIKit.Panel(root, "Background", ShiroTheme.Glass, 18f));
+            ShiroUIKit.Fill(ShiroUIKit.Panel(_canvas.transform, "Background", ShiroTheme.Glass, 18f));
+            _mainRoot = new GameObject("Main", typeof(RectTransform));
+            _mainRoot.transform.SetParent(_canvas.transform, false);
+            ShiroUIKit.Fill(_mainRoot.transform as RectTransform);
+            Transform root = _mainRoot.transform;
 
             // Header: the ward, the connection; pin and close
             _title = ShiroUIKit.Label(root, "Title", "", 18f, ShiroTheme.Text, FontStyles.Bold).Fit(13f);
@@ -711,9 +675,12 @@ namespace ShiroMR.UI
 
             BuildPatients(_pages[0].transform);
             _map = new ShiroWardMapView();
-            _map.Build(_pages[1].transform, Pad, W - 2 * Pad, PageH, (tag, bed, name) => ShowPatient(tag, bed, name));
+            _map.Build(_pages[1].transform, Pad, W - 2 * Pad, PageH, (tag, bed, name) => OpenPatient(tag));
             BuildSettings(_pages[2].transform);
             SelectPage(Page.Patients);
+
+            // One patient (stage 3): in place of the list, in the same frame
+            _patientView.Build(_canvas.transform, this);
             _canvas.gameObject.SetActive(false);
         }
 
@@ -752,25 +719,7 @@ namespace ShiroMR.UI
             ShiroUIKit.Place(_note, Pad, NoteY, w, 14);
 
             // Pager (as on the web dashboard)
-            _pagerInfo = ShiroUIKit.Label(page, "PagerInfo", "", 12f, ShiroTheme.TextDim).Fit(8f);
-            _prevBtn = ShiroUIKit.Button(page, "Previous", "‹ Previous", ButtonKind.Secondary, () => GoToPage(_pageIndex), 12f);
-            _nextBtn = ShiroUIKit.Button(page, "Next", "Next ›", ButtonKind.Secondary, () => GoToPage(_pageIndex + 2), 12f);
-            for (int i = 0; i < MaxPageButtons; i++)
-            {
-                int index = i;
-                var b = ShiroUIKit.Button(page, $"Page_{i}", "", ButtonKind.Secondary, () => GoToPage(_pageOfBtn[index]), 12f);
-                b.gameObject.SetActive(false);
-                _pageBtns.Add(b);
-            }
-            for (int i = 0; i < 2; i++)
-            {
-                var g = ShiroUIKit.Label(page, $"PageGap_{i}", "…", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Center);
-                g.gameObject.SetActive(false);
-                _pageGaps.Add(g);
-            }
-            _prevBtn.gameObject.SetActive(false);
-            _nextBtn.gameObject.SetActive(false);
-            _pagerInfo.gameObject.SetActive(false);
+            _pager.Build(page, Pad, W - Pad, PagerY, PagerH, "patient", GoToPage);
         }
 
         private void BuildSettings(Transform page)

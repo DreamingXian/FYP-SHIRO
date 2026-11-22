@@ -55,6 +55,7 @@ namespace ShiroMR.EditorTools
                 ShootAlerts(dir);
                 ShootTags(dir);
                 ShootWardPanel(dir);
+                ShootPatientView(dir);
                 ShootWristChip(dir);
             }
             finally
@@ -261,6 +262,121 @@ namespace ShiroMR.EditorTools
             };
             Call(panel, "ShowWards", wards, "WARD-001");
             Shoot(canvas, Path.Combine(dir, "panel_settings_by_hand.png"), true);
+        }
+
+        // ----- One patient (stage 3) -----
+
+        private static void ShootPatientView(string dir)
+        {
+            var panel = new GameObject("PreviewPatientPanel").AddComponent<ShiroWardPanel>();
+            Call(panel, "Build");
+            Transform canvas = Child(panel.transform, "WardPanel");
+            var subject = new TrackedSubject
+            {
+                patient_id = "P-002", full_name = "Siti Nurhaliza binti Ahmad", gender = "FEMALE", dob = "1958-03-14",
+                assigned_ward_id = "WARD-001", assigned_bed_id = "BED-001-02", device_id = "TAG-002",
+                height_cm = 158, weight_kg = 61.5f, medical_history = "Type 2 diabetes"
+            };
+            var view = (ShiroPatientView)Call(panel, "PreviewPatient", subject);
+            Call(view, "SetProfile", new PatientProfile
+            {
+                patient_id = "P-002", full_name = "Siti Nurhaliza binti Ahmad", gender = "FEMALE", dob = "1958-03-14", age = 68,
+                assigned_ward_id = "WARD-001", assigned_bed_id = "BED-001-02", ward_title = "Ward A - Medical", bed_code = "Bed 2",
+                admission_date = "2026-11-20 14:05", height_cm = 158, weight_kg = 61.5f,
+                medical_history = "Type 2 diabetes (metformin), high blood pressure. Fell at home in October: walks with a frame. " +
+                                  "Allergic to penicillin. Hip replacement 2021. Needs help to stand up at night."
+            });
+
+            // Now: a live value, how the position is known, "Show me" and live vitals answered
+            Call(view, "SetAlert", (ShiroAlertManager.HeadsetAlert)null);
+            Call(view, "Note", "Siti: their tag is pulsing blue.");
+            Set(view, "_liveUntil", Time.time + 84f);
+            Call(view, "SetNow", new ShiroPatientView.NowState
+            {
+                HasTag = true, Heard = true, HeartValue = "72", HeartWords = "Live, every second", Spo2 = 97, Battery = 80,
+                Where = "In the room · Moving: arm only", How = "LiDAR, about ±0.1 m", HowColour = ShiroTheme.OkText, Colour = ShiroTheme.Ok
+            });
+            Get<UnityEngine.UI.Image>(view, "_dot").color = ShiroTheme.Ok;
+            Shoot(canvas, Path.Combine(dir, "patient_now.png"), true);
+
+            // Now with an alert waiting at the top (a test fall), measuring, battery low (the longest words)
+            Set(view, "_liveUntil", 0f);
+            Call(view, "SetAlert", Alert("INC-7", "FALL_ACCIDENT", null, "Siti Nurhaliza binti Ahmad", true, -40));
+            Call(view, "Note", "Siti: no position yet; the arrow shows their bed.");
+            Call(view, "SetNow", new ShiroPatientView.NowState
+            {
+                HasTag = true, Heard = true, HeartValue = "--", HeartWords = "Measuring… about 12 s", HeartDim = true, Spo2 = 0,
+                Battery = 15, BatteryLow = true, Where = "Seen by headset · Moving: walking", How = "Unclear: choose the person",
+                HowColour = ShiroTheme.WarnText, Colour = ShiroTheme.Warn
+            });
+            Get<UnityEngine.UI.Image>(view, "_dot").color = ShiroTheme.Alert;
+            Shoot(canvas, Path.Combine(dir, "patient_now_alert.png"), true);
+            Call(view, "SetAlert", (ShiroAlertManager.HeadsetAlert)null);
+
+            // 24 hours: a high heart rate (marked), two hours off the wrist (a gap), SpO2 dips
+            Call(view, "SelectTab", 1, false);
+            DateTime now = DateTime.UtcNow;
+            Call(view, "SetHistory", SampleHistory(now), "-24h", "5m", now, null);
+            Shoot(canvas, Path.Combine(dir, "patient_24h.png"), true);
+
+            Call(view, "SetHistory", null, "-6h", "1m", now, "the edge server cannot be reached");
+            Shoot(canvas, Path.Combine(dir, "patient_24h_error.png"), true);
+
+            // Alerts: six of the last 7 days (two pages), one waiting, answered on a headset and a dashboard
+            Call(view, "SelectTab", 2, false);
+            var rows = new List<IncidentHistoryRow>
+            {
+                History("FALL_ACCIDENT", null, -300, "PENDING", null, 0f, true),
+                History("CRITICAL_VITALS", null, -3 * 3600, "ACKNOWLEDGED", "QUEST3-7F3A2C1B (Nurse Aisyah Binti Kamarudin, CLN-004)", 35f, false, 128),
+                History("GEOFENCE_BREACH", "LEFT_WARD", -26 * 3600, "ACKNOWLEDGED", "Dr Lim Wei Jie (CLN-002)", 245f, false),
+                History("GEOFENCE_BREACH", "AT_DOOR", -50 * 3600, "ACKNOWLEDGED", "QUEST3-7F3A2C1B (no clinician assigned)", 12f, true),
+                History("FALL_ACCIDENT", null, -4 * 86400, "ACKNOWLEDGED", "Dr Lim Wei Jie (CLN-002)", 3900f, true),
+                History("CRITICAL_VITALS", null, -6 * 86400, "ACKNOWLEDGED", "Dr Lim Wei Jie (CLN-002)", 80f, false, 44),
+            };
+            Call(view, "SetIncidents", rows, new IncidentHistorySummary { total = 6, falls = 2, critical_vitals = 2, geofence = 2, pending = 1, simulated = 3 }, null);
+            Shoot(canvas, Path.Combine(dir, "patient_alerts.png"), true);
+
+            // Profile: the edge server's copy, a long medical history
+            Call(view, "SelectTab", 3, false);
+            Shoot(canvas, Path.Combine(dir, "patient_profile.png"), true);
+        }
+
+        /// <summary>24 hours of 5-minute medians (fictional): a resting heart rate, a high spell, a gap, SpO2 dips.</summary>
+        private static List<VitalsPoint> SampleHistory(DateTime nowUtc)
+        {
+            var rnd = new System.Random(7);
+            var list = new List<VitalsPoint>();
+            DateTime start = nowUtc.AddHours(-24);
+            for (int k = 0; k < 288; k++)
+            {
+                double hoursAgo = 24.0 - k * 5 / 60.0;
+                if (hoursAgo < 15.5 && hoursAgo > 13.5) continue;            // charging: no readings
+                int hr = (int)Math.Round(72 + 8 * Math.Sin(k / 40.0) + rnd.NextDouble() * 6 - 3);
+                if (hoursAgo < 8.5 && hoursAgo > 8.0) hr = 124 + rnd.Next(0, 6);   // a high spell
+                float spo2 = (float)Math.Round(96.5 + rnd.NextDouble() * 2 - 1, 1);
+                if (k % 37 == 0) spo2 = 91f;
+                list.Add(new VitalsPoint { time = start.AddMinutes(k * 5).ToString("yyyy-MM-ddTHH:mm:ssZ"), heart_rate = hr, spo2 = spo2 });
+            }
+            return list;
+        }
+
+        private static IncidentHistoryRow History(string category, string geofence, int secondsAgo, string status, string by, float latency, bool test, int heartRate = 0)
+        {
+            return new IncidentHistoryRow
+            {
+                incident_id = "INC-" + secondsAgo, patient_id = "P-002", patient_name = "Siti Nurhaliza binti Ahmad",
+                incident_category = category, geofence_kind = geofence, resolution_status = status, attending_clinician = by,
+                response_latency_seconds = latency, is_simulated = test ? 1 : 0, heart_rate = heartRate,
+                alert_message = test ? "[SIMULATION] preview" : "preview",
+                trigger_timestamp = DateTime.UtcNow.AddSeconds(secondsAgo).ToString("o")
+            };
+        }
+
+        private static void Set(object target, string field, object value)
+        {
+            var f = target.GetType().GetField(field, Any);
+            if (f == null) throw new MissingFieldException(target.GetType().Name, field);
+            f.SetValue(target, value);
         }
 
         private static ShiroWardPanel.PatientRow Row(string name, string line, string value, bool dim, Color stripe, Color lineColour, bool alert)

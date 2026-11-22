@@ -505,6 +505,45 @@ namespace ShiroMR
             }
         }
 
+        // ----- Patient view (version 2, stage 3): profile, 24-hour history, alerts -----
+
+        /// <summary>
+        /// GET of a JSON answer of the edge server as this headset (paths the server lets a
+        /// paired headset read: /api/patients/get, /api/patients/vitals-history,
+        /// /api/alerts/history). onDone(answer, error): answer is null when it failed, and
+        /// error says why in words.
+        /// </summary>
+        public IEnumerator GetJsonRoutine<T>(string pathAndQuery, Action<T, string> onDone) where T : class
+        {
+            if (!IsPaired) { onDone?.Invoke(null, "this headset is not paired"); yield break; }
+            using (UnityWebRequest req = UnityWebRequest.Get($"http://{serverIp}:{serverPort}{pathAndQuery}"))
+            {
+                Authorize(req);
+                req.timeout = 8;
+                yield return req.SendWebRequest();
+                if (req.responseCode == 401)
+                {
+                    ForgetPairing("The edge server no longer accepts this headset (pairing revoked or a new database). Pair it again.");
+                    onDone?.Invoke(null, "this headset is not paired");
+                    yield break;
+                }
+                string text = req.downloadHandler != null ? req.downloadHandler.text : null;
+                if (req.result != UnityWebRequest.Result.Success)
+                {
+                    string why = null;
+                    try { if (!string.IsNullOrEmpty(text)) why = JsonUtility.FromJson<ErrorAnswer>(text)?.error; }
+                    catch (Exception swallowed) { ShiroLog.Caught("ShiroNetworkManager.GetJsonRoutine", swallowed); }
+                    onDone?.Invoke(null, why ?? (req.responseCode == 0 ? "the edge server cannot be reached" : req.error));
+                    yield break;
+                }
+                T answer = null;
+                try { if (!string.IsNullOrEmpty(text)) answer = JsonUtility.FromJson<T>(text); }
+                catch (Exception ex) { onDone?.Invoke(null, $"unreadable answer ({ex.Message})"); yield break; }
+                if (answer == null) onDone?.Invoke(null, "empty answer");
+                else onDone?.Invoke(answer, null);
+            }
+        }
+
         // ----- Assignment: the clinician using this headset -----
 
         private void SetAssignment(ClinicianRef who)

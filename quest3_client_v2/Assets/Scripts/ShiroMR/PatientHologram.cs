@@ -9,8 +9,10 @@
 // status (red needs help, amber check, blue OK, grey not heard). It keeps the
 // same size to the eye at any distance. A tap (ray or fingertip) opens the
 // details: SpO2, battery, movement, how the position is found, and the controls
-// (move, choose the person, headboard or bedside, automatic). The positioning
-// logic is version 1's.
+// (move, choose the person, headboard or bedside, automatic, profile and
+// history). The positioning logic is version 1's, with the edge server's best
+// position (LiDAR before Bluetooth) and a 15 cm hold: the tag stands still for
+// small moves of the position and glides to a new place (GlideToTarget).
 // =============================================================================
 using System;
 using System.Collections.Generic;
@@ -77,6 +79,28 @@ namespace ShiroMR
         private float _pulseTimer = 0f;
         private float _ringPulseTimer = 0f;
         private float _bannerStatusTimer = 0f;
+
+        // Version 2: the tag stands still while the calculated position stays within 15 cm
+        // of where it stands (sensor noise, a person shifting their weight), and glides
+        // smoothly to the new place once it moves further. Only the tag is held: the
+        // calculated position itself is not changed. See GlideToTarget.
+        private const float HoldRadius = 0.15f;    // m
+        private const float GlideTime = 0.30f;     // s, SmoothDamp
+        private const float CalmTime = 0.12f;      // s: light smoothing, for the decision only
+        private Vector3 _calm;                     // the calculated position, lightly smoothed
+        private Vector3 _holdAt;                   // where the tag goes and stands still
+        private bool _glideReady;                  // false: start again from where the tag is
+        private bool _wasDocked;                   // last frame at the bed: glide from there
+        private Vector3 _sideRight;                // the side the card stands on beside a linked person
+        private float _shownTop = -1f;             // the height the name floats at
+
+        // Version 2: a short LiDAR gap (the edge server keeps a LiDAR position for 1 s) would
+        // send the tag to the Bluetooth position (about ±1 m) and back. The last accurate
+        // position is kept for a few seconds instead.
+        private const float AccurateGraceS = 3f;
+        private Vector3 _lastAccurateWorldPos;
+        private float _lastAccurateAt = -1f;
+        private string _lastAccurateSource = "LIDAR";
 
         // Visual Components (version 2: the tag, ShiroMR.UI)
         private GameObject _hudContainer;
@@ -200,6 +224,7 @@ namespace ShiroMR
                         transform.position = newPos;
                         hudOffset = newPos - detectedPersonPosition;
                     }
+                    _glideReady = false;   // after the drag: hold from where it was let go
 
                     // Face user smoothly while dragging
                     if (_cameraTransform != null)
@@ -239,22 +264,15 @@ namespace ShiroMR
                         _targetPosition = bedBase + _customBedOffset;
                     }
                     transform.position = _targetPosition;
+                    _wasDocked = true;
                 }
                 else
                 {
                     if (_depthLinked && trackingState == PatientTrackingState.InTransit)
                     {
                         _targetPosition = _depthLinkPos;
-                        transform.position = Vector3.SmoothDamp(transform.position, _targetPosition, ref _currentVelocity, smoothTime, maxSpeed);
                     }
-                    else if (motionState == "STATIONARY" || motionState == "SETTLING")
-                    {
-                        transform.position = Vector3.MoveTowards(transform.position, _targetPosition, 0.50f * Time.deltaTime);
-                    }
-                    else
-                    {
-                        transform.position = Vector3.SmoothDamp(transform.position, _targetPosition, ref _currentVelocity, smoothTime, maxSpeed);
-                    }
+                    GlideToTarget();
                 }
             }
 
@@ -294,6 +312,31 @@ namespace ShiroMR
             // 6. Emergency alarm: flashing red card and floor ring until it is handled
             if (isAlarmActive) UpdateAlarmVisuals();
             else UpdateHighlight();
+        }
+
+        /// <summary>
+        /// Version 2: the place the tag (and its floor circle) stands at changes only when the
+        /// calculated position is more than 15 cm from it; then it becomes the new position and
+        /// the tag glides there (SmoothDamp, at most walking speed) and stands still. The place
+        /// is fixed between changes, so noise within 15 cm never moves the tag; a walking
+        /// patient moves it on in 15 cm steps that the glide joins into one smooth movement.
+        /// The decision uses the position lightly smoothed (0.12 s), so one noisy reading does
+        /// not move the place; the calculated position itself is left as it is.
+        /// </summary>
+        private void GlideToTarget()
+        {
+            if (!_glideReady || _wasDocked)
+            {
+                _calm = _targetPosition;
+                // Leaving the bed: glide from the bed to the person; else hold where the tag is
+                _holdAt = _wasDocked ? _targetPosition : transform.position;
+                _currentVelocity = Vector3.zero;
+                _glideReady = true;
+                _wasDocked = false;
+            }
+            _calm = Vector3.Lerp(_calm, _targetPosition, 1f - Mathf.Exp(-Time.deltaTime / CalmTime));
+            if ((_calm - _holdAt).magnitude > HoldRadius) _holdAt = _calm;
+            transform.position = Vector3.SmoothDamp(transform.position, _holdAt, ref _currentVelocity, GlideTime, maxSpeed);
         }
 
         // ----- Emergency alarm (set by ShiroAlertManager) -----
@@ -406,6 +449,7 @@ namespace ShiroMR
         // (on the right as the clinician sees it), so it never covers the person.
         private const float SideDistance = 0.65f;   // m from the person's centre
         private const float CardHeight = 1.15f;     // m above the floor
+        private const float SideTurnDeg = 13f;      // the card changes side only for a bigger turn
 
         private void UpdateLinkedLayout()
         {
@@ -416,10 +460,13 @@ namespace ShiroMR
                 toCam.y = 0f;
                 if (toCam.sqrMagnitude < 0.01f) toCam = Vector3.forward;
                 Vector3 right = Vector3.Cross(toCam.normalized, Vector3.up); // the clinician's right
+                // Version 2: the card keeps its side while the clinician moves a little (13° is
+                // 15 cm at the card's distance from the person), so it does not sway with the head
+                if (!_sideLayout || _sideRight == Vector3.zero || Vector3.Angle(right, _sideRight) > SideTurnDeg) _sideRight = right;
 
                 if (_hudContainer != null && !_isPanelDragging)
                 {
-                    Vector3 cardPos = transform.position + right * SideDistance + Vector3.up * CardHeight;
+                    Vector3 cardPos = transform.position + _sideRight * SideDistance + Vector3.up * CardHeight;
                     _hudContainer.transform.position = _sideLayout
                         ? Vector3.Lerp(_hudContainer.transform.position, cardPos, 8f * Time.deltaTime)
                         : cardPos;
@@ -430,7 +477,9 @@ namespace ShiroMR
                 _nameTag.gameObject.SetActive(true);
                 _nameTag.text = fullName;
                 float top = _depthLinkHeight > 0.3f ? _depthLinkHeight : 1.7f;
-                _nameTag.transform.position = transform.position + Vector3.up * (top + 0.15f);
+                // The measured height varies a little from frame to frame: the name holds its height too
+                if (_shownTop < 0f || Mathf.Abs(top - _shownTop) > HoldRadius) _shownTop = top;
+                _nameTag.transform.position = transform.position + Vector3.up * (_shownTop + 0.15f);
                 _nameTag.transform.rotation = Quaternion.LookRotation(-toCam.normalized);
                 _nameTag.color = isAlarmActive ? new Color(1f, 0.3f, 0.3f) : Color.white;
             }
@@ -570,8 +619,9 @@ namespace ShiroMR
         /// <summary>
         /// Version 2: where the position comes from: "HEADSET" (another headset's depth sensor),
         /// "LIDAR" (about ±0.1 m; held: where it last saw them) or "BLE" (Bluetooth, about ±1 m).
-        /// The panel holds still for small moves of a Bluetooth position (its noise) and follows
-        /// an accurate one closely; the floor circle shows how sure the position is.
+        /// An accurate position is used as it is (the tag stands still for moves under 15 cm, see
+        /// GlideToTarget); a Bluetooth position of a still patient changes only for a move of
+        /// more than 0.85 m (its noise). The floor circle shows how sure the position is.
         /// </summary>
         public string PositionSource { get; private set; } = "BLE";
         private bool _lidarHeld;
@@ -580,8 +630,6 @@ namespace ShiroMR
 
         public void UpdatePosition(float wardX, float wardY, string motion, string source, bool lidarHeld)
         {
-            PositionSource = string.IsNullOrEmpty(source) ? "BLE" : source;
-            _lidarHeld = lidarHeld;
             motionState = motion ?? "STATIONARY";
             isOnline = true;
             HasIpsPosition = true;
@@ -594,6 +642,31 @@ namespace ShiroMR
             else
             {
                 _rawIpsWorldPos = new Vector3(wardX, 0f, wardY);
+            }
+
+            // Where the tag goes: an accurate position (LiDAR, another headset) as it is; for a
+            // Bluetooth position within a few seconds of an accurate one (a short LiDAR gap),
+            // the last accurate position, shown as "where it last saw them"
+            string src = string.IsNullOrEmpty(source) ? "BLE" : source;
+            Vector3 placePos = _rawIpsWorldPos;
+            if (src != "BLE")
+            {
+                PositionSource = src;
+                _lidarHeld = lidarHeld;
+                _lastAccurateWorldPos = _rawIpsWorldPos;
+                _lastAccurateAt = Time.time;
+                _lastAccurateSource = src;
+            }
+            else if (_lastAccurateAt >= 0f && Time.time - _lastAccurateAt <= AccurateGraceS)
+            {
+                PositionSource = _lastAccurateSource;
+                _lidarHeld = true;
+                placePos = _lastAccurateWorldPos;
+            }
+            else
+            {
+                PositionSource = "BLE";
+                _lidarHeld = false;
             }
 
             // Ensure bed is resolved if not already cached
@@ -703,18 +776,28 @@ namespace ShiroMR
                 {
                     _isManuallyLocked = false;
                     _hasStationaryLock = false;
-                    detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0, _rawIpsWorldPos.z);
+                    detectedPersonPosition = new Vector3(placePos.x, 0, placePos.z);
                 }
-                else // STATIONARY, HAND_MOVEMENT, SETTLING
+                else if (Accurate && !_isManuallyLocked)
                 {
+                    // LiDAR or another headset (about ±0.1 m): the position as it is. The tag
+                    // itself stands still for moves under 15 cm (GlideToTarget).
+                    _lastStationaryWorldPos = placePos;
+                    _hasStationaryLock = true;
+                    detectedPersonPosition = new Vector3(placePos.x, 0, placePos.z);
+                }
+                else // Bluetooth (about ±1 m), or placed by hand; STATIONARY, HAND_MOVEMENT, SETTLING
+                {
+                    // Bluetooth noise is larger than the tag's 15 cm hold: a still patient's
+                    // position changes only for a move of more than 0.85 m (version 1's rule)
                     if (!_hasStationaryLock)
                     {
-                        _lastStationaryWorldPos = _rawIpsWorldPos;
+                        _lastStationaryWorldPos = placePos;
                         _hasStationaryLock = true;
                     }
-                    else if (Vector3.Distance(_rawIpsWorldPos, _lastStationaryWorldPos) > (Accurate ? 0.25f : 0.85f) && !_isManuallyLocked)
+                    else if (Vector3.Distance(placePos, _lastStationaryWorldPos) > 0.85f && !_isManuallyLocked)
                     {
-                        _lastStationaryWorldPos = _rawIpsWorldPos;
+                        _lastStationaryWorldPos = placePos;
                     }
 
                     detectedPersonPosition = new Vector3(_lastStationaryWorldPos.x, 0, _lastStationaryWorldPos.z);
@@ -728,6 +811,7 @@ namespace ShiroMR
             if (transform.position == Vector3.zero)
             {
                 transform.position = _targetPosition;
+                _glideReady = false;
             }
         }
 
@@ -850,6 +934,7 @@ namespace ShiroMR
             isPersonDetected = true;
 
             transform.position = _targetPosition;
+            _glideReady = false;
 
             if (_hudContainer != null)
             {
@@ -973,6 +1058,13 @@ namespace ShiroMR
             public string Bed;
             public string Where;
             public Color Colour;      // the tag's status stripe (not the alert red)
+            // For the patient view (stage 3)
+            public string HeartText;  // all the heart rate's words (one or two lines)
+            public int Spo2;          // 0: no reading
+            public bool Charging;
+            public string Position;   // how the position is found ("LiDAR, about ±0.1 m")
+            public Color PositionColour;
+            public string Motion;     // "Still", "Moving: walking"
         }
 
         public ListState GetListState()
@@ -981,11 +1073,14 @@ namespace ShiroMR
             string words = h.Text ?? "";
             int nl = words.IndexOf('\n');
             if (nl >= 0) words = words.Substring(0, nl);
+            string position = PositionWords(out Color positionColour);
             return new ListState
             {
                 Value = h.Value, Words = words, Warn = h.Warn, Dim = h.Dim, Heard = IsHeard,
                 BatteryLow = BatteryLow && IsHeard, Battery = batteryPercent,
-                Bed = BedWords(), Where = WhereWords(), Colour = StatusColour(h)
+                Bed = BedWords(), Where = WhereWords(), Colour = StatusColour(h),
+                HeartText = h.Text ?? "", Spo2 = spo2Percent, Charging = _charging,
+                Position = position, PositionColour = positionColour, Motion = MotionWords()
             };
         }
 
@@ -1134,7 +1229,7 @@ namespace ShiroMR
             if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Linked) { colour = ShiroTheme.GoodText; return "Seen by this headset"; }
             if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.LinkedManual) { colour = ShiroTheme.GoodText; return "Following chosen person"; }
             if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Unclear) { colour = ShiroTheme.WarnText; return "Unclear: choose the person"; }
-            if (PositionSource == "HEADSET") { colour = ShiroTheme.GoodText; return "Seen by another headset"; }
+            if (PositionSource == "HEADSET") { colour = ShiroTheme.GoodText; return _lidarHeld ? "Headset: last seen here" : "Seen by another headset"; }
             if (PositionSource == "LIDAR") return _lidarHeld ? "LiDAR: where it last saw them" : "LiDAR, about ±0.1 m";
             return "Bluetooth, about ±1 m";
         }
@@ -1285,7 +1380,7 @@ namespace ShiroMR
         private const float TagW = 260f;
         private const float TagH = 132f;
         private const float HeartRowY = 62f;
-        private const float DetailsH = 208f;
+        private const float DetailsH = 244f;
 
         /// <summary>
         /// Builds the floor ring and the patient's tag (version 2, ShiroMR.UI).
@@ -1395,6 +1490,13 @@ namespace ShiroMR
 
             var close = ShiroUIKit.Button(d, "Close", "Close", ButtonKind.Quiet, ToggleDetails, 12f);
             ShiroUIKit.Place(close, 28 + bw, 166, bw, 30);
+
+            // Stage 3 (UC-05): the patient's profile, 24-hour history and alerts, in the ward panel
+            var profile = ShiroUIKit.Button(d, "Profile", "Profile and history", ButtonKind.Primary, () =>
+            {
+                if (ShiroWardPanel.Instance != null) ShiroWardPanel.Instance.OpenPatient(tagId);
+            }, 12f);
+            ShiroUIKit.Place(profile, 20, 202, w, 30);
 
             details.SetActive(false);
             RefreshUiText();
