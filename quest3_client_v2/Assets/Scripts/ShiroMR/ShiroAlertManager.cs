@@ -208,7 +208,7 @@ namespace ShiroMR
                 if (status == 200 && resp.success)
                 {
                     _handledIds.Add(id);
-                    LastOwnAcknowledgement = $"✔ {alert.incident.CategoryLabel} of {alert.incident.patient_name ?? "unknown patient"} acknowledged by this headset at {DateTime.Now:HH:mm:ss}.";
+                    LastOwnAcknowledgement = $"You responded to the {alert.incident.CategoryLabel.ToLowerInvariant()} of {alert.incident.patient_name ?? "unknown patient"} at {DateTime.Now:HH:mm}.";
                     Remove(alert);
                 }
                 else if (status == 409)

@@ -326,6 +326,8 @@ namespace ShiroMR
             string cleanTag = pos.tag_id.ToUpper().Trim();
             PatientHologram hologram = GetOrCreateHologram(cleanTag);
             hologram.UpdatePosition(bleX, bleY, pos.motion_state);
+            // Version 2: the tag says "Wristband not heard" when the edge server says so
+            hologram.NoteSignal(pos.status != "OFFLINE");
         }
 
         private void HandleTelemetryUpdated(TelemetryUpdate tel)
@@ -337,6 +339,7 @@ namespace ShiroMR
             cleanTag = cleanTag.ToUpper().Trim();
             if (_activeHolograms.TryGetValue(cleanTag, out var hologram))
             {
+                hologram.UpdateTelemetryState(tel.data);
                 hologram.UpdateTelemetry(tel.EffectiveBpm, tel.EffectiveSpo2, tel.EffectiveBattery);
             }
         }

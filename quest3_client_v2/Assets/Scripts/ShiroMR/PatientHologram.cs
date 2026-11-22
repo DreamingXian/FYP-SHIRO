@@ -2,9 +2,20 @@
 // Project SHIRO - Meta Quest 3 Mixed Reality Client
 // Dynamic In-Situ Patient Hologram & Floating Billboard Vitals Card
 // Phase A: Bed Headboard Center Poster + In-Transit Glowing Human Silhouette
+//
+// Version 2 (Phase 12): the card is the patient's tag in the room, in the new
+// interface's look (ShiroMR.UI): name, bed and where they are, the heart rate
+// with its state in words (as on the web dashboard), a coloured stripe for the
+// status (red needs help, amber check, blue OK, grey not heard). It keeps the
+// same size to the eye at any distance. A tap (ray or fingertip) opens the
+// details: SpO2, battery, movement, how the position is found, and the controls
+// (move, choose the person, headboard or bedside, automatic). The positioning
+// logic is version 1's.
 // =============================================================================
 using System;
 using System.Collections.Generic;
+using ShiroMR.UI;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -67,27 +78,48 @@ namespace ShiroMR
         private float _ringPulseTimer = 0f;
         private float _bannerStatusTimer = 0f;
 
-        // Visual Components
+        // Visual Components (version 2: the tag, ShiroMR.UI)
         private GameObject _hudContainer;
         private Canvas _hudCanvas;
+        private RectTransform _hudRect;
         private Image _cardBackground;
-        private Text _nameText;
-        private Text _subText;
-        private Text _trackingBadgeText;
-        private Text _bpmText;
-        private Text _spo2Text;
-        private Text _batteryText;
-        private Text _motionBadgeText;
-        private Text _statusBannerText;
+        private ShiroButton _cardButton;      // the whole tag: a tap opens or closes the details
+        private Image _statusStripe;
+        private TMP_Text _nameText;
+        private TMP_Text _subText;
+        private TMP_Text _trackingBadgeText;
+        private TMP_Text _bpmText;            // the heart rate value
+        private TMP_Text _bpmUnitText;
+        private TMP_Text _heartStateText;     // the heart rate in words, or the alert
+        private TMP_Text _spo2Text;
+        private TMP_Text _batteryText;
+        private TMP_Text _motionBadgeText;
+        private TMP_Text _statusBannerText;
+        private GameObject _detailsRoot;
+        private bool _detailsOpen;
 
         // Interactive HUD Buttons
         private Button _reattachBtn;
-        private Text _reattachBtnText;
+        private TMP_Text _reattachBtnText;
         private Button _dockToggleBtn;
-        private Text _dockToggleBtnText;
+        private TMP_Text _dockToggleBtnText;
         private Button _cancelAimBtn;
-        private Text _cancelAimBtnText;
+        private TMP_Text _cancelAimBtnText;
         private Button _autoBtn;            // ends a choice made by hand (pinned spot or chosen person)
+
+        // The wristband's state for the heart rate in words (version 2; as the web dashboard)
+        private float _lastHeardAt = -1f;     // Time.time of the last telemetry or position (online)
+        private bool _heardOffline;           // the edge server says the wristband is not heard
+        private bool _touch;                  // skin contact (measuring)
+        private bool _liveMode;               // 1 Hz live vitals
+        private bool _charging;
+        private float _touchSince = -1f;
+        private float _burstEndAt = -1f;
+        private int _lastBpm;
+        private float _lastBpmAt = -1f;
+        private const float NoSignalAfter = 6f;   // s without a message: "No signal"
+        private const float FirstReadingS = 15f;  // the first heart rate takes about 13 s
+        private const float PassiveCycleS = 180f; // between automatic readings
 
         // Floor Uncertainty Footprint Circle
         private GameObject _floorRingObj;
@@ -96,7 +128,7 @@ namespace ShiroMR
 
         // Manual Move / Adjust Handle (Top-Left of Card)
         private Button _moveHandleBtn;
-        private Text _moveHandleBtnText;
+        private TMP_Text _moveHandleBtnText;
         private bool _isPanelDragging = false;
         private float _dragDistance = 2.0f;
         private Vector3 _customBedOffset = Vector3.zero;
@@ -184,7 +216,7 @@ namespace ShiroMR
                 {
                     // Drag released!
                     _isPanelDragging = false;
-                    SetStatusBanner("✅ PANEL POSITION ADJUSTED", 3.0f, new Color(0.2f, 0.95f, 0.5f));
+                    SetStatusBanner("Tag moved", 3.0f, ShiroTheme.GoodText);
                 }
             }
             else
@@ -267,7 +299,13 @@ namespace ShiroMR
         public bool isAlarmActive { get; private set; }
         private string _alarmLabel = "";
         private float _alarmTimer;
-        private static readonly Color CardNormalColor = new Color(0.06f, 0.10f, 0.18f, 0.92f);
+
+        /// <summary>The tag's background: a colour (alarm flash) or null for the normal look.</summary>
+        private void SetCardColor(Color? color)
+        {
+            if (_cardButton != null) _cardButton.SetColorOverride(color);
+            else if (_cardBackground != null) _cardBackground.color = color ?? ShiroTheme.Glass;
+        }
 
         /// <summary>
         /// Shows or clears the emergency state of this patient's panel: the card and
@@ -284,7 +322,7 @@ namespace ShiroMR
                 return;
             }
             // Back to the normal look of the current tracking state
-            if (_cardBackground != null) _cardBackground.color = CardNormalColor;
+            SetCardColor(null);
             if (_floorRingObj != null)
             {
                 _floorRingObj.transform.localScale = new Vector3(0.65f, 0.005f, 0.65f);
@@ -298,10 +336,8 @@ namespace ShiroMR
         {
             _alarmTimer += Time.deltaTime;
             bool on = Mathf.Repeat(_alarmTimer, 0.6f) < 0.3f; // ~1.7 flashes per second
-            if (_cardBackground != null)
-            {
-                _cardBackground.color = on ? new Color(0.78f, 0.05f, 0.08f, 0.96f) : new Color(0.30f, 0.03f, 0.05f, 0.94f);
-            }
+            SetCardColor(on ? new Color(0.62f, 0.06f, 0.09f, 0.96f) : ShiroTheme.AlertDark);
+            if (_statusStripe != null) _statusStripe.color = ShiroTheme.Alert;
             if (_floorRingObj != null)
             {
                 if (!_floorRingObj.activeSelf) _floorRingObj.SetActive(true);
@@ -313,16 +349,26 @@ namespace ShiroMR
                 _floorRingObj.transform.localScale = new Vector3(s, 0.005f, s);
                 if (_floorRingRenderer != null) _floorRingRenderer.material.color = new Color(0.95f, 0.08f, 0.10f, on ? 0.85f : 0.45f);
             }
-            if (_statusBannerText != null)
+            // The tag's main line names the alert (after RefreshUiText, which runs first each frame)
+            if (_heartStateText != null)
             {
-                _statusBannerText.text = $"🚨 {_alarmLabel} • WAITING FOR RESPONSE";
-                _statusBannerText.color = on ? new Color(1f, 0.85f, 0.85f) : new Color(1f, 0.35f, 0.35f);
+                _heartStateText.text = $"{SentenceCase(_alarmLabel)}: waiting for a response";
+                _heartStateText.color = on ? Color.white : ShiroTheme.AlertText;
             }
+        }
+
+        /// <summary>"AT THE DOOR" → "At the door".</summary>
+        private static string SentenceCase(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "Alert";
+            string lower = s.ToLowerInvariant();
+            return char.ToUpperInvariant(lower[0]) + lower.Substring(1);
         }
 
         private void LateUpdate()
         {
             UpdateLinkedLayout();
+            KeepTagSizeToTheEye();
             if (_hudContainer == null || _isPanelDragging) return;
 
             // =========================================================================
@@ -481,8 +527,33 @@ namespace ShiroMR
             spo2Percent = spo2 > 0 ? spo2 : 0;
             if (battery >= 0) batteryPercent = battery;
             isOnline = true;
+            _lastHeardAt = Time.time;
+            _heardOffline = false;
+            if (bpm > 0) { _lastBpm = bpm; _lastBpmAt = Time.time; }
             EvaluatePersonDetection();
             RefreshUiText();
+        }
+
+        /// <summary>
+        /// Version 2: the wristband's state with each telemetry message (skin contact, live
+        /// mode, charging), for the heart rate in words: measuring, no skin contact, resting.
+        /// </summary>
+        public void UpdateTelemetryState(TelemetryData d)
+        {
+            if (d == null) return;
+            bool touch = d.touch == 1;
+            if (touch && !_touch) _touchSince = Time.time;
+            if (!touch && _touch) _burstEndAt = Time.time;
+            _touch = touch;
+            _liveMode = d.active;
+            _charging = d.charging;
+        }
+
+        /// <summary>A position message: heard (online) or the edge server says it is not heard (offline).</summary>
+        public void NoteSignal(bool heard)
+        {
+            if (heard) { _lastHeardAt = Time.time; _heardOffline = false; }
+            else _heardOffline = true;
         }
 
         /// <summary>
@@ -699,8 +770,8 @@ namespace ShiroMR
             }
 
             SetStatusBanner(LinkingOn
-                ? "🎯 AIM AT THE PATIENT & PINCH: LINKS TO THE PERSON SEEN THERE"
-                : "🎯 AIM AT PATIENT & PINCH / CLICK TO LOCK POSITION", 15.0f, new Color(1.0f, 0.85f, 0.2f));
+                ? "Point at the patient and pinch: the tag follows the person seen there"
+                : "Point at the patient and pinch: the tag stays there", 15.0f, ShiroTheme.WarnText);
             RefreshUiText();
         }
 
@@ -722,7 +793,7 @@ namespace ShiroMR
                 _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
             }
             SetDepthLink(ShiroMR.Linking.LinkState.LinkedManual, personFloorPos, reason, personHeight);
-            SetStatusBanner("✅ LINKED TO THE PERSON YOU CHOSE • 🔄 Auto to undo", 4.0f, new Color(0.2f, 0.95f, 0.5f));
+            SetStatusBanner("Following the person you chose (Automatic to undo)", 4.0f, ShiroTheme.GoodText);
             RefreshUiText();
         }
 
@@ -740,7 +811,7 @@ namespace ShiroMR
                 _targetPosition = detectedPersonPosition;
             }
             EvaluatePersonDetection();
-            SetStatusBanner("🔄 AUTOMATIC AGAIN", 2.5f, Color.white);
+            SetStatusBanner("Automatic again", 2.5f, ShiroTheme.Text);
             RefreshUiText();
         }
 
@@ -777,7 +848,7 @@ namespace ShiroMR
                 ShiroVRPointer.Instance.SetReattachTargeting(false);
             }
 
-            SetStatusBanner("✅ POSITION RE-ATTACHED & LOCKED TO PATIENT", 4.0f, new Color(0.2f, 0.95f, 0.5f));
+            SetStatusBanner("The tag stays where you pointed (Automatic to undo)", 4.0f, ShiroTheme.GoodText);
             RefreshUiText();
         }
 
@@ -792,7 +863,7 @@ namespace ShiroMR
             {
                 ShiroVRPointer.Instance.SetReattachTargeting(false);
             }
-            SetStatusBanner("Auto-Tracking Resumed", 2.0f, Color.white);
+            SetStatusBanner("Automatic again", 2.0f, ShiroTheme.Text);
             RefreshUiText();
         }
 
@@ -810,7 +881,7 @@ namespace ShiroMR
                     : WardSpatialManager.Instance.GetBedSideWorldPosition(_assignedWardBed);
             }
 
-            SetStatusBanner($"Dock Location: {dockMode}", 2.5f, new Color(0.2f, 0.85f, 1.0f));
+            SetStatusBanner(dockMode == PatientDockMode.Headboard ? "Tag at the head of the bed" : "Tag beside the bed", 2.5f, ShiroTheme.OkText);
             RefreshUiText();
         }
 
@@ -824,179 +895,208 @@ namespace ShiroMR
             }
         }
 
+        /// <summary>The line about the tag's position, shown in the details.</summary>
         private void RefreshStatusBanner()
         {
             if (_statusBannerText == null) return;
 
             if (trackingState == PatientTrackingState.BedDocked)
             {
-                string offsetNotice = (_customBedOffset != Vector3.zero) ? " [Adjusted]" : "";
-                _statusBannerText.text = $"🛏️ Bed Headboard Poster ({dockMode}){offsetNotice} • Pinch [✥ Move] to Adjust";
-                _statusBannerText.color = new Color(0.3f, 0.85f, 1.0f);
+                string place = dockMode == PatientDockMode.Headboard ? "at the head of the bed" : "beside the bed";
+                _statusBannerText.text = $"Tag {place}{(_customBedOffset != Vector3.zero ? " (moved by you)" : "")}";
+                _statusBannerText.color = ShiroTheme.TextDim;
             }
             else if (_isPanelDragging)
             {
-                _statusBannerText.text = "✋ DRAGGING PANEL • MOVE RAY (USE LEFT HAND FOR DISTANCE)";
-                _statusBannerText.color = new Color(0.2f, 0.95f, 0.5f);
+                _statusBannerText.text = "Moving the tag: point where it should go and let go of the pinch";
+                _statusBannerText.color = ShiroTheme.OkText;
             }
             else if (trackingState == PatientTrackingState.ManualAim)
             {
                 _statusBannerText.text = LinkingOn
-                    ? "🎯 Aim at the patient & pinch (nobody seen there: pins the panel)"
-                    : "🎯 Aim at patient & pinch/click to lock position";
-                _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+                    ? "Point at the patient and pinch (nobody seen there: the tag stays at that spot)"
+                    : "Point at the patient and pinch: the tag stays there";
+                _statusBannerText.color = ShiroTheme.WarnText;
             }
             else if (_isManuallyLocked)
             {
-                _statusBannerText.text = "📍 Pinned here by you • 🔄 Auto to undo";
-                _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+                _statusBannerText.text = "Placed here by you (Automatic to undo)";
+                _statusBannerText.color = ShiroTheme.WarnText;
             }
             else if (_linkingActive && !string.IsNullOrEmpty(depthLinkReason))
             {
-                // Short reason of the person linking, e.g. "linked: person 1.62 m, 0.3 m from the wristband"
+                // The person linking's own reason, e.g. "linked: person 1.62 m, 0.3 m from the wristband"
                 _statusBannerText.text = depthLinkReason;
-                _statusBannerText.color = _depthLinked ? new Color(0.2f, 0.95f, 0.5f)
-                    : depthLinkState == ShiroMR.Linking.LinkState.Unclear ? new Color(1.0f, 0.75f, 0.2f)
-                    : new Color(0.95f, 0.85f, 0.35f);
+                _statusBannerText.color = _depthLinked ? ShiroTheme.GoodText
+                    : depthLinkState == ShiroMR.Linking.LinkState.Unclear ? ShiroTheme.WarnText : ShiroTheme.TextDim;
             }
             else
             {
-                if (isPersonDetected)
-                {
-                    _statusBannerText.text = "🟢 Pulse detected • Following wristband position";
-                    _statusBannerText.color = new Color(0.2f, 0.95f, 0.5f);
-                }
-                else
-                {
-                    _statusBannerText.text = "🟡 No pulse reading now • Following wristband position";
-                    _statusBannerText.color = new Color(0.95f, 0.85f, 0.35f);
-                }
+                _statusBannerText.text = "Position from the wristband's Bluetooth signal (about ±1 m)";
+                _statusBannerText.color = ShiroTheme.TextDim;
             }
+        }
+
+        // ----- The tag's words (version 2; the same states as the web dashboard) -----
+
+        private struct HeartLine
+        {
+            public string Value;      // the number shown, or "--"
+            public string Text;       // the heart rate in words
+            public bool Warn;         // amber: needs a look
+            public bool Dim;          // an older value (resting between readings)
+            public bool Measuring;
+        }
+
+        private static string Ago(float s)
+        {
+            if (s < 60f) return $"{Mathf.RoundToInt(s)} s";
+            if (s < 3600f) return $"{Mathf.RoundToInt(s / 60f)} min";
+            return $"{Mathf.RoundToInt(s / 3600f)} h";
+        }
+
+        private bool IsHeard => _lastHeardAt >= 0f && !_heardOffline && Time.time - _lastHeardAt <= NoSignalAfter;
+
+        /// <summary>
+        /// The heart rate as a nurse should read it: a live value, measuring (and how long
+        /// it usually takes), no skin contact, no signal, or the last value while the
+        /// wristband rests between its automatic readings.
+        /// </summary>
+        private HeartLine Heart()
+        {
+            float now = Time.time;
+            var h = new HeartLine { Value = "--", Text = "" };
+            if (_lastHeardAt < 0f) { h.Text = "Waiting for the wristband"; return h; }
+            if (!IsHeard)
+            {
+                h.Text = $"Wristband not heard for {Ago(now - _lastHeardAt)}" +
+                         (_lastBpmAt >= 0f ? $" · last {_lastBpm} bpm, {Ago(now - _lastBpmAt)} ago" : "");
+                h.Warn = true;
+                return h;
+            }
+            if (heartRateBpm > 0)
+            {
+                h.Value = heartRateBpm.ToString();
+                h.Text = _liveMode ? "Live, every second" : "Just measured";
+                return h;
+            }
+            if (_touch)
+            {
+                float s = _touchSince >= 0f ? now - _touchSince : 0f;
+                h.Measuring = true;
+                if (s > 30f) { h.Text = "Still measuring: keep the arm still, strap snug"; return h; }
+                int left = Mathf.Max(1, Mathf.RoundToInt(FirstReadingS - s));
+                h.Text = s < FirstReadingS ? $"Measuring… ready in about {left} s" : "Measuring… almost ready";
+                return h;
+            }
+            if (_liveMode) { h.Text = "No skin contact: make the strap snug"; h.Warn = true; return h; }
+            // Resting between the automatic readings
+            float next = _burstEndAt >= 0f ? Mathf.Max(0f, PassiveCycleS - (now - _burstEndAt)) : -1f;
+            string nextText = next > 30f ? $"Next reading in about {Mathf.CeilToInt(next / 60f)} min" : "Next reading within 3 min";
+            if (_lastBpmAt >= 0f)
+            {
+                h.Value = _lastBpm.ToString();
+                h.Dim = true;
+                h.Text = $"{nextText} · this value {Ago(now - _lastBpmAt)} ago";
+            }
+            else h.Text = nextText;
+            return h;
+        }
+
+        private bool BatteryLow => batteryPercent >= 0 && batteryPercent <= 20 && !_charging;
+
+        /// <summary>The stripe: grey not heard, amber check, blue OK (red while an alert waits).</summary>
+        private Color StatusColour(HeartLine h)
+        {
+            if (!IsHeard) return ShiroTheme.Off;
+            if (h.Warn || BatteryLow) return ShiroTheme.Warn;
+            return ShiroTheme.Ok;
+        }
+
+        private string BedWords()
+        {
+            if (string.IsNullOrEmpty(assignedBed) || assignedBed == "--") return "No bed";
+            if (_assignedWardBed != null && !string.IsNullOrEmpty(_assignedWardBed.bed_code)) return _assignedWardBed.bed_code;
+            return assignedBed;
+        }
+
+        private string WhereWords()
+        {
+            switch (trackingState)
+            {
+                case PatientTrackingState.BedDocked: return "at their bed";
+                case PatientTrackingState.ManualAim: return "choosing the place";
+            }
+            if (_isManuallyLocked) return "placed by you";
+            if (_depthLinked) return "seen by headset";
+            string m = motionState?.ToUpperInvariant() ?? "";
+            return m == "WALKING" ? "walking" : "in the room";
+        }
+
+        private string MotionWords()
+        {
+            switch (motionState?.ToUpperInvariant() ?? "")
+            {
+                case "WALKING": return "Moving: walking";
+                case "HAND_MOVEMENT": return "Moving: arm only";
+                case "SETTLING": return "Settling";
+                default: return "Still";
+            }
+        }
+
+        private string PositionWords(out Color colour)
+        {
+            colour = ShiroTheme.OkText;
+            if (trackingState == PatientTrackingState.BedDocked) return "At their bed";
+            if (trackingState == PatientTrackingState.ManualAim) { colour = ShiroTheme.WarnText; return "Choosing the place by hand"; }
+            if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Linked) { colour = ShiroTheme.GoodText; return "Seen by this headset"; }
+            if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.LinkedManual) { colour = ShiroTheme.GoodText; return "Following chosen person"; }
+            if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Unclear) { colour = ShiroTheme.WarnText; return "Unclear: choose the person"; }
+            return "Bluetooth, about ±1 m";
         }
 
         private void RefreshUiText()
         {
             if (_nameText != null) _nameText.text = fullName;
-            if (_subText != null) _subText.text = $"{tagId} • Bed: {assignedBed}";
+            if (_subText != null) _subText.text = $"{BedWords()} · {WhereWords()}";
 
-            // Tracking Mode Badge
-            if (_trackingBadgeText != null)
-            {
-                if (trackingState == PatientTrackingState.BedDocked)
-                {
-                    string offsetNotice = (_customBedOffset != Vector3.zero) ? " (ADJUSTED)" : "";
-                    _trackingBadgeText.text = $"🛏️ BED POSTER ({dockMode.ToString().ToUpper()}){offsetNotice}";
-                    _trackingBadgeText.color = new Color(0.2f, 0.85f, 1.0f); // Cyan
-                }
-                else if (trackingState == PatientTrackingState.ManualAim)
-                {
-                    _trackingBadgeText.text = "🎯 MANUAL AIM TARGETING";
-                    _trackingBadgeText.color = new Color(1.0f, 0.85f, 0.2f); // Amber
-                }
-                else
-                {
-                    if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Linked)
-                    {
-                        _trackingBadgeText.text = "🔗 FOLLOWING PERSON";
-                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
-                    }
-                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
-                    {
-                        _trackingBadgeText.text = "🔗 FOLLOWING CHOSEN PERSON";
-                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
-                    }
-                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Unclear)
-                    {
-                        _trackingBadgeText.text = "❓ UNCLEAR: CHOOSE PERSON";
-                        _trackingBadgeText.color = new Color(1.0f, 0.75f, 0.2f);
-                    }
-                    else if (_linkingActive)
-                    {
-                        _trackingBadgeText.text = "📶 BLUETOOTH POSITION";
-                        _trackingBadgeText.color = new Color(0.95f, 0.85f, 0.35f);
-                    }
-                    else
-                    {
-                        _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PULSE DETECTED)" : "🚶 IN-TRANSIT (NO PULSE READING)";
-                        _trackingBadgeText.color = isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
-                    }
-                }
-            }
-
-            // Vitals BPM
+            var h = Heart();
             if (_bpmText != null)
             {
-                if (heartRateBpm > 0)
-                {
-                    _bpmText.text = $"❤️ {heartRateBpm} BPM";
-                    if (heartRateBpm < 50 || heartRateBpm > 120)
-                        _bpmText.color = new Color(0.95f, 0.2f, 0.2f); // Red Alert
-                    else if (heartRateBpm > 100)
-                        _bpmText.color = new Color(0.95f, 0.75f, 0.1f); // Yellow Warning
-                    else
-                        _bpmText.color = new Color(0.1f, 0.95f, 0.45f); // Normal Green
-                }
-                else
-                {
-                    _bpmText.text = "❤️ -- BPM";
-                    _bpmText.color = Color.gray;
-                }
+                _bpmText.text = h.Value;
+                _bpmText.color = h.Dim || h.Value == "--" ? ShiroTheme.TextDim : ShiroTheme.Text;
             }
+            if (_bpmUnitText != null) _bpmUnitText.text = "<color=#F87171>♥</color> bpm";
+            if (_heartStateText != null)
+            {
+                _heartStateText.text = h.Text;
+                _heartStateText.color = h.Warn ? ShiroTheme.WarnText : ShiroTheme.TextDim;
+            }
+            // A second line only when something needs a look (the tag grows by one line)
+            string flag = BatteryLow && IsHeard ? $"Battery low ({batteryPercent} %)" : "";
+            if (_flagText != null && _flagText.text != flag) _flagText.text = flag;
+            if ((flag.Length > 0) != _flagShown)
+            {
+                _flagShown = flag.Length > 0;
+                if (_flagText != null) _flagText.gameObject.SetActive(_flagShown);
+                LayoutTag();
+            }
+            if (_statusStripe != null && !isAlarmActive) _statusStripe.color = StatusColour(h);
 
-            // SpO2
+            // Details
+            if (_trackingBadgeText != null)
+            {
+                _trackingBadgeText.text = PositionWords(out Color c);
+                _trackingBadgeText.color = c;
+            }
             if (_spo2Text != null)
-            {
-                if (spo2Percent > 0)
-                {
-                    // Indicative only: the SpO2 measurement is not calibrated and raises
-                    // no alarm, so it is never coloured as an alert.
-                    _spo2Text.text = $"🫁 ~{spo2Percent}%";
-                    _spo2Text.color = new Color(0.2f, 0.85f, 1.0f);
-                }
-                else
-                {
-                    _spo2Text.text = "🫁 --%";
-                    _spo2Text.color = Color.gray;
-                }
-            }
-
-            // Battery
+                _spo2Text.text = spo2Percent > 0 ? $"SpO2 ~{spo2Percent} %, for information" : "SpO2 --";
             if (_batteryText != null)
-            {
-                _batteryText.text = batteryPercent >= 0 ? $"🔋 {batteryPercent}%" : "🔋 --%";
-            }
+                _batteryText.text = batteryPercent >= 0 ? $"Battery {batteryPercent} %{(_charging ? ", charging" : "")}" : "Battery --";
+            if (_motionBadgeText != null) _motionBadgeText.text = MotionWords();
 
-            // Motion State
-            if (_motionBadgeText != null)
-            {
-                string m = motionState?.ToUpper() ?? "STATIONARY";
-                if (m == "WALKING")
-                {
-                    _motionBadgeText.text = "🚶 WALKING";
-                    _motionBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
-                }
-                else if (m == "HAND_MOVEMENT")
-                {
-                    _motionBadgeText.text = "✋ HAND MOVEMENT";
-                    _motionBadgeText.color = new Color(0.95f, 0.75f, 0.2f);
-                }
-                else if (m == "SETTLING")
-                {
-                    _motionBadgeText.text = "⏳ SETTLING";
-                    _motionBadgeText.color = new Color(0.3f, 0.85f, 1.0f);
-                }
-                else
-                {
-                    _motionBadgeText.text = "🔒 STATIONARY";
-                    _motionBadgeText.color = new Color(0.3f, 0.85f, 1.0f);
-                }
-            }
-
-            // Buttons state
-            if (_cancelAimBtn != null)
-            {
-                _cancelAimBtn.gameObject.SetActive(trackingState == PatientTrackingState.ManualAim);
-            }
+            // Controls (the same rules as version 1)
+            if (_cancelAimBtn != null) _cancelAimBtn.gameObject.SetActive(trackingState == PatientTrackingState.ManualAim);
             if (_autoBtn != null)
             {
                 bool chosenByHand = _isManuallyLocked || depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
@@ -1006,15 +1106,49 @@ namespace ShiroMR
             {
                 _dockToggleBtn.gameObject.SetActive(trackingState == PatientTrackingState.BedDocked);
                 if (_dockToggleBtnText != null)
-                {
-                    _dockToggleBtnText.text = (dockMode == PatientDockMode.Headboard) ? "📍 Headboard" : "🛏️ Bedside";
-                }
+                    _dockToggleBtnText.text = dockMode == PatientDockMode.Headboard ? "Beside bed" : "Head of bed";
             }
+            if (_reattachBtnText != null) _reattachBtnText.text = LinkingOn ? "Choose person" : "Pin to a spot";
 
             if (_bannerStatusTimer <= 0f)
             {
                 RefreshStatusBanner();
             }
+        }
+
+        /// <summary>A tap on the tag: the details (SpO2, battery, position, controls) open or close.</summary>
+        private void ToggleDetails()
+        {
+            _detailsOpen = !_detailsOpen;
+            if (_detailsRoot != null) _detailsRoot.SetActive(_detailsOpen);
+            LayoutTag();
+            RefreshUiText();
+        }
+
+        private TMP_Text _flagText;          // "Battery low": a second line when something needs a look
+        private bool _flagShown;
+
+        /// <summary>The tag's height: one more line with a flag, the details below when open.</summary>
+        private void LayoutTag()
+        {
+            if (_hudRect == null) return;
+            float compact = _flagShown ? TagH + 20f : TagH;
+            _hudRect.sizeDelta = new Vector2(TagW, _detailsOpen ? compact + DetailsH : compact);
+            if (_detailsRoot != null) ShiroUIKit.Place(_detailsRoot.transform as RectTransform, 0, compact, TagW, DetailsH);
+        }
+
+        /// <summary>
+        /// The tag keeps the same size to the eye at any distance (Meta's guidance for panels
+        /// that move in depth): its scale grows with the distance to the headset.
+        /// </summary>
+        private void KeepTagSizeToTheEye()
+        {
+            if (_hudContainer == null) return;
+            if (_cameraTransform == null && Camera.main != null) _cameraTransform = Camera.main.transform;
+            if (_cameraTransform == null) return;
+            float d = Vector3.Distance(_cameraTransform.position, _hudContainer.transform.position);
+            float s = Mathf.Clamp(d, 0.6f, 4f) * 0.001f;
+            _hudContainer.transform.localScale = new Vector3(s, s, s);
         }
 
         /// <summary>
@@ -1028,12 +1162,17 @@ namespace ShiroMR
             {
                 _dragDistance = ShiroVRPointer.Instance.manualLaserDistance;
             }
-            SetStatusBanner("✋ DRAGGING PANEL • MOVE RAY (USE LEFT HAND FOR DISTANCE)", 10.0f, new Color(0.2f, 0.85f, 1.0f));
+            SetStatusBanner("Moving the tag: point where it should go and let go of the pinch", 10.0f, ShiroTheme.OkText);
             RefreshUiText();
         }
 
+        // The tag, in mm as seen from 1 m (it scales with the distance, see KeepTagSizeToTheEye)
+        private const float TagW = 240f;
+        private const float TagH = 96f;
+        private const float DetailsH = 184f;
+
         /// <summary>
-        /// Programmatically builds the holographic billboard canvas and floor footprint circle
+        /// Builds the floor ring and the patient's tag (version 2, ShiroMR.UI).
         /// </summary>
         private void BuildHologramVisuals()
         {
@@ -1054,274 +1193,96 @@ namespace ShiroMR
                 _floorRingRenderer.material = _floorRingMaterial;
             }
 
-            // 2. Floating Billboard HUD Container
-            _hudContainer = new GameObject("FloatingVitalsHUD");
-            _hudContainer.transform.SetParent(this.transform);
+            // 2. The tag: its bottom edge at the anchor point, so the details open upward
+            //    (never into the bed or the person)
+            _hudCanvas = ShiroUIKit.WorldCanvas("PatientTag", transform, new Vector2(TagW, TagH), new Vector2(0.5f, 0f));
+            _hudContainer = _hudCanvas.gameObject;
             _hudContainer.transform.localPosition = hudOffset;
+            _hudRect = (RectTransform)_hudContainer.transform;
 
-            // Canvas
-            _hudCanvas = _hudContainer.AddComponent<Canvas>();
-            _hudCanvas.renderMode = RenderMode.WorldSpace;
-            _hudContainer.AddComponent<CanvasScaler>();
+            // The whole tag can be tapped (ray or fingertip): details open or close
+            _cardButton = ShiroUIKit.Button(_hudContainer.transform, "Tag", null, ButtonKind.Surface, ToggleDetails);
+            ShiroUIKit.Fill(_cardButton);
+            _cardBackground = _cardButton.Background;
+            Transform card = _cardButton.transform;
 
-            RectTransform rect = _hudContainer.GetComponent<RectTransform>();
-            rect.sizeDelta = new Vector2(320, 200);
-            rect.localScale = new Vector3(0.0022f, 0.0022f, 0.0022f); // Physical eye size ~70cm wide
+            // Status stripe on the left edge (red needs help, amber check, blue OK, grey not heard)
+            _statusStripe = ShiroUIKit.Panel(card, "Status", ShiroTheme.Ok, 3.5f);
+            var stripe = (RectTransform)_statusStripe.transform;
+            stripe.anchorMin = new Vector2(0f, 0f);
+            stripe.anchorMax = new Vector2(0f, 1f);
+            stripe.pivot = new Vector2(0f, 0.5f);
+            stripe.offsetMin = new Vector2(4f, 6f);
+            stripe.offsetMax = new Vector2(11f, -6f);
 
-            // Card Background Panel
-            GameObject bgObj = new GameObject("CardBackground");
-            bgObj.transform.SetParent(_hudContainer.transform, false);
-            _cardBackground = bgObj.AddComponent<Image>();
-            _cardBackground.color = new Color(0.06f, 0.10f, 0.18f, 0.92f); // Deep clinical slate glass
-            RectTransform bgRect = bgObj.GetComponent<RectTransform>();
-            bgRect.anchorMin = Vector2.zero;
-            bgRect.anchorMax = Vector2.one;
-            bgRect.sizeDelta = Vector2.zero;
+            // Always shown: name, bed and where, heart rate with its state
+            _nameText = ShiroUIKit.Label(card, "Name", fullName, 22f, ShiroTheme.Text, FontStyles.Bold);
+            ShiroUIKit.Place(_nameText, 20, 10, 140, 28);
+            _subText = ShiroUIKit.Label(card, "BedWhere", "", 14f, ShiroTheme.TextDim);
+            ShiroUIKit.Place(_subText, 20, 40, 150, 20);
+            _bpmText = ShiroUIKit.Label(card, "Heart", "--", 34f, ShiroTheme.Text, FontStyles.Bold, TextAlignmentOptions.Right);
+            ShiroUIKit.Place(_bpmText, TagW - 84, 4, 70, 42);
+            _bpmUnitText = ShiroUIKit.Label(card, "HeartUnit", "bpm", 13f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Right);
+            _bpmUnitText.richText = true;
+            ShiroUIKit.Place(_bpmUnitText, TagW - 74, 46, 60, 18);
+            _heartStateText = ShiroUIKit.Label(card, "HeartState", "", 14f, ShiroTheme.TextDim);
+            ShiroUIKit.Place(_heartStateText, 20, 68, TagW - 34, 20);
+            _flagText = ShiroUIKit.Label(card, "Flag", "", 14f, ShiroTheme.WarnText, FontStyles.Bold);
+            ShiroUIKit.Place(_flagText, 20, 88, TagW - 34, 20);
+            _flagText.gameObject.SetActive(false);
 
-            Font defaultFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            // Details (after a tap)
+            var details = new GameObject("Details", typeof(RectTransform));
+            details.transform.SetParent(card, false);
+            ShiroUIKit.Place(details.transform as RectTransform, 0, TagH, TagW, DetailsH);
+            _detailsRoot = details;
+            Transform d = details.transform;
+            float w = TagW - 34f;
+            ShiroUIKit.Place(ShiroUIKit.Panel(d, "Divider", ShiroTheme.Divider, 0f), 20, 0, w, 1.5f);
+            _spo2Text = ShiroUIKit.Label(d, "Spo2", "", 14f, ShiroTheme.Text);
+            ShiroUIKit.Place(_spo2Text, 20, 8, w, 20);
+            _batteryText = ShiroUIKit.Label(d, "Battery", "", 14f, ShiroTheme.Text);
+            ShiroUIKit.Place(_batteryText, 20, 30, w / 2f, 20);
+            _motionBadgeText = ShiroUIKit.Label(d, "Motion", "", 14f, ShiroTheme.Text);
+            ShiroUIKit.Place(_motionBadgeText, 20 + w / 2f, 30, w / 2f, 20);
+            _trackingBadgeText = ShiroUIKit.Label(d, "Position", "", 14f, ShiroTheme.OkText);
+            ShiroUIKit.Place(_trackingBadgeText, 20, 52, w, 20);
+            _statusBannerText = ShiroUIKit.Label(d, "PositionNote", "", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true);
+            ShiroUIKit.Place(_statusBannerText, 20, 74, w, 30);
 
-            // Top-Left Corner: [✥ Move] Manual Drag / Reposition Handle
-            GameObject moveObj = new GameObject("Btn_MoveHandle");
-            moveObj.transform.SetParent(bgObj.transform, false);
-            Image moveImg = moveObj.AddComponent<Image>();
-            moveImg.color = new Color(0.12f, 0.40f, 0.60f, 0.95f); // Sleek clinical steel blue
-            _moveHandleBtn = moveObj.AddComponent<Button>();
-            _moveHandleBtn.onClick.AddListener(StartPanelDrag);
-            BoxCollider moveCol = moveObj.AddComponent<BoxCollider>();
-            moveCol.size = new Vector3(56, 24, 35); // 35 units thick for laser & fingertip
-            RectTransform moveRect = moveObj.GetComponent<RectTransform>();
-            moveRect.anchoredPosition = new Vector2(-124, 70);
-            moveRect.sizeDelta = new Vector2(54, 22);
+            float bw = (w - 8f) / 2f;
+            var move = ShiroUIKit.Button(d, "Move", "Move tag", ButtonKind.Secondary, StartPanelDrag, 12f);
+            ShiroUIKit.Place(move, 20, 108, bw, 30);
+            _moveHandleBtn = move.UiButton;
+            _moveHandleBtnText = move.Label;
 
-            GameObject moveTxtObj = new GameObject("Txt");
-            moveTxtObj.transform.SetParent(moveObj.transform, false);
-            _moveHandleBtnText = moveTxtObj.AddComponent<Text>();
-            _moveHandleBtnText.font = defaultFont;
-            _moveHandleBtnText.fontSize = 11;
-            _moveHandleBtnText.fontStyle = FontStyle.Bold;
-            _moveHandleBtnText.alignment = TextAnchor.MiddleCenter;
-            _moveHandleBtnText.color = Color.white;
-            _moveHandleBtnText.text = "✥ Move";
-            RectTransform mTxtRect = moveTxtObj.GetComponent<RectTransform>();
-            mTxtRect.anchorMin = Vector2.zero;
-            mTxtRect.anchorMax = Vector2.one;
-            mTxtRect.sizeDelta = Vector2.zero;
+            var reattach = ShiroUIKit.Button(d, "Reattach", "Choose person", ButtonKind.Secondary, BeginManualAim, 12f);
+            ShiroUIKit.Place(reattach, 28 + bw, 108, bw, 30);
+            _reattachBtn = reattach.UiButton;
+            _reattachBtnText = reattach.Label;
 
-            // Row 1: Patient Name (shifted slightly to accommodate [✥ Move])
-            GameObject nameObj = new GameObject("NameText");
-            nameObj.transform.SetParent(bgObj.transform, false);
-            _nameText = nameObj.AddComponent<Text>();
-            _nameText.font = defaultFont;
-            _nameText.fontSize = 18;
-            _nameText.fontStyle = FontStyle.Bold;
-            _nameText.color = Color.white;
-            _nameText.text = fullName;
-            RectTransform nameRect = nameObj.GetComponent<RectTransform>();
-            nameRect.anchoredPosition = new Vector2(25, 70);
-            nameRect.sizeDelta = new Vector2(230, 24);
+            // Second row, left: one of three, by state (head of bed / beside it, automatic, cancel)
+            var dock = ShiroUIKit.Button(d, "Dock", "Beside bed", ButtonKind.Secondary, ToggleDockMode, 12f);
+            ShiroUIKit.Place(dock, 20, 144, bw, 30);
+            _dockToggleBtn = dock.UiButton;
+            _dockToggleBtnText = dock.Label;
 
-            // Row 2: Subtext (Tag & Bed)
-            GameObject subObj = new GameObject("SubText");
-            subObj.transform.SetParent(bgObj.transform, false);
-            _subText = subObj.AddComponent<Text>();
-            _subText.font = defaultFont;
-            _subText.fontSize = 11;
-            _subText.color = new Color(0.70f, 0.80f, 0.92f);
-            _subText.text = $"{tagId} • Bed: {assignedBed}";
-            RectTransform subRect = subObj.GetComponent<RectTransform>();
-            subRect.anchoredPosition = new Vector2(12, 48);
-            subRect.sizeDelta = new Vector2(295, 18);
+            var auto = ShiroUIKit.Button(d, "Auto", "Automatic", ButtonKind.Primary, ReturnToAuto, 12f);
+            ShiroUIKit.Place(auto, 20, 144, bw, 30);
+            _autoBtn = auto.UiButton;
+            auto.gameObject.SetActive(false);
 
-            // Row 3: Tracking Mode Badge
-            GameObject badgeObj = new GameObject("TrackingBadge");
-            badgeObj.transform.SetParent(bgObj.transform, false);
-            _trackingBadgeText = badgeObj.AddComponent<Text>();
-            _trackingBadgeText.font = defaultFont;
-            _trackingBadgeText.fontSize = 11;
-            _trackingBadgeText.fontStyle = FontStyle.Bold;
-            _trackingBadgeText.color = new Color(0.2f, 0.85f, 1.0f);
-            _trackingBadgeText.text = "🛏️ BED HEADBOARD POSTER";
-            RectTransform badgeRect = badgeObj.GetComponent<RectTransform>();
-            badgeRect.anchoredPosition = new Vector2(12, 26);
-            badgeRect.sizeDelta = new Vector2(295, 18);
+            var cancel = ShiroUIKit.Button(d, "CancelAim", "Cancel", ButtonKind.Danger, CancelManualAim, 12f);
+            ShiroUIKit.Place(cancel, 20, 144, bw, 30);
+            _cancelAimBtn = cancel.UiButton;
+            _cancelAimBtnText = cancel.Label;
+            cancel.gameObject.SetActive(false);
 
-            // Row 4: Heart Rate
-            GameObject bpmObj = new GameObject("BpmText");
-            bpmObj.transform.SetParent(bgObj.transform, false);
-            _bpmText = bpmObj.AddComponent<Text>();
-            _bpmText.font = defaultFont;
-            _bpmText.fontSize = 20;
-            _bpmText.fontStyle = FontStyle.Bold;
-            _bpmText.color = new Color(0.1f, 0.95f, 0.45f);
-            _bpmText.text = "❤️ -- BPM";
-            RectTransform bpmRect = bpmObj.GetComponent<RectTransform>();
-            bpmRect.anchoredPosition = new Vector2(12, -4);
-            bpmRect.sizeDelta = new Vector2(145, 26);
+            var close = ShiroUIKit.Button(d, "Close", "Close", ButtonKind.Quiet, ToggleDetails, 12f);
+            ShiroUIKit.Place(close, 28 + bw, 144, bw, 30);
 
-            // Row 4: SpO2
-            GameObject spo2Obj = new GameObject("SpO2Text");
-            spo2Obj.transform.SetParent(bgObj.transform, false);
-            _spo2Text = spo2Obj.AddComponent<Text>();
-            _spo2Text.font = defaultFont;
-            _spo2Text.fontSize = 18;
-            _spo2Text.fontStyle = FontStyle.Bold;
-            _spo2Text.color = new Color(0.2f, 0.85f, 1.0f);
-            _spo2Text.text = "🫁 --%";
-            RectTransform spo2Rect = spo2Obj.GetComponent<RectTransform>();
-            spo2Rect.anchoredPosition = new Vector2(165, -4);
-            spo2Rect.sizeDelta = new Vector2(145, 26);
-
-            // Row 5: Motion State
-            GameObject motionObj = new GameObject("MotionText");
-            motionObj.transform.SetParent(bgObj.transform, false);
-            _motionBadgeText = motionObj.AddComponent<Text>();
-            _motionBadgeText.font = defaultFont;
-            _motionBadgeText.fontSize = 11;
-            _motionBadgeText.fontStyle = FontStyle.Bold;
-            _motionBadgeText.color = new Color(0.3f, 0.85f, 1.0f);
-            _motionBadgeText.text = "🔒 STATIONARY";
-            RectTransform motionRect = motionObj.GetComponent<RectTransform>();
-            motionRect.anchoredPosition = new Vector2(12, -32);
-            motionRect.sizeDelta = new Vector2(145, 20);
-
-            // Row 5: Battery
-            GameObject batObj = new GameObject("BatteryText");
-            batObj.transform.SetParent(bgObj.transform, false);
-            _batteryText = batObj.AddComponent<Text>();
-            _batteryText.font = defaultFont;
-            _batteryText.fontSize = 11;
-            _batteryText.color = new Color(0.80f, 0.88f, 0.95f);
-            _batteryText.text = "🔋 --%";
-            RectTransform batRect = batObj.GetComponent<RectTransform>();
-            batRect.anchoredPosition = new Vector2(165, -32);
-            batRect.sizeDelta = new Vector2(145, 20);
-
-            // Row 6: Interactive Buttons Row (with Thick BoxColliders for distant laser clicks)
-            // Button 1: [🎯 Re-Attach]
-            GameObject reattachObj = new GameObject("Btn_Reattach");
-            reattachObj.transform.SetParent(bgObj.transform, false);
-            Image reattachImg = reattachObj.AddComponent<Image>();
-            reattachImg.color = new Color(0.12f, 0.45f, 0.65f, 0.90f);
-            _reattachBtn = reattachObj.AddComponent<Button>();
-            _reattachBtn.onClick.AddListener(BeginManualAim);
-            BoxCollider colA = reattachObj.AddComponent<BoxCollider>();
-            colA.size = new Vector3(135, 32, 35); // 35 units thick so rays easily catch it
-            RectTransform reattachRect = reattachObj.GetComponent<RectTransform>();
-            reattachRect.anchoredPosition = new Vector2(-75, -64);
-            reattachRect.sizeDelta = new Vector2(135, 30);
-
-            GameObject reattachTxtObj = new GameObject("Txt");
-            reattachTxtObj.transform.SetParent(reattachObj.transform, false);
-            _reattachBtnText = reattachTxtObj.AddComponent<Text>();
-            _reattachBtnText.font = defaultFont;
-            _reattachBtnText.fontSize = 12;
-            _reattachBtnText.fontStyle = FontStyle.Bold;
-            _reattachBtnText.alignment = TextAnchor.MiddleCenter;
-            _reattachBtnText.color = Color.white;
-            _reattachBtnText.text = "🎯 Re-Attach";
-            RectTransform rTxtRect = reattachTxtObj.GetComponent<RectTransform>();
-            rTxtRect.anchorMin = Vector2.zero;
-            rTxtRect.anchorMax = Vector2.one;
-            rTxtRect.sizeDelta = Vector2.zero;
-
-            // Button 2: [📍 Headboard / 🛏️ Bedside]
-            GameObject dockObj = new GameObject("Btn_DockToggle");
-            dockObj.transform.SetParent(bgObj.transform, false);
-            Image dockImg = dockObj.AddComponent<Image>();
-            dockImg.color = new Color(0.12f, 0.35f, 0.45f, 0.90f);
-            _dockToggleBtn = dockObj.AddComponent<Button>();
-            _dockToggleBtn.onClick.AddListener(ToggleDockMode);
-            BoxCollider colB = dockObj.AddComponent<BoxCollider>();
-            colB.size = new Vector3(135, 32, 35);
-            RectTransform dockRect = dockObj.GetComponent<RectTransform>();
-            dockRect.anchoredPosition = new Vector2(75, -64);
-            dockRect.sizeDelta = new Vector2(135, 30);
-
-            GameObject dockTxtObj = new GameObject("Txt");
-            dockTxtObj.transform.SetParent(dockObj.transform, false);
-            _dockToggleBtnText = dockTxtObj.AddComponent<Text>();
-            _dockToggleBtnText.font = defaultFont;
-            _dockToggleBtnText.fontSize = 12;
-            _dockToggleBtnText.fontStyle = FontStyle.Bold;
-            _dockToggleBtnText.alignment = TextAnchor.MiddleCenter;
-            _dockToggleBtnText.color = Color.white;
-            _dockToggleBtnText.text = "📍 Headboard";
-            RectTransform dTxtRect = dockTxtObj.GetComponent<RectTransform>();
-            dTxtRect.anchorMin = Vector2.zero;
-            dTxtRect.anchorMax = Vector2.one;
-            dTxtRect.sizeDelta = Vector2.zero;
-
-            // Button 3: [✖ Cancel Aim]
-            GameObject cancelObj = new GameObject("Btn_CancelAim");
-            cancelObj.transform.SetParent(bgObj.transform, false);
-            Image cancelImg = cancelObj.AddComponent<Image>();
-            cancelImg.color = new Color(0.65f, 0.20f, 0.20f, 0.90f);
-            _cancelAimBtn = cancelObj.AddComponent<Button>();
-            _cancelAimBtn.onClick.AddListener(CancelManualAim);
-            BoxCollider colC = cancelObj.AddComponent<BoxCollider>();
-            colC.size = new Vector3(135, 32, 35);
-            RectTransform cancelRect = cancelObj.GetComponent<RectTransform>();
-            cancelRect.anchoredPosition = new Vector2(75, -64);
-            cancelRect.sizeDelta = new Vector2(135, 30);
-            cancelObj.SetActive(false); // Initially hidden
-
-            GameObject cancelTxtObj = new GameObject("Txt");
-            cancelTxtObj.transform.SetParent(cancelObj.transform, false);
-            _cancelAimBtnText = cancelTxtObj.AddComponent<Text>();
-            _cancelAimBtnText.font = defaultFont;
-            _cancelAimBtnText.fontSize = 12;
-            _cancelAimBtnText.fontStyle = FontStyle.Bold;
-            _cancelAimBtnText.alignment = TextAnchor.MiddleCenter;
-            _cancelAimBtnText.color = Color.white;
-            _cancelAimBtnText.text = "✖ Cancel Aim";
-            RectTransform cTxtRect = cancelTxtObj.GetComponent<RectTransform>();
-            cTxtRect.anchorMin = Vector2.zero;
-            cTxtRect.anchorMax = Vector2.one;
-            cTxtRect.sizeDelta = Vector2.zero;
-
-            // Button 4: [🔄 Auto] (same place; shown while a choice made by hand is in force)
-            GameObject autoObj = new GameObject("Btn_Auto");
-            autoObj.transform.SetParent(bgObj.transform, false);
-            Image autoImg = autoObj.AddComponent<Image>();
-            autoImg.color = new Color(0.20f, 0.45f, 0.30f, 0.90f);
-            _autoBtn = autoObj.AddComponent<Button>();
-            _autoBtn.onClick.AddListener(ReturnToAuto);
-            BoxCollider colD = autoObj.AddComponent<BoxCollider>();
-            colD.size = new Vector3(135, 32, 35);
-            RectTransform autoRect = autoObj.GetComponent<RectTransform>();
-            autoRect.anchoredPosition = new Vector2(75, -64);
-            autoRect.sizeDelta = new Vector2(135, 30);
-            autoObj.SetActive(false);
-
-            GameObject autoTxtObj = new GameObject("Txt");
-            autoTxtObj.transform.SetParent(autoObj.transform, false);
-            Text autoTxt = autoTxtObj.AddComponent<Text>();
-            autoTxt.font = defaultFont;
-            autoTxt.fontSize = 12;
-            autoTxt.fontStyle = FontStyle.Bold;
-            autoTxt.alignment = TextAnchor.MiddleCenter;
-            autoTxt.color = Color.white;
-            autoTxt.text = "🔄 Auto";
-            RectTransform aTxtRect = autoTxtObj.GetComponent<RectTransform>();
-            aTxtRect.anchorMin = Vector2.zero;
-            aTxtRect.anchorMax = Vector2.one;
-            aTxtRect.sizeDelta = Vector2.zero;
-
-            // Row 7: Status Banner Text
-            GameObject statusObj = new GameObject("StatusBanner");
-            statusObj.transform.SetParent(bgObj.transform, false);
-            _statusBannerText = statusObj.AddComponent<Text>();
-            _statusBannerText.font = defaultFont;
-            _statusBannerText.fontSize = 10;
-            _statusBannerText.resizeTextForBestFit = true; // a long linking reason shrinks instead of being cut
-            _statusBannerText.resizeTextMinSize = 7;
-            _statusBannerText.resizeTextMaxSize = 10;
-            _statusBannerText.alignment = TextAnchor.MiddleCenter;
-            _statusBannerText.color = new Color(0.3f, 0.85f, 1.0f);
-            _statusBannerText.text = "🛏️ Bed Headboard Poster • Center Wall Mount (Zero Jitter)";
-            RectTransform statusRect = statusObj.GetComponent<RectTransform>();
-            statusRect.anchoredPosition = new Vector2(0, -88);
-            statusRect.sizeDelta = new Vector2(300, 16);
+            details.SetActive(false);
+            RefreshUiText();
         }
     }
 }

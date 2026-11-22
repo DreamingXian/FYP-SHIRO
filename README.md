@@ -128,6 +128,8 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
 ### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
 
 > **Two versions (Phase 12, from 22 Nov 2026):** `quest3_client/` is version 1, the working headset app, kept as it is. `quest3_client_v2/` is version 2: a copy of version 1 with the same logic (connection, pairing, room alignment, positions, person linking, alerts) that receives the new interface. Each is its own Unity project; open either in Unity Hub with the same editor version.
+>
+> Version 2 so far (`Assets/Scripts/ShiroMR/UI/`): one look for every part (`ShiroTheme`, `ShiroUIKit`: dark glass panels, TextMeshPro text, buttons in four kinds, at least 22 mm); buttons pressed like real ones (`ShiroPokeInteractor`: over the button's area, once on reaching the surface, again only after the finger comes back out) and by the ray, with the same hover; the left-hand menu opens only with Meta's palm-up pinch (or Y / B); the **alert card** (`ShiroAlertCard`) in front of the clinician with "I'm responding", "Show me" (an arrow toward the patient) and "Mute"; the **patient tag** (`PatientHologram`) with name, bed, heart rate in words as on the dashboard and a status stripe, keeping its size to the eye, details on a tap. Preview images without a headset: SHIRO → v2: Save UI preview images (`Builds/ui_preview/`).
 
 * **Color Passthrough Digital Twin:** Real-time 3D ward generation (`WardVisualizer.cs`) matching real-world architectural dimensions, walls, doors, obstacles, and hospital beds.
 * **Dual-Mode Patient In-Situ Hologram (`PatientHologram.cs`):**

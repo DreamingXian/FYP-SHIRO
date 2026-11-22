@@ -129,8 +129,6 @@ namespace ShiroMR
         private Quaternion _stableTargetRot = Quaternion.identity;
         private bool _isAnchorInitialized = false;
 
-        // Gesture state
-        private bool _wasLeftPinching = false;
 
         // Audio Click Generator
         private AudioSource _audioSource;
@@ -290,24 +288,9 @@ namespace ShiroMR
             }
             catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleReopenInputs", swallowed); }
 
-            // 2. Pure Hand Tracking: Left Hand Index Pinch Gesture
-            try
-            {
-                OVRPlugin.HandState leftState = default;
-                if (OVRPlugin.GetHandState(OVRPlugin.Step.Render, OVRPlugin.Hand.HandLeft, ref leftState))
-                {
-                    if ((leftState.Status & OVRPlugin.HandStatus.HandTracked) != 0)
-                    {
-                        bool isPinching = (leftState.Pinches & OVRPlugin.HandFingerPinch.Index) != 0;
-                        if (isPinching && !_wasLeftPinching)
-                        {
-                            toggleRequested = true;
-                        }
-                        _wasLeftPinching = isPinching;
-                    }
-                }
-            }
-            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleReopenInputs", swallowed); }
+            // 2. Hands: Meta's own menu gesture (left palm up, index pinch) arrives as the
+            //    Start button above. Version 1 also toggled on any left index pinch, which
+            //    opened or closed the menu by accident; version 2 does not.
 
             // 3. Unity Editor Keyboard Shortcuts ('M', 'C', 'H')
 #if ENABLE_INPUT_SYSTEM
@@ -632,7 +615,7 @@ namespace ShiroMR
                 if (distToBadge <= touchClickDistance && _touchDebounceTimer <= 0f)
                 {
                     _touchDebounceTimer = 0.35f;
-                    ToggleSlateVisibility();
+                    WristBadgeTapped();
                     return;
                 }
             }
@@ -2054,10 +2037,10 @@ namespace ShiroMR
             Transform header = _slateRoot.transform.Find("HeaderBar");
             if (header != null)
             {
-                _headerAlertBtn = CreateButton(header, "HeaderAlertBtn", "🚨 ALERT", new Vector2(190f, 55f), new Color(0.75f, 0.08f, 0.10f), () =>
+                _headerAlertBtn = CreateButton(header, "HeaderAlertBtn", "Alert", new Vector2(190f, 55f), new Color(0.75f, 0.08f, 0.10f), () =>
                 {
-                    _alertOverlayHidden = false;
-                    RefreshAlertUi();
+                    // Version 2: brings the alert card back in front of the clinician
+                    ShiroMR.UI.ShiroAlertCard.Instance?.Open();
                     PlayClickTone();
                 });
                 _headerAlertBtn.transform.localPosition = new Vector3(120f, 0, 0);
@@ -2117,12 +2100,18 @@ namespace ShiroMR
 
         private void HandleAlertRaised(ShiroAlertManager.HeadsetAlert alert)
         {
-            // A new alert always comes to the front: open the slate and the overlay
-            _alertOverlayHidden = false;
-            if (!isSlateVisible) ToggleSlateVisibility();
-            try { OVRInput.SetControllerVibration(0.6f, 0.6f, OVRInput.Controller.LTouch); }
-            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleAlertRaised", swallowed); }
+            // Version 2: the alert card (ShiroAlertCard) comes to the front by itself; the
+            // slate only shows that an alert waits (header button, wrist badge)
             RefreshAlertUi();
+        }
+
+        /// <summary>The wrist badge: an alert waiting opens its card; otherwise it opens the menu.</summary>
+        private void WristBadgeTapped()
+        {
+            var am = ShiroAlertManager.Instance;
+            var card = ShiroMR.UI.ShiroAlertCard.Instance;
+            if (am != null && am.Current != null && card != null) card.Open();
+            else ToggleSlateVisibility();
         }
 
         /// <summary>Shows the current alert, the header button, the wrist badge and the Patient tab banner.</summary>
@@ -2133,7 +2122,8 @@ namespace ShiroMR
             int pending = am != null ? am.PendingCount : 0;
             int total = am != null ? am.Alerts.Count : 0;
 
-            bool showOverlay = current != null && !_alertOverlayHidden;
+            // Version 2: alerts are shown by the alert card, never over the slate's tabs
+            bool showOverlay = false;
             if (_alertPanel != null)
             {
                 _alertPanel.SetActive(showOverlay);
@@ -2146,8 +2136,9 @@ namespace ShiroMR
 
             if (_headerAlertBtn != null)
             {
-                _headerAlertBtn.gameObject.SetActive(current != null && _alertOverlayHidden);
-                if (_headerAlertBtnText != null) _headerAlertBtnText.text = pending > 0 ? $"🚨 {pending} ALERT{(pending > 1 ? "S" : "")}" : "✔ ALERT";
+                // Opens the alert card (ShiroAlertCard)
+                _headerAlertBtn.gameObject.SetActive(current != null);
+                if (_headerAlertBtnText != null) _headerAlertBtnText.text = pending > 0 ? $"Alert ({pending})" : "Answered";
             }
 
             if (_wristBadgeBtn != null)
@@ -2156,12 +2147,12 @@ namespace ShiroMR
                 var img = _wristBadgeBtn.GetComponent<Image>();
                 if (pending > 0)
                 {
-                    if (_wristBadgeText != null) _wristBadgeText.text = "🚨 ALERT – TAP TO OPEN";
+                    if (_wristBadgeText != null) _wristBadgeText.text = "Alert: tap to open";
                     if (img != null) img.color = new Color(0.80f, 0.08f, 0.10f, 0.95f);
                 }
                 else
                 {
-                    if (_wristBadgeText != null) _wristBadgeText.text = "📱 TAP TO OPEN MENU";
+                    if (_wristBadgeText != null) _wristBadgeText.text = "Open menu";
                     if (img != null) img.color = new Color(0.06f, 0.45f, 0.65f, 0.95f);
                 }
             }
@@ -2172,19 +2163,19 @@ namespace ShiroMR
                 Image banner = _vitalsEmergencyStatus.transform.parent != null ? _vitalsEmergencyStatus.transform.parent.GetComponent<Image>() : null;
                 if (pending > 0)
                 {
-                    _vitalsEmergencyStatus.text = $"🚨 {pending} ALERT{(pending > 1 ? "S" : "")} WAITING FOR RESPONSE: {current.incident.CategoryLabel} – {current.incident.patient_name ?? "unknown patient"}";
+                    _vitalsEmergencyStatus.text = $"{pending} alert{(pending > 1 ? "s" : "")} waiting for a response: {current.incident.CategoryLabel} – {current.incident.patient_name ?? "unknown patient"}";
                     _vitalsEmergencyStatus.color = Color.white;
                     if (banner != null) banner.color = new Color(0.70f, 0.06f, 0.08f, 0.95f);
                 }
                 else if (net != null && net.IsConnected)
                 {
-                    _vitalsEmergencyStatus.text = $"🟢 No alert waiting for response ({am?.ServerCheckText ?? "connected"})";
+                    _vitalsEmergencyStatus.text = $"No alert waiting for a response ({am?.ServerCheckText ?? "connected"})";
                     _vitalsEmergencyStatus.color = new Color(0.2f, 0.95f, 0.5f);
                     if (banner != null) banner.color = new Color(0.08f, 0.25f, 0.18f, 0.95f);
                 }
                 else
                 {
-                    _vitalsEmergencyStatus.text = "⚪ ALERTS: not connected to the edge server – alerts cannot arrive";
+                    _vitalsEmergencyStatus.text = "Not connected to the edge server: alerts cannot arrive";
                     _vitalsEmergencyStatus.color = new Color(0.85f, 0.88f, 0.92f);
                     if (banner != null) banner.color = new Color(0.12f, 0.15f, 0.20f, 0.95f);
                 }
@@ -2307,7 +2298,7 @@ namespace ShiroMR
             _wristBadgeObj.AddComponent<CanvasScaler>();
             _wristBadgeObj.AddComponent<GraphicRaycaster>();
 
-            _wristBadgeBtn = CreateButton(_wristBadgeObj.transform, "OpenBadgeBtn", "📱 TAP TO OPEN MENU", new Vector2(400f, 110f), new Color(0.06f, 0.45f, 0.65f, 0.95f), ToggleSlateVisibility);
+            _wristBadgeBtn = CreateButton(_wristBadgeObj.transform, "OpenBadgeBtn", "Open menu", new Vector2(400f, 110f), new Color(0.06f, 0.45f, 0.65f, 0.95f), WristBadgeTapped);
             _wristBadgeBtn.transform.localPosition = Vector3.zero;
 
             _wristBadgeObj.SetActive(false);

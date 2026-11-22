@@ -413,7 +413,7 @@ namespace ShiroMR
                 if (_reticleCursor != null) _reticleCursor.SetActive(false);
                 if (_distanceBadgeObj != null) _distanceBadgeObj.SetActive(false);
                 isHittingUi = false;
-                currentHoveredButton = null;
+                UpdateHoverButton(null);
                 return;
             }
 
@@ -428,9 +428,21 @@ namespace ShiroMR
                     if (_reticleCursor != null) _reticleCursor.SetActive(false);
                     if (_distanceBadgeObj != null) _distanceBadgeObj.SetActive(false);
                     isHittingUi = false;
-                    currentHoveredButton = null;
+                    UpdateHoverButton(null);
                     return;
                 }
+            }
+
+            // Version 2: the right fingertip is just in front of a button of the new interface:
+            // it is pressed by touch, so the ray is hidden (not while calibrating or re-attaching)
+            if (isHandTrackingActive && !isRoomCalibrating && !isReattaching && ShiroMR.UI.ShiroPokeInteractor.IsRightFingerNearUi)
+            {
+                if (_lineRenderer != null) _lineRenderer.enabled = false;
+                if (_reticleCursor != null) _reticleCursor.SetActive(false);
+                if (_distanceBadgeObj != null) _distanceBadgeObj.SetActive(false);
+                isHittingUi = false;
+                UpdateHoverButton(null);
+                return;
             }
 
             Ray ray = new Ray(origin, forward);
@@ -714,14 +726,23 @@ namespace ShiroMR
         {
             if (currentHoveredButton == newBtn) return;
 
-            // Revert previous hover
-            if (currentHoveredButton != null && _hoveredButtonGraphic != null)
+            // Revert previous hover (buttons of the new interface draw their own hover)
+            var oldKit = currentHoveredButton != null ? currentHoveredButton.GetComponent<ShiroMR.UI.ShiroButton>() : null;
+            if (oldKit != null) oldKit.SetRayHover(false);
+            else if (currentHoveredButton != null && _hoveredButtonGraphic != null)
             {
                 _hoveredButtonGraphic.color = _originalButtonColor;
             }
 
             currentHoveredButton = newBtn;
             _hoveredButtonGraphic = null;
+
+            var newKit = currentHoveredButton != null ? currentHoveredButton.GetComponent<ShiroMR.UI.ShiroButton>() : null;
+            if (newKit != null)
+            {
+                newKit.SetRayHover(true);
+                return;
+            }
 
             // Apply hover visual to new button
             if (currentHoveredButton != null)
@@ -819,6 +840,8 @@ namespace ShiroMR
                 if (currentHoveredButton != null)
                 {
                     _lastPressedButton = currentHoveredButton;
+                    var kit = currentHoveredButton.GetComponent<ShiroMR.UI.ShiroButton>();
+                    if (kit != null) kit.Flash();
                     if (_hoveredButtonGraphic != null)
                     {
                         _hoveredButtonGraphic.color = new Color(0.95f, 0.8f, 0.1f, 1.0f); // Amber Yellow press
