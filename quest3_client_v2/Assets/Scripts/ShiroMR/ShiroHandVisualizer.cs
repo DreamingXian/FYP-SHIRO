@@ -41,6 +41,24 @@ namespace ShiroMR
         public Vector3 LeftWristPosition { get; private set; } = Vector3.zero;
         public Quaternion LeftWristRotation { get; private set; } = Quaternion.identity;
 
+        /// <summary>
+        /// Version 2: the left palm's centre and the direction it faces (out of the palm),
+        /// from the wrist (joint 1), the index base (7) and the little finger base (22),
+        /// joints in the OpenXR order. False while the left hand is not tracked.
+        /// </summary>
+        public bool TryGetLeftPalm(out Vector3 centre, out Vector3 normal)
+        {
+            centre = Vector3.zero;
+            normal = Vector3.zero;
+            if (!IsLeftHandTracked) return false;
+            Vector3 wrist = _leftJointWorld[1], index = _leftJointWorld[7], little = _leftJointWorld[22];
+            Vector3 n = Vector3.Cross(index - wrist, little - wrist);
+            if (n.sqrMagnitude < 1e-8f) return false;
+            centre = (wrist + index + little) / 3f;
+            normal = n.normalized;
+            return true;
+        }
+
         // Feedback passed from ShiroHandSlate for Right & Left Index fingers
         [HideInInspector] public float RightIndexHoverDistance = 999f;
         [HideInInspector] public bool IsRightIndexTouching = false;

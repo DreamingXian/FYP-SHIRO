@@ -6,9 +6,11 @@
 // answered: what happened, to whom, where and when, in words.
 //   - "I'm responding" acknowledges it as this headset (every screen sees it).
 //   - "Show me" folds the card into a small bar low in the view and shows a red
-//     arrow toward the patient, whose tag in the room flashes red; "Open" brings
-//     the card back.
-//   - "Mute" silences the alarm tone of this headset.
+//     arrow toward the patient, whose tag in the room flashes red, or toward their
+//     bed when they have no tag in the room (no position yet); "Open" brings the
+//     card back. Not available when the patient is in another ward.
+//   - "Mute" silences the alarm tone of this headset ("Unmute" turns it back on).
+// The card grows to fit its text; nothing is cut.
 // Answered elsewhere (dashboard, another headset): the card turns green, says who
 // answered, and closes with "OK".
 // The logic of the alerts stays in ShiroAlertManager (version 1); this replaces
@@ -26,11 +28,13 @@ namespace ShiroMR.UI
     {
         public static ShiroAlertCard Instance { get; private set; }
 
-        // Card: within reach (touch) and comfortable for the ray; a little below the eyes
-        private const float W = 360f, H = 272f;          // mm
+        // Card: within reach (touch) and comfortable for the ray; a little below the eyes.
+        // Its height follows its text (LayoutCard); H is the usual one.
+        private const float W = 380f, H = 272f;          // mm
+        private const float Pad = 20f, TagsW = 120f;
         private const float CardDistance = 0.55f;        // m ahead
         private const float CardBelow = 0.10f;           // m below eye height
-        private const float PillW = 270f, PillH = 56f;
+        private const float PillW = 300f, PillH = 56f;
         private const float PillDistance = 0.55f;
         private const float PillBelow = 0.27f;
         private const float FollowAngle = 28f;           // degrees off the view before it moves
@@ -48,7 +52,7 @@ namespace ShiroMR.UI
         // Card
         private Canvas _card;
         private Image _band, _bandSquare;
-        private TextMeshProUGUI _title, _count, _patient, _place, _details, _state;
+        private TextMeshProUGUI _title, _tags, _patient, _place, _details, _state;
         private ShiroButton _respond, _ok, _showMe, _mute;
         // Bar ("Show me")
         private Canvas _bar;
@@ -118,7 +122,13 @@ namespace ShiroMR.UI
             if (_barDot != null) _barDot.color = pending ? (on ? ShiroTheme.Alert : ShiroTheme.AlertDark) : ShiroTheme.Good;
 
             UpdateArrow(cur);
+
+            // Once a second: "… s ago", and whether there is a tag or bed to show yet
+            _refreshIn -= Time.deltaTime;
+            if (_refreshIn <= 0f) { _refreshIn = 1f; Refresh(); }
         }
+
+        private float _refreshIn = 1f;
 
         private void TrySubscribe()
         {
@@ -160,15 +170,51 @@ namespace ShiroMR.UI
 
         // ----- Content -----
 
+        /// <summary>What happened, as the card's title.</summary>
         private static string Words(IncidentAlert inc)
         {
             switch (inc.incident_category)
             {
-                case "FALL_ACCIDENT": return "Fall";
+                case "FALL_ACCIDENT": return "Fall detected";
                 case "CRITICAL_VITALS": return "Critical vitals";
                 case "GEOFENCE_BREACH": return inc.geofence_kind == "AT_DOOR" ? "At the door" : "Left the ward";
                 default: return "Alert";
             }
+        }
+
+        /// <summary>The ward this headset shows, when the alert is for it.</summary>
+        private static WardConfig ShownWard(IncidentAlert inc)
+        {
+            var ward = ShiroMRManager.Instance != null ? ShiroMRManager.Instance.CachedWardConfig : null;
+            return ward != null && !string.IsNullOrEmpty(inc.ward_id) && ward.ward_id == inc.ward_id ? ward : null;
+        }
+
+        private static WardBed FindBed(IncidentAlert inc)
+        {
+            var ward = ShownWard(inc);
+            if (ward == null || ward.beds == null || string.IsNullOrEmpty(inc.bed_id)) return null;
+            foreach (var b in ward.beds) if (b != null && b.bed_id == inc.bed_id) return b;
+            return null;
+        }
+
+        /// <summary>
+        /// Where "Show me" points: the patient's tag in the room, else their bed (the
+        /// ward is aligned to the room and the bed is in it). False: nowhere to point.
+        /// </summary>
+        private static bool TryFindTarget(IncidentAlert inc, out Vector3 pos, out bool isBed)
+        {
+            pos = Vector3.zero;
+            isBed = false;
+            if (inc == null) return false;
+            var am = ShiroAlertManager.Instance;
+            var holo = am != null ? am.FindHologram(inc) : null;
+            if (holo != null) { pos = holo.transform.position + Vector3.up * 1.2f; return true; }
+            var bed = FindBed(inc);
+            var space = WardSpatialManager.Instance;
+            if (bed == null || space == null || !space.IsAligned) return false;
+            pos = space.GetBedHeadboardWorldPosition(bed);
+            isBed = pos != Vector3.zero;
+            return isBed;
         }
 
         private static string When(string timestamp)
@@ -185,11 +231,8 @@ namespace ShiroMR.UI
         /// <summary>The bed's name in the ward this headset shows ("Bed 2"), else its ID.</summary>
         private static string BedName(IncidentAlert inc)
         {
-            var ward = ShiroMRManager.Instance != null ? ShiroMRManager.Instance.CachedWardConfig : null;
-            if (ward != null && ward.beds != null && ward.ward_id == inc.ward_id)
-                foreach (var b in ward.beds)
-                    if (b != null && b.bed_id == inc.bed_id && !string.IsNullOrEmpty(b.bed_code)) return b.bed_code;
-            return inc.bed_id;
+            var b = FindBed(inc);
+            return b != null && !string.IsNullOrEmpty(b.bed_code) ? b.bed_code : inc.bed_id;
         }
 
         private void Fill(ShiroAlertManager.HeadsetAlert alert, int total)
@@ -199,14 +242,21 @@ namespace ShiroMR.UI
             bool elsewhere = alert.status == ShiroAlertManager.AlertStatus.AcknowledgedElsewhere;
             bool sending = alert.status == ShiroAlertManager.AlertStatus.Sending;
             var am = ShiroAlertManager.Instance;
-            bool here = am != null && am.FindHologram(inc) != null;
+            bool canShow = TryFindTarget(inc, out _, out bool toBed);
+            bool tagHere = canShow && !toBed;
 
+            // Title: what happened; the band's right side: test, answered, how many
             string what = Words(inc);
-            _title.text = (inc.IsSimulated ? "Test alarm · " : "") + (elsewhere ? $"Answered: {what}" : what);
-            _count.text = total > 1 ? $"1 of {total}" : "";
+            _title.text = what;
+            string tags = inc.IsSimulated ? "Test" : "";
+            if (elsewhere) tags += (tags.Length > 0 ? " · " : "") + "Answered";
+            if (total > 1) tags += (tags.Length > 0 ? " · " : "") + $"1 of {total}";
+            _tags.text = tags;
             _patient.text = string.IsNullOrEmpty(inc.patient_name) ? "Unknown patient" : inc.patient_name;
 
-            string ward = string.IsNullOrEmpty(inc.ward_id) ? "Ward not known" : inc.ward_id;
+            var shown = ShownWard(inc);
+            string ward = shown != null && !string.IsNullOrEmpty(shown.room_title) ? shown.room_title
+                : string.IsNullOrEmpty(inc.ward_id) ? "Ward not known" : inc.ward_id;
             string bed = string.IsNullOrEmpty(inc.bed_id) ? "" : $" · {BedName(inc)}";
             string when = When(inc.trigger_timestamp);
             _place.text = $"{ward}{bed}{(when.Length > 0 ? " · " + when : "")}";
@@ -218,7 +268,12 @@ namespace ShiroMR.UI
                 if (inc.spo2 > 0) vitals += (vitals.Length > 0 ? " · " : "") + $"SpO2 about {Mathf.RoundToInt(inc.spo2)} %";
                 if (vitals.Length > 0) vitals += "\n";
             }
-            _details.text = vitals + (here ? "Their tag in the room is flashing red." : "Not in the ward this headset shows.");
+            string where;
+            if (tagHere) where = "Their tag in the room is flashing red.";
+            else if (toBed) where = "No live position: Show me points to their bed.";
+            else if (shown == null && !string.IsNullOrEmpty(inc.ward_id)) where = "In another ward than the one this headset shows.";
+            else where = "No position in this room yet.";
+            _details.text = vitals + where;
 
             if (elsewhere)
             {
@@ -242,13 +297,44 @@ namespace ShiroMR.UI
             _ok.gameObject.SetActive(elsewhere);
             _respond.SetText(sending ? "Sending…" : "I'm responding");
             _respond.SetInteractable(!sending);
-            _showMe.SetInteractable(here);
-            _mute.SetText(am != null && am.IsMuted ? "Sound on" : "Mute");
+            _showMe.SetInteractable(canShow);
+            _mute.SetText(am != null && am.IsMuted ? "Unmute" : "Mute");
 
-            _barText.text = $"{what} · {_patient.text}";
+            _barText.text = $"<b>{what}</b>\n{_patient.text}";
             Color band = elsewhere ? ShiroTheme.Good : ShiroTheme.Alert;
             _band.color = band;
             _bandSquare.color = band;
+            LayoutCard();
+        }
+
+        /// <summary>
+        /// Stacks the card's lines from the top, each as tall as its text needs, and the
+        /// buttons below them: the card grows rather than cutting a line.
+        /// </summary>
+        private void LayoutCard()
+        {
+            float w = W - 2 * Pad;
+            float y = 62f;
+            ShiroUIKit.Place(_patient, Pad, y, w, 38); y += 40f;
+            ShiroUIKit.Place(_place, Pad, y, w, 22); y += 26f;
+            y = Stack(_details, y, w) + 4f;
+            y = Stack(_state, y, w) + 10f;
+            ShiroUIKit.Place(_respond, Pad, y, 150, 44);
+            ShiroUIKit.Place(_ok, Pad, y, 150, 44);
+            ShiroUIKit.Place(_showMe, Pad + 162, y, 90, 44);
+            ShiroUIKit.Place(_mute, Pad + 264, y, 76, 44);
+            float h = y + 44f + 18f;
+            var rt = (RectTransform)_card.transform;
+            if (!Mathf.Approximately(rt.sizeDelta.y, h)) rt.sizeDelta = new Vector2(W, h);
+        }
+
+        /// <summary>Places a wrapping label at y, as tall as its text; returns the y below it.</summary>
+        private static float Stack(TextMeshProUGUI label, float y, float w)
+        {
+            if (string.IsNullOrEmpty(label.text)) { ShiroUIKit.Place(label, Pad, y, w, 0); return y - 4f; }
+            float h = Mathf.Ceil(label.GetPreferredValues(label.text, w, 0f).y) + 2f;
+            ShiroUIKit.Place(label, Pad, y, w, h);
+            return y + h;
         }
 
         // ----- Actions -----
@@ -324,16 +410,14 @@ namespace ShiroMR.UI
             }
         }
 
-        /// <summary>"Show me": a red arrow at the edge of the view, toward the patient's tag.</summary>
+        /// <summary>"Show me": a red arrow at the edge of the view, toward the patient's tag (or bed).</summary>
         private void UpdateArrow(ShiroAlertManager.HeadsetAlert cur)
         {
             if (_arrow == null) return;
-            PatientHologram holo = null;
-            if (_mode == Mode.Bar && cur != null && ShiroAlertManager.Instance != null)
-                holo = ShiroAlertManager.Instance.FindHologram(cur.incident);
-            if (holo == null) { _arrow.gameObject.SetActive(false); return; }
+            Vector3 target = Vector3.zero;
+            bool found = _mode == Mode.Bar && cur != null && TryFindTarget(cur.incident, out target, out _);
+            if (!found) { _arrow.gameObject.SetActive(false); return; }
 
-            Vector3 target = holo.transform.position + Vector3.up * 1.2f;
             Vector3 toTarget = target - _head.position;
             if (Vector3.Angle(_head.forward, toTarget) < LookedAtAngle) { _arrow.gameObject.SetActive(false); return; }
 
@@ -362,28 +446,23 @@ namespace ShiroMR.UI
             _bandSquare = ShiroUIKit.Panel(root, "BandLower", ShiroTheme.Alert, 0f);
             ShiroUIKit.Place(_bandSquare, 0, 30, W, 22);
 
-            _title = ShiroUIKit.Label(root, "Title", "", 22f, ShiroTheme.TextOnColour, FontStyles.Bold);
-            ShiroUIKit.Place(_title, 20, 10, 240, 32);
-            _count = ShiroUIKit.Label(root, "Count", "", 14f, ShiroTheme.TextOnColour, FontStyles.Normal, TextAlignmentOptions.Right);
-            ShiroUIKit.Place(_count, W - 110, 14, 90, 24);
+            // Band: what happened (left); test, answered, how many (right)
+            _title = ShiroUIKit.Label(root, "Title", "", 22f, ShiroTheme.TextOnColour, FontStyles.Bold).Fit(16f);
+            ShiroUIKit.Place(_title, Pad, 10, W - 2 * Pad - TagsW - 8, 32);
+            _tags = ShiroUIKit.Label(root, "Tags", "", 14f, ShiroTheme.TextOnColour, FontStyles.Normal, TextAlignmentOptions.Right).Fit(10f);
+            ShiroUIKit.Place(_tags, W - Pad - TagsW, 14, TagsW, 24);
 
-            _patient = ShiroUIKit.Label(root, "Patient", "", 28f, ShiroTheme.Text, FontStyles.Bold);
-            ShiroUIKit.Place(_patient, 20, 62, W - 40, 38);
-            _place = ShiroUIKit.Label(root, "Place", "", 15f, ShiroTheme.TextDim);
-            ShiroUIKit.Place(_place, 20, 102, W - 40, 22);
+            // Who, where and when, details, state: placed by LayoutCard
+            _patient = ShiroUIKit.Label(root, "Patient", "", 28f, ShiroTheme.Text, FontStyles.Bold).Fit(18f);
+            _place = ShiroUIKit.Label(root, "Place", "", 15f, ShiroTheme.TextDim).Fit(11f);
             _details = ShiroUIKit.Label(root, "Details", "", 14f, ShiroTheme.Text, FontStyles.Normal, TextAlignmentOptions.TopLeft, true);
-            ShiroUIKit.Place(_details, 20, 128, W - 40, 36);
             _state = ShiroUIKit.Label(root, "State", "", 14f, ShiroTheme.WarnText, FontStyles.Bold, TextAlignmentOptions.TopLeft, true);
-            ShiroUIKit.Place(_state, 20, 166, W - 40, 36);
 
-            _respond = ShiroUIKit.Button(root, "Respond", "I'm responding", ButtonKind.Danger, Respond, 17f);
-            ShiroUIKit.Place(_respond, 20, 212, 170, 44);
-            _ok = ShiroUIKit.Button(root, "Ok", "OK, close", ButtonKind.Primary, CloseAnswered, 17f);
-            ShiroUIKit.Place(_ok, 20, 212, 170, 44);
+            _respond = ShiroUIKit.Button(root, "Respond", "I'm responding", ButtonKind.Danger, Respond, 16f);
+            _ok = ShiroUIKit.Button(root, "Ok", "OK, close", ButtonKind.Primary, CloseAnswered, 16f);
             _showMe = ShiroUIKit.Button(root, "ShowMe", "Show me", ButtonKind.Secondary, ShowMe, 15f);
-            ShiroUIKit.Place(_showMe, 202, 212, 80, 44);
             _mute = ShiroUIKit.Button(root, "Mute", "Mute", ButtonKind.Quiet, ToggleMute, 14f);
-            ShiroUIKit.Place(_mute, 294, 212, 46, 44);
+            LayoutCard();
 
             // The bar shown after "Show me"
             _bar = ShiroUIKit.WorldCanvas("AlertBar", transform, new Vector2(PillW, PillH));
@@ -391,8 +470,11 @@ namespace ShiroMR.UI
             ShiroUIKit.Fill(ShiroUIKit.Panel(bar, "Background", ShiroTheme.Glass, PillH / 2f));
             _barDot = ShiroUIKit.Dot(bar, "Dot", ShiroTheme.Alert);
             ShiroUIKit.Place(_barDot, 18, 20, 16, 16);
-            _barText = ShiroUIKit.Label(bar, "Text", "", 15f, ShiroTheme.Text, FontStyles.Bold);
-            ShiroUIKit.Place(_barText, 44, 8, 150, 40);
+            // Two lines: what happened, who
+            _barText = ShiroUIKit.Label(bar, "Text", "", 14f, ShiroTheme.Text).Fit(11f);
+            _barText.richText = true;
+            _barText.lineSpacing = -8f;
+            ShiroUIKit.Place(_barText, 42, 7, PillW - 42 - 82, 42);
             var open = ShiroUIKit.Button(bar, "Open", "Open", ButtonKind.Primary, Open, 15f);
             ShiroUIKit.Place(open, PillW - 74, 8, 62, 40);
 

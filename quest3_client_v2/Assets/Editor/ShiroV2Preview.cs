@@ -1,15 +1,19 @@
 // =============================================================================
 // Project SHIRO - headset app version 2: preview images of the new interface
 //
-// SHIRO → v2: Save UI preview images. Builds the new parts with sample data in an
-// empty scene and saves a PNG of each (Builds/ui_preview/), over a light grey
-// background like a ward wall seen through the passthrough. For checking the look
-// without a headset; the headset is still the real test.
+// SHIRO → v2: Save UI preview images. Builds the new parts with sample data (the
+// longest wording included: test alarms, long names, two-line states) in a
+// temporary scene and saves a PNG of each (Builds/ui_preview/), over a light grey
+// background like a ward wall seen through the passthrough. Then it lists every
+// text that did not fit its box ("Text cut"), or says none was cut.
+// Safe to run in the open editor (not in Play mode): the open scene is kept.
+// For checking the look without a headset; the headset is still the real test.
 // Batch mode (not -nographics):
 //   Unity.exe -batchmode -quit -projectPath <quest3_client_v2>
 //     -executeMethod ShiroMR.EditorTools.ShiroV2Preview.SaveAll
 // =============================================================================
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using ShiroMR.UI;
@@ -17,69 +21,155 @@ using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace ShiroMR.EditorTools
 {
     public static class ShiroV2Preview
     {
         private const BindingFlags Any = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+        private const int PreviewLayer = 31;   // only the shot canvas is on it
         private static readonly Color Wall = new Color32(214, 208, 198, 255);
+        private static readonly List<string> Cut = new List<string>();
 
         [MenuItem("SHIRO/v2: Save UI preview images")]
         public static void SaveAll()
         {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                Debug.LogWarning("[SHIRO v2] Stop Play mode first, then save the previews.");
+                return;
+            }
             string dir = Path.GetFullPath("Builds/ui_preview");
             Directory.CreateDirectory(dir);
-            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            Cut.Clear();
 
-            // Alert card: a fall waiting for a response
+            // A temporary scene next to the open one (closed again at the end). With only an
+            // untitled scene open (batch mode), Unity cannot add one: that scene is replaced.
+            Scene before = SceneManager.GetActiveScene();
+            bool additive = before.IsValid() && !string.IsNullOrEmpty(before.path);
+            Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, additive ? NewSceneMode.Additive : NewSceneMode.Single);
+            SceneManager.SetActiveScene(scene);
+            try
+            {
+                ShootAlerts(dir);
+                ShootTags(dir);
+            }
+            finally
+            {
+                if (additive)
+                {
+                    if (before.IsValid()) SceneManager.SetActiveScene(before);
+                    EditorSceneManager.CloseScene(scene, true);
+                }
+            }
+
+            Debug.Log($"[SHIRO v2] UI previews saved in {dir}");
+            if (Cut.Count == 0) Debug.Log("[SHIRO v2] Text check: no text cut in any preview.");
+            else foreach (var c in Cut) Debug.LogWarning($"[SHIRO v2] Text cut: {c}");
+        }
+
+        private static void ShootAlerts(string dir)
+        {
             var card = new GameObject("PreviewAlert").AddComponent<ShiroAlertCard>();
             Call(card, "Build");
-            var pending = new ShiroAlertManager.HeadsetAlert
+            Transform cardCanvas = Child(card.transform, "AlertCard");
+
+            // Test alarms, as the dashboard's Test tools send them (the longest titles)
+            var fall = Alert("INC-1", "FALL_ACCIDENT", null, "Siti Nurhaliza", true, -40);
+            Call(card, "Fill", fall, 2);
+            Get<ShiroButton>(card, "_mute").SetText("Unmute");   // muted: the longest label
+            Shoot(cardCanvas, Path.Combine(dir, "alert_test_fall_muted.png"));
+
+            var vitals = Alert("INC-2", "CRITICAL_VITALS", null, "Muhammad Hafiz bin Abdullah", true, -75);
+            vitals.incident.heart_rate = 142;
+            vitals.incident.spo2 = 88;
+            Call(card, "Fill", vitals, 3);
+            Shoot(cardCanvas, Path.Combine(dir, "alert_test_vitals.png"));
+
+            var left = Alert("INC-3", "GEOFENCE_BREACH", "LEFT_WARD", "Tan Ah Kow", true, -600);
+            Call(card, "Fill", left, 1);
+            Shoot(cardCanvas, Path.Combine(dir, "alert_test_left_ward.png"));
+
+            // Answered on the dashboard (the longest state line)
+            var answered = Alert("INC-4", "GEOFENCE_BREACH", "AT_DOOR", "Siti Nurhaliza binti Ahmad", true, -30);
+            answered.status = ShiroAlertManager.AlertStatus.AcknowledgedElsewhere;
+            answered.acknowledgedBy = "Nurse Aisyah Binti Kamarudin (dashboard)";
+            answered.acknowledgedAt = "10:42";
+            Call(card, "Fill", answered, 3);
+            Shoot(cardCanvas, Path.Combine(dir, "alert_answered.png"));
+
+            Call(card, "Fill", vitals, 1);
+            Shoot(Child(card.transform, "AlertBar"), Path.Combine(dir, "alert_bar.png"), true);
+        }
+
+        private static ShiroAlertManager.HeadsetAlert Alert(string id, string category, string geofence, string name, bool test, int secondsAgo)
+        {
+            return new ShiroAlertManager.HeadsetAlert
             {
                 incident = new IncidentAlert
                 {
-                    incident_id = "INC-1", patient_id = "P-002", patient_name = "Siti Nurhaliza", ward_id = "WARD-001",
-                    bed_id = "BED-001-02", incident_category = "FALL_ACCIDENT",
-                    trigger_timestamp = DateTime.UtcNow.AddSeconds(-40).ToString("o")
+                    incident_id = id, patient_id = "P-" + id, patient_name = name, ward_id = "WARD-001",
+                    bed_id = "BED-001-02", incident_category = category, geofence_kind = geofence,
+                    alert_message = test ? "[SIMULATION] preview" : "preview",
+                    trigger_timestamp = DateTime.UtcNow.AddSeconds(secondsAgo).ToString("o")
                 }
             };
-            Call(card, "Fill", pending, 2);
-            Shoot(Child(card.transform, "AlertCard"), Path.Combine(dir, "alert_card.png"));
+        }
 
-            // Answered on the dashboard
-            pending.status = ShiroAlertManager.AlertStatus.AcknowledgedElsewhere;
-            pending.acknowledgedBy = "Nurse Aisyah (dashboard)";
-            pending.acknowledgedAt = "10:42";
-            Call(card, "Fill", pending, 1);
-            Shoot(Child(card.transform, "AlertCard"), Path.Combine(dir, "alert_answered.png"));
-            Shoot(Child(card.transform, "AlertBar"), Path.Combine(dir, "alert_bar.png"), true);
-
-            // Patient tag: live value, then measuring, then the details
+        private static void ShootTags(string dir)
+        {
             var holo = new GameObject("PreviewTag").AddComponent<PatientHologram>();
-            holo.fullName = "Tan Ah Kow";
-            holo.assignedBed = "BED-001-01";
+            holo.fullName = "Siti Nurhaliza binti Ahmad";
+            holo.assignedBed = "BED-001-02";
             Call(holo, "BuildHologramVisuals");
             Child(holo.transform, "FloorFootprintRing").gameObject.SetActive(false);   // on the floor in the room, not on the tag
             var tag = Child(holo.transform, "PatientTag");
             tag.localScale = Vector3.one * 0.001f;
+
+            // Live value
+            holo.UpdateTelemetryState(new TelemetryData { touch = 1, active = true, battery = 80 });
             holo.UpdateTelemetry(72, 97, 80);
-            Call(holo, "RefreshUiText");
+            Refresh(holo);
             Shoot(tag, Path.Combine(dir, "tag_live.png"));
 
+            // Measuring, battery low
             holo.UpdateTelemetryState(new TelemetryData { touch = 1, active = false, battery = 15 });
             holo.UpdateTelemetry(0, 0, 15);
-            Call(holo, "RefreshUiText");
+            Refresh(holo);
             Shoot(tag, Path.Combine(dir, "tag_measuring_battery_low.png"));
 
+            // Resting between readings: the last value, two lines
+            holo.UpdateTelemetry(68, 97, 80);
+            holo.UpdateTelemetryState(new TelemetryData { touch = 0, active = false, battery = 80 });
+            holo.UpdateTelemetry(0, 0, 80);
+            Refresh(holo);
+            Shoot(tag, Path.Combine(dir, "tag_resting.png"));
+
+            // Not heard: two lines
+            holo.NoteSignal(false);
+            Refresh(holo);
+            Shoot(tag, Path.Combine(dir, "tag_no_signal.png"));
+            holo.NoteSignal(true);
+
+            // Details open
+            holo.UpdateTelemetryState(new TelemetryData { touch = 1, active = true, battery = 100, charging = true });
+            holo.UpdateTelemetry(72, 97, 100);
             Call(holo, "ToggleDetails");
+            Refresh(holo);
             Shoot(tag, Path.Combine(dir, "tag_details.png"));
 
-            holo.SetAlarm(true, "FALL");
+            // An alert waiting (the longest alert line)
+            holo.SetAlarm(true, "CRITICAL VITALS");
             Call(holo, "UpdateAlarmVisuals");
+            Call(holo, "FitHeartLine");
             Shoot(tag, Path.Combine(dir, "tag_alarm.png"));
+        }
 
-            Debug.Log($"[SHIRO v2] UI previews saved in {dir}");
+        private static void Refresh(PatientHologram holo)
+        {
+            Call(holo, "RefreshUiText");
+            Call(holo, "FitHeartLine");
         }
 
         private static object Call(object target, string method, params object[] args)
@@ -89,28 +179,43 @@ namespace ShiroMR.EditorTools
             return m.Invoke(target, args);
         }
 
+        private static T Get<T>(object target, string field) where T : class
+        {
+            var f = target.GetType().GetField(field, Any);
+            if (f == null) throw new MissingFieldException(target.GetType().Name, field);
+            return f.GetValue(target) as T;
+        }
+
         private static Transform Child(Transform root, string name)
         {
             foreach (var t in root.GetComponentsInChildren<Transform>(true)) if (t.name == name) return t;
             throw new Exception($"No child {name} under {root.name}");
         }
 
-        /// <summary>Renders one canvas (4 px per mm) with an orthographic camera into a PNG.</summary>
+        /// <summary>Renders one canvas (4 px per mm) with an orthographic camera into a PNG, and checks its text.</summary>
         private static void Shoot(Transform canvasTransform, string file, bool activate = false)
         {
             var go = canvasTransform.gameObject;
+            bool wasActive = go.activeSelf;
             if (activate) go.SetActive(true);
             // Buttons draw their colours in LateUpdate, which edit mode does not run
             foreach (var b in go.GetComponentsInChildren<ShiroButton>(true)) Call(b, "ApplyLook");
-            // Only this canvas is visible
-            var others = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
-            var hidden = new System.Collections.Generic.List<GameObject>();
-            foreach (var c in others) if (c.gameObject != go && c.renderMode == RenderMode.WorldSpace) { c.gameObject.SetActive(false); hidden.Add(c.gameObject); }
+            int oldLayer = go.layer;
+            foreach (var t in go.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = PreviewLayer;
 
-            canvasTransform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            Vector3 oldPos = canvasTransform.position;
+            Quaternion oldRot = canvasTransform.rotation;
+            canvasTransform.SetPositionAndRotation(new Vector3(0f, -500f, 0f), Quaternion.identity);   // away from anything in the open scene
             var rt = (RectTransform)canvasTransform;
             Canvas.ForceUpdateCanvases();
             foreach (var t in go.GetComponentsInChildren<TMP_Text>(true)) t.ForceMeshUpdate();
+
+            // Text that did not fit its box
+            foreach (var t in go.GetComponentsInChildren<TMP_Text>(false))
+            {
+                string c = ShiroTextCheck.Check(t);
+                if (c != null) Cut.Add($"{Path.GetFileName(file)}: {c}");
+            }
 
             Vector3[] corners = new Vector3[4];
             rt.GetWorldCorners(corners);
@@ -128,6 +233,7 @@ namespace ShiroMR.EditorTools
             cam.aspect = (float)pxW / pxH;
             cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = Wall;
+            cam.cullingMask = 1 << PreviewLayer;
             cam.nearClipPlane = 0.01f;
             cam.farClipPlane = 5f;
             camGo.transform.SetPositionAndRotation(centre - Vector3.forward * 1f, Quaternion.identity);
@@ -147,8 +253,9 @@ namespace ShiroMR.EditorTools
             UnityEngine.Object.DestroyImmediate(rtex);
             UnityEngine.Object.DestroyImmediate(camGo);
             UnityEngine.Object.DestroyImmediate(img);
-            foreach (var h in hidden) h.SetActive(true);
-            if (activate) go.SetActive(false);
+            canvasTransform.SetPositionAndRotation(oldPos, oldRot);
+            foreach (var t in go.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = oldLayer;
+            if (activate) go.SetActive(wasActive);
         }
     }
 }

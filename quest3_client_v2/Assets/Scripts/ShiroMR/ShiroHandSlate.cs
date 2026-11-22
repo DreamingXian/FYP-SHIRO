@@ -119,6 +119,16 @@ namespace ShiroMR
         private Color _cachedOriginalButtonColor = Color.white;
         private Image _cachedButtonImage = null;
         private float _touchDebounceTimer = 0f;
+        // Version 2: a click needs the finger to come back out first (version 1 clicked again
+        // every 0.35 s while the fingertip stayed on a button)
+        private bool _touchArmed = true;
+        private float _touchLostSince = -1f;
+        private const float TouchRearm = 0.015f;   // m past the click distance: the finger is back out
+        // Version 2: Meta's menu gesture on the left hand (palm toward you, pinch)
+        private OVRPlugin.HandState _menuHandState;
+        private bool _wasMenuPressed;
+        private bool _wasLeftPinch;
+        private float _lastToggleAt = -10f;
         private Vector3 _lastRightFingerPos = Vector3.zero;
         private bool _isRightFingerValid = false;
         private Vector3 _lastLeftFingerPos = Vector3.zero;
@@ -288,9 +298,33 @@ namespace ShiroMR
             }
             catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleReopenInputs", swallowed); }
 
-            // 2. Hands: Meta's own menu gesture (left palm up, index pinch) arrives as the
-            //    Start button above. Version 1 also toggled on any left index pinch, which
-            //    opened or closed the menu by accident; version 2 does not.
+            // 2. Hands: Meta's menu gesture (left palm toward you, index pinch). Version 1
+            //    toggled on any left index pinch, which opened or closed the menu by accident.
+            //    The project sets OVR_DISABLE_HAND_PINCH_BUTTON_MAPPING (Meta's recommended
+            //    setting), so OVRInput does not report this gesture as Start: it is read from
+            //    the hand state here, as OVRInput would (MenuPressed). In case the runtime
+            //    does not report it (e.g. over Link), a pinch also counts while the system
+            //    gesture is in progress or the palm faces the headset.
+            try
+            {
+                if (OVRPlugin.GetHandState(OVRPlugin.Step.Render, OVRPlugin.Hand.HandLeft, ref _menuHandState) &&
+                    (_menuHandState.Status & OVRPlugin.HandStatus.HandTracked) != 0)
+                {
+                    bool menu = (_menuHandState.Status & OVRPlugin.HandStatus.MenuPressed) != 0;
+                    bool gesture = (_menuHandState.Status & OVRPlugin.HandStatus.SystemGestureInProgress) != 0;
+                    bool pinch = (_menuHandState.Pinches & OVRPlugin.HandFingerPinch.Index) != 0;
+                    if (menu && !_wasMenuPressed) toggleRequested = true;
+                    if (pinch && !_wasLeftPinch && (gesture || LeftPalmFacesHead())) toggleRequested = true;
+                    _wasMenuPressed = menu;
+                    _wasLeftPinch = pinch;
+                }
+                else
+                {
+                    _wasMenuPressed = false;
+                    _wasLeftPinch = false;
+                }
+            }
+            catch (Exception swallowed) { ShiroLog.Caught("ShiroHandSlate.HandleReopenInputs (hand)", swallowed); }
 
             // 3. Unity Editor Keyboard Shortcuts ('M', 'C', 'H')
 #if ENABLE_INPUT_SYSTEM
@@ -305,10 +339,23 @@ namespace ShiroMR
             }
 #endif
 
-            if (toggleRequested)
+            // One gesture can be seen twice (the menu press and the pinch): one toggle
+            if (toggleRequested && Time.unscaledTime - _lastToggleAt > 0.6f)
             {
+                _lastToggleAt = Time.unscaledTime;
                 ToggleSlateVisibility();
             }
+        }
+
+        /// <summary>The left palm faces the headset (from the hand's joints).</summary>
+        private bool LeftPalmFacesHead()
+        {
+            var hands = ShiroHandVisualizer.Instance;
+            if (hands == null || _mainCam == null) return false;
+            if (!hands.TryGetLeftPalm(out Vector3 centre, out Vector3 normal)) return false;
+            Vector3 toHead = _mainCam.transform.position - centre;
+            if (toHead.magnitude > 0.8f) return false;
+            return Vector3.Dot(normal, toHead.normalized) > 0.5f;
         }
 
         /// <summary>
@@ -605,42 +652,52 @@ namespace ShiroMR
             if (!isFingerValid)
             {
                 ResetButtonHover();
+                // A moment of lost tracking is not "the finger came back out"; lost for longer is
+                if (_touchLostSince < 0f) _touchLostSince = Time.unscaledTime;
+                else if (Time.unscaledTime - _touchLostSince > 0.5f) _touchArmed = false;
+                return;
+            }
+            _touchLostSince = -1f;
+
+            // The nearest button (or the wrist badge): a click needs the finger to have been
+            // clearly away from every button since the last click
+            bool slateOpen = isSlateVisible && _slateRoot != null && _slateRoot.activeSelf;
+            Button closestBtn = null;
+            float closestDist = float.MaxValue;
+            if (slateOpen)
+            {
+                foreach (var btn in _registeredButtons)
+                {
+                    if (btn == null || !btn.gameObject.activeInHierarchy || !btn.interactable) continue;
+
+                    Vector3 btnWorldPos = btn.transform.position;
+                    float dist = Vector3.Distance(activeFingerPos, btnWorldPos);
+
+                    if (dist < closestDist)
+                    {
+                        closestDist = dist;
+                        closestBtn = btn;
+                    }
+                }
+            }
+            float distToBadge = float.MaxValue;
+            if (!isSlateVisible && _wristBadgeBtn != null && _wristBadgeBtn.gameObject.activeInHierarchy)
+                distToBadge = Vector3.Distance(activeFingerPos, _wristBadgeBtn.transform.position);
+            if (Mathf.Min(closestDist, distToBadge) > touchClickDistance + TouchRearm) _touchArmed = true;
+
+            // 1. Check Mini Wrist Badge Touch (when collapsed)
+            if (distToBadge <= touchClickDistance && _touchArmed && _touchDebounceTimer <= 0f)
+            {
+                _touchDebounceTimer = 0.25f;
+                _touchArmed = false;
+                WristBadgeTapped();
                 return;
             }
 
-            // 1. Check Mini Wrist Badge Touch (when collapsed)
-            if (!isSlateVisible && _wristBadgeBtn != null && _wristBadgeBtn.gameObject.activeInHierarchy)
-            {
-                float distToBadge = Vector3.Distance(activeFingerPos, _wristBadgeBtn.transform.position);
-                if (distToBadge <= touchClickDistance && _touchDebounceTimer <= 0f)
-                {
-                    _touchDebounceTimer = 0.35f;
-                    WristBadgeTapped();
-                    return;
-                }
-            }
-
-            if (!isSlateVisible || _slateRoot == null || !_slateRoot.activeSelf)
+            if (!slateOpen)
             {
                 ResetButtonHover();
                 return;
-            }
-
-            Button closestBtn = null;
-            float closestDist = float.MaxValue;
-
-            foreach (var btn in _registeredButtons)
-            {
-                if (btn == null || !btn.gameObject.activeInHierarchy || !btn.interactable) continue;
-
-                Vector3 btnWorldPos = btn.transform.position;
-                float dist = Vector3.Distance(activeFingerPos, btnWorldPos);
-
-                if (dist < closestDist)
-                {
-                    closestDist = dist;
-                    closestBtn = btn;
-                }
             }
 
             // Hover feedback
@@ -653,10 +710,11 @@ namespace ShiroMR
                     HighlightButton(closestBtn, true);
                 }
 
-                // Click Trigger (Physical touch contact)
-                if (closestDist <= touchClickDistance && _touchDebounceTimer <= 0f)
+                // Click Trigger (Physical touch contact): once, then the finger must come back out
+                if (closestDist <= touchClickDistance && _touchArmed && _touchDebounceTimer <= 0f)
                 {
-                    _touchDebounceTimer = 0.35f;
+                    _touchDebounceTimer = 0.25f;
+                    _touchArmed = false;
                     TriggerButtonClick(closestBtn);
                 }
             }
@@ -1623,7 +1681,7 @@ namespace ShiroMR
 
             // The APK has no other way out than the Meta menu. Quitting stops alerts on this
             // headset, so it asks first, and "Quit now" sits elsewhere: a finger resting on
-            // this button (it repeats every 0.35 s) cannot confirm by itself.
+            // this button cannot confirm by itself.
             Button quitBtn = CreateButton(p.transform, "QuitAppBtn", "✖ Quit app", new Vector2(300f, 45f), new Color(0.45f, 0.15f, 0.18f), OpenQuitConfirm);
             quitBtn.transform.localPosition = new Vector3(370f, -150f, 0);
 

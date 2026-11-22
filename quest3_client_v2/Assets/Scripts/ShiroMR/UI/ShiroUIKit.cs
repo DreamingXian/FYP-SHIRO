@@ -203,6 +203,19 @@ namespace ShiroMR.UI
             return t;
         }
 
+        /// <summary>
+        /// Lets a label shrink (down to minSize) when its text does not fit, before anything
+        /// is cut ("…" only below minSize). For labels whose text is not known in advance:
+        /// names, titles, button labels.
+        /// </summary>
+        public static TextMeshProUGUI Fit(this TextMeshProUGUI t, float minSize)
+        {
+            t.enableAutoSizing = true;
+            t.fontSizeMax = t.fontSize;
+            t.fontSizeMin = Mathf.Min(minSize, t.fontSize);
+            return t;
+        }
+
         /// <summary>A filled disc of diameter d (mm), e.g. a status dot.</summary>
         public static Image Dot(Transform parent, string name, Color color)
         {
@@ -239,7 +252,7 @@ namespace ShiroMR.UI
             if (!string.IsNullOrEmpty(label) || kind != ButtonKind.Surface)
             {
                 text = Label(go.transform, "Label", label, textSize, kind == ButtonKind.Quiet ? ShiroTheme.OkText : ShiroTheme.TextOnColour,
-                    FontStyles.Bold, TextAlignmentOptions.Center);
+                    FontStyles.Bold, TextAlignmentOptions.Center).Fit(textSize * 0.75f);
                 Fill(text, 4f);
             }
 

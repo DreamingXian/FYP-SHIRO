@@ -369,6 +369,7 @@ namespace ShiroMR
         {
             UpdateLinkedLayout();
             KeepTagSizeToTheEye();
+            FitHeartLine();   // after Update wrote the heart line (or the alert over it)
             if (_hudContainer == null || _isPanelDragging) return;
 
             // =========================================================================
@@ -966,11 +967,13 @@ namespace ShiroMR
         {
             float now = Time.time;
             var h = new HeartLine { Value = "--", Text = "" };
+            // Short lines for the headset (a line is read at a glance); a second line
+            // only when needed, and the tag grows to fit it (FitHeartLine)
             if (_lastHeardAt < 0f) { h.Text = "Waiting for the wristband"; return h; }
             if (!IsHeard)
             {
-                h.Text = $"Wristband not heard for {Ago(now - _lastHeardAt)}" +
-                         (_lastBpmAt >= 0f ? $" · last {_lastBpm} bpm, {Ago(now - _lastBpmAt)} ago" : "");
+                h.Text = $"No signal for {Ago(now - _lastHeardAt)}" +
+                         (_lastBpmAt >= 0f ? $"\nLast {_lastBpm} bpm, {Ago(now - _lastBpmAt)} ago" : "");
                 h.Warn = true;
                 return h;
             }
@@ -984,12 +987,12 @@ namespace ShiroMR
             {
                 float s = _touchSince >= 0f ? now - _touchSince : 0f;
                 h.Measuring = true;
-                if (s > 30f) { h.Text = "Still measuring: keep the arm still, strap snug"; return h; }
+                if (s > 30f) { h.Text = "Still measuring\nKeep the arm still, strap snug"; return h; }
                 int left = Mathf.Max(1, Mathf.RoundToInt(FirstReadingS - s));
-                h.Text = s < FirstReadingS ? $"Measuring… ready in about {left} s" : "Measuring… almost ready";
+                h.Text = s < FirstReadingS ? $"Measuring… about {left} s" : "Measuring… almost ready";
                 return h;
             }
-            if (_liveMode) { h.Text = "No skin contact: make the strap snug"; h.Warn = true; return h; }
+            if (_liveMode) { h.Text = "No skin contact\nMake the strap snug"; h.Warn = true; return h; }
             // Resting between the automatic readings
             float next = _burstEndAt >= 0f ? Mathf.Max(0f, PassiveCycleS - (now - _burstEndAt)) : -1f;
             string nextText = next > 30f ? $"Next reading in about {Mathf.CeilToInt(next / 60f)} min" : "Next reading within 3 min";
@@ -997,7 +1000,7 @@ namespace ShiroMR
             {
                 h.Value = _lastBpm.ToString();
                 h.Dim = true;
-                h.Text = $"{nextText} · this value {Ago(now - _lastBpmAt)} ago";
+                h.Text = $"Measured {Ago(now - _lastBpmAt)} ago\n{nextText}";
             }
             else h.Text = nextText;
             return h;
@@ -1025,7 +1028,7 @@ namespace ShiroMR
             switch (trackingState)
             {
                 case PatientTrackingState.BedDocked: return "at their bed";
-                case PatientTrackingState.ManualAim: return "choosing the place";
+                case PatientTrackingState.ManualAim: return "being placed";
             }
             if (_isManuallyLocked) return "placed by you";
             if (_depthLinked) return "seen by headset";
@@ -1063,7 +1066,13 @@ namespace ShiroMR
             var h = Heart();
             if (_bpmText != null)
             {
-                _bpmText.text = h.Value;
+                if (_bpmText.text != h.Value)
+                {
+                    _bpmText.text = h.Value;
+                    // "♥ bpm" right after the number, however wide it is
+                    float numberW = _bpmText.GetPreferredValues(h.Value).x;
+                    if (_bpmUnitText != null) ShiroUIKit.Place(_bpmUnitText, 20 + numberW + 8, HeartRowY + 17, 80, 20);
+                }
                 _bpmText.color = h.Dim || h.Value == "--" ? ShiroTheme.TextDim : ShiroTheme.Text;
             }
             if (_bpmUnitText != null) _bpmUnitText.text = "<color=#F87171>♥</color> bpm";
@@ -1127,14 +1136,38 @@ namespace ShiroMR
 
         private TMP_Text _flagText;          // "Battery low": a second line when something needs a look
         private bool _flagShown;
+        private string _heartLaidOutFor;     // the heart line's text the tag was last sized for
+        private float _heartLineH = 18f;
 
-        /// <summary>The tag's height: one more line with a flag, the details below when open.</summary>
+        /// <summary>
+        /// The tag, top to bottom: name, bed and where, heart rate, its state (one or two
+        /// lines, or the alert), a flag line when one is shown; the details below when open.
+        /// Every line is as tall as its text: nothing is cut.
+        /// </summary>
         private void LayoutTag()
         {
             if (_hudRect == null) return;
-            float compact = _flagShown ? TagH + 20f : TagH;
+            float y = HeartRowY + 42f;
+            if (_heartStateText != null) ShiroUIKit.Place(_heartStateText, 20, y, TagW - 34, _heartLineH);
+            y += _heartLineH + 2f;
+            if (_flagShown && _flagText != null) { ShiroUIKit.Place(_flagText, 20, y, TagW - 34, 20); y += 20f; }
+            float compact = y + 8f;
             _hudRect.sizeDelta = new Vector2(TagW, _detailsOpen ? compact + DetailsH : compact);
             if (_detailsRoot != null) ShiroUIKit.Place(_detailsRoot.transform as RectTransform, 0, compact, TagW, DetailsH);
+        }
+
+        /// <summary>Resizes the tag when the heart line's text needs more or fewer lines.</summary>
+        private void FitHeartLine()
+        {
+            if (_heartStateText == null) return;
+            string text = _heartStateText.text;
+            if (text == _heartLaidOutFor) return;
+            _heartLaidOutFor = text;
+            float h = string.IsNullOrEmpty(text) ? 18f
+                : Mathf.Max(18f, Mathf.Ceil(_heartStateText.GetPreferredValues(text, TagW - 34, 0f).y) + 2f);
+            if (Mathf.Abs(h - _heartLineH) < 0.5f) return;
+            _heartLineH = h;
+            LayoutTag();
         }
 
         /// <summary>
@@ -1166,10 +1199,12 @@ namespace ShiroMR
             RefreshUiText();
         }
 
-        // The tag, in mm as seen from 1 m (it scales with the distance, see KeepTagSizeToTheEye)
-        private const float TagW = 240f;
-        private const float TagH = 96f;
-        private const float DetailsH = 184f;
+        // The tag, in mm as seen from 1 m (it scales with the distance, see KeepTagSizeToTheEye);
+        // its height follows its lines (LayoutTag), TagH is the usual one
+        private const float TagW = 260f;
+        private const float TagH = 132f;
+        private const float HeartRowY = 62f;
+        private const float DetailsH = 208f;
 
         /// <summary>
         /// Builds the floor ring and the patient's tag (version 2, ShiroMR.UI).
@@ -1215,20 +1250,19 @@ namespace ShiroMR
             stripe.offsetMin = new Vector2(4f, 6f);
             stripe.offsetMax = new Vector2(11f, -6f);
 
-            // Always shown: name, bed and where, heart rate with its state
-            _nameText = ShiroUIKit.Label(card, "Name", fullName, 22f, ShiroTheme.Text, FontStyles.Bold);
-            ShiroUIKit.Place(_nameText, 20, 10, 140, 28);
-            _subText = ShiroUIKit.Label(card, "BedWhere", "", 14f, ShiroTheme.TextDim);
-            ShiroUIKit.Place(_subText, 20, 40, 150, 20);
-            _bpmText = ShiroUIKit.Label(card, "Heart", "--", 34f, ShiroTheme.Text, FontStyles.Bold, TextAlignmentOptions.Right);
-            ShiroUIKit.Place(_bpmText, TagW - 84, 4, 70, 42);
-            _bpmUnitText = ShiroUIKit.Label(card, "HeartUnit", "bpm", 13f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Right);
+            // Always shown, top to bottom: name (the whole width), bed and where, the heart
+            // rate, its state in words (one or two lines), a flag line when one is shown
+            _nameText = ShiroUIKit.Label(card, "Name", fullName, 22f, ShiroTheme.Text, FontStyles.Bold).Fit(14f);
+            ShiroUIKit.Place(_nameText, 20, 10, TagW - 34, 28);
+            _subText = ShiroUIKit.Label(card, "BedWhere", "", 14f, ShiroTheme.TextDim).Fit(11f);
+            ShiroUIKit.Place(_subText, 20, 40, TagW - 34, 20);
+            _bpmText = ShiroUIKit.Label(card, "Heart", "", 34f, ShiroTheme.Text, FontStyles.Bold);
+            ShiroUIKit.Place(_bpmText, 20, HeartRowY, 110, 42);
+            _bpmUnitText = ShiroUIKit.Label(card, "HeartUnit", "bpm", 14f, ShiroTheme.TextDim);
             _bpmUnitText.richText = true;
-            ShiroUIKit.Place(_bpmUnitText, TagW - 74, 46, 60, 18);
-            _heartStateText = ShiroUIKit.Label(card, "HeartState", "", 14f, ShiroTheme.TextDim);
-            ShiroUIKit.Place(_heartStateText, 20, 68, TagW - 34, 20);
+            ShiroUIKit.Place(_bpmUnitText, 20 + 40 + 8, HeartRowY + 17, 80, 20);
+            _heartStateText = ShiroUIKit.Label(card, "HeartState", "", 14f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true);
             _flagText = ShiroUIKit.Label(card, "Flag", "", 14f, ShiroTheme.WarnText, FontStyles.Bold);
-            ShiroUIKit.Place(_flagText, 20, 88, TagW - 34, 20);
             _flagText.gameObject.SetActive(false);
 
             // Details (after a tap)
@@ -1239,50 +1273,52 @@ namespace ShiroMR
             Transform d = details.transform;
             float w = TagW - 34f;
             ShiroUIKit.Place(ShiroUIKit.Panel(d, "Divider", ShiroTheme.Divider, 0f), 20, 0, w, 1.5f);
-            _spo2Text = ShiroUIKit.Label(d, "Spo2", "", 14f, ShiroTheme.Text);
+            _spo2Text = ShiroUIKit.Label(d, "Spo2", "", 14f, ShiroTheme.Text).Fit(11f);
             ShiroUIKit.Place(_spo2Text, 20, 8, w, 20);
-            _batteryText = ShiroUIKit.Label(d, "Battery", "", 14f, ShiroTheme.Text);
-            ShiroUIKit.Place(_batteryText, 20, 30, w / 2f, 20);
-            _motionBadgeText = ShiroUIKit.Label(d, "Motion", "", 14f, ShiroTheme.Text);
-            ShiroUIKit.Place(_motionBadgeText, 20 + w / 2f, 30, w / 2f, 20);
-            _trackingBadgeText = ShiroUIKit.Label(d, "Position", "", 14f, ShiroTheme.OkText);
-            ShiroUIKit.Place(_trackingBadgeText, 20, 52, w, 20);
-            _statusBannerText = ShiroUIKit.Label(d, "PositionNote", "", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true);
-            ShiroUIKit.Place(_statusBannerText, 20, 74, w, 30);
+            _batteryText = ShiroUIKit.Label(d, "Battery", "", 14f, ShiroTheme.Text).Fit(11f);
+            ShiroUIKit.Place(_batteryText, 20, 30, w, 20);
+            _motionBadgeText = ShiroUIKit.Label(d, "Motion", "", 14f, ShiroTheme.Text).Fit(11f);
+            ShiroUIKit.Place(_motionBadgeText, 20, 52, w, 20);
+            _trackingBadgeText = ShiroUIKit.Label(d, "Position", "", 14f, ShiroTheme.OkText).Fit(11f);
+            ShiroUIKit.Place(_trackingBadgeText, 20, 74, w, 20);
+            _statusBannerText = ShiroUIKit.Label(d, "PositionNote", "", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true).Fit(9f);
+            ShiroUIKit.Place(_statusBannerText, 20, 96, w, 30);
 
             float bw = (w - 8f) / 2f;
             var move = ShiroUIKit.Button(d, "Move", "Move tag", ButtonKind.Secondary, StartPanelDrag, 12f);
-            ShiroUIKit.Place(move, 20, 108, bw, 30);
+            ShiroUIKit.Place(move, 20, 130, bw, 30);
             _moveHandleBtn = move.UiButton;
             _moveHandleBtnText = move.Label;
 
             var reattach = ShiroUIKit.Button(d, "Reattach", "Choose person", ButtonKind.Secondary, BeginManualAim, 12f);
-            ShiroUIKit.Place(reattach, 28 + bw, 108, bw, 30);
+            ShiroUIKit.Place(reattach, 28 + bw, 130, bw, 30);
             _reattachBtn = reattach.UiButton;
             _reattachBtnText = reattach.Label;
 
             // Second row, left: one of three, by state (head of bed / beside it, automatic, cancel)
             var dock = ShiroUIKit.Button(d, "Dock", "Beside bed", ButtonKind.Secondary, ToggleDockMode, 12f);
-            ShiroUIKit.Place(dock, 20, 144, bw, 30);
+            ShiroUIKit.Place(dock, 20, 166, bw, 30);
             _dockToggleBtn = dock.UiButton;
             _dockToggleBtnText = dock.Label;
 
             var auto = ShiroUIKit.Button(d, "Auto", "Automatic", ButtonKind.Primary, ReturnToAuto, 12f);
-            ShiroUIKit.Place(auto, 20, 144, bw, 30);
+            ShiroUIKit.Place(auto, 20, 166, bw, 30);
             _autoBtn = auto.UiButton;
             auto.gameObject.SetActive(false);
 
             var cancel = ShiroUIKit.Button(d, "CancelAim", "Cancel", ButtonKind.Danger, CancelManualAim, 12f);
-            ShiroUIKit.Place(cancel, 20, 144, bw, 30);
+            ShiroUIKit.Place(cancel, 20, 166, bw, 30);
             _cancelAimBtn = cancel.UiButton;
             _cancelAimBtnText = cancel.Label;
             cancel.gameObject.SetActive(false);
 
             var close = ShiroUIKit.Button(d, "Close", "Close", ButtonKind.Quiet, ToggleDetails, 12f);
-            ShiroUIKit.Place(close, 28 + bw, 144, bw, 30);
+            ShiroUIKit.Place(close, 28 + bw, 166, bw, 30);
 
             details.SetActive(false);
             RefreshUiText();
+            FitHeartLine();
+            LayoutTag();
         }
     }
 }
