@@ -7,7 +7,7 @@
             <span style="color: #EF4444; font-size: 18px;">❤️</span>
           </div>
           <div class="metric-value" id="val-bpm">-- <span class="metric-unit">BPM</span></div>
-          <div class="metric-unit" id="bpm-status">Waiting for finger touch...</div>
+          <div class="metric-unit" id="bpm-status">Waiting for skin contact…</div>
         </div>
 
         <!-- Card 2: Blood Oxygen (SpO2) -->
@@ -23,7 +23,7 @@
         <!-- Card 3: Kinematic G-Force Vector -->
         <div class="card" style="margin-bottom: 0;">
           <div class="card-header">
-            <span class="card-title">Kinematic G-Force</span>
+            <span class="card-title">Movement (acceleration)</span>
             <span class="badge badge-info" id="g-badge">Normal</span>
           </div>
           <div class="metric-value" id="val-g">1.00 <span class="metric-unit">g</span></div>
@@ -35,8 +35,8 @@
         <!-- Card 4: Sensor Contact Status -->
         <div class="card" style="margin-bottom: 0;">
           <div class="card-header">
-            <span class="card-title">Sensor Contact Status</span>
-            <span class="badge badge-live" id="finger-badge">No Finger</span>
+            <span class="card-title">Skin contact</span>
+            <span class="badge badge-live" id="finger-badge">No contact</span>
           </div>
           <div class="metric-value" style="font-size: 26px; margin-top: 8px;" id="contact-status">Idle</div>
         </div>
@@ -45,11 +45,11 @@
       <!-- Card: Telemetry packet stream. The raw pulse waveform is not transmitted (packet v2). -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Wristband Telemetry Stream</span>
+          <span class="card-title">Wristband messages</span>
           <span style="font-size: 12px; color: var(--text-muted);" id="latency-display">Interval: waiting for the first packet</span>
         </div>
         <p style="margin: 8px 0 0; font-size: 13px; color: var(--text-secondary);">
-          The wristband computes heart rate and SpO2 itself and sends only these results (telemetry packet v2, <span class="mono">docs/protocol.md</span>).
+          The wristband works out heart rate and SpO2 itself and sends only the results.
           The raw pulse signal is not transmitted, so no pulse waveform is shown here.
         </p>
       </div>
@@ -58,8 +58,8 @@
       <div class="form-grid-2">
         <div class="card">
           <div class="card-header">
-            <span class="card-title">Anchor A (ESP32-E) - Radio Distance</span>
-            <span class="badge badge-live" id="anchor-a-badge">Tracking Active</span>
+            <span class="card-title">Wall sensor A: distance</span>
+            <span class="badge badge-live" id="anchor-a-badge">Hearing</span>
           </div>
           <div class="metric-value" id="val-dist-a">-- <span class="metric-unit">meters</span></div>
           <div style="display: flex; gap: 16px; margin-top: 8px; font-size: 13px;">
@@ -70,7 +70,7 @@
 
         <div class="card">
           <div class="card-header">
-            <span class="card-title">Anchor B (ESP32-E) - Radio Distance</span>
+            <span class="card-title">Wall sensor B: distance</span>
             <span class="badge badge-neutral" id="anchor-b-badge">Standby</span>
           </div>
           <div class="metric-value" id="val-dist-b">-- <span class="metric-unit">meters</span></div>
@@ -85,10 +85,10 @@
       <div class="card">
         <div class="card-header">
           <div>
-            <span class="card-title">Linear Kalman Filter Signal Conditioning (Multipath Jitter Suppression)</span>
+            <span class="card-title">Signal strength: raw and smoothed (Kalman filter)</span>
             <div style="font-size: 12px; margin-top: 4px; display: flex; gap: 16px;">
-              <span style="color: var(--status-warning-text); font-weight: 600;">── Raw Multipath RSSI (Jittery RF)</span>
-              <span style="color: var(--primary); font-weight: 700;">── EKF Filtered State (Smoothed Estimate)</span>
+              <span style="color: var(--status-warning-text); font-weight: 600;">── Raw signal</span>
+              <span style="color: var(--primary); font-weight: 700;">── Smoothed</span>
             </div>
           </div>
           <div style="display: flex; gap: 10px; align-items: center;">
@@ -111,18 +111,18 @@
         <div class="card-header" style="border-bottom: 1px solid #FEE2E2;">
           <div>
             <span class="card-title" style="color: #DC2626; display: flex; align-items: center; gap: 8px;">
-              <span>🚨</span> Clinical Emergency & Anomaly Test Bench (Simulation Pipeline)
+              <span>🚨</span> Test alarms
             </span>
             <div style="font-size: 12px; color: #7F1D1D; margin-top: 4px;">
-              Manually trigger synthetic fall interrupts, critical vital breaches, or geofence violations to test WebSocket pop-up alerts, audio alarms, and MySQL Table 4.13 logging.
+              Sends a test alarm for the chosen patient. The pop-up, the alarm sound, the headset and the incident log work as for a real alarm; the incident is marked Test.
             </div>
           </div>
-          <span class="badge" style="background: #FEE2E2; color: #DC2626; font-weight: 700;">TEST BENCH</span>
+          <span class="badge" style="background: #FEE2E2; color: #DC2626; font-weight: 700;">Test only</span>
         </div>
 
         <div style="padding: 16px 0 6px 0; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
           <div style="display: flex; gap: 10px; align-items: center;">
-            <label style="font-size: 13px; font-weight: 700; color: #334155;">Test Target Patient:</label>
+            <label style="font-size: 13px; font-weight: 700; color: #334155;">Patient:</label>
             <select id="sim-patient-select" style="padding: 6px 12px; border-radius: 8px; border: 1px solid #CBD5E1; background: #FFFFFF; font-size: 13px; font-weight: 600;">
               <option value="">Loading admitted patients...</option>
             </select>
@@ -130,13 +130,13 @@
 
           <div style="display: flex; flex-wrap: wrap; gap: 10px;">
             <button id="btn-sim-fall" class="btn btn-sm" style="background: #DC2626; color: #FFFFFF; border: none; font-weight: 700; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(220,38,38,0.3); cursor: pointer;">
-              <span>🚨</span> Simulate Fall Accident (3.42g Impact)
+              <span>🚨</span> Test a fall
             </button>
             <button id="btn-sim-vitals" class="btn btn-sm" style="background: #D97706; color: #FFFFFF; border: none; font-weight: 700; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(217,119,6,0.3); cursor: pointer;">
-              <span>🫀</span> Simulate Critical Vitals (148 BPM / 84% SpO2)
+              <span>🫀</span> Test critical vitals (148 bpm)
             </button>
             <button id="btn-sim-geofence" class="btn btn-sm" style="background: #7C3AED; color: #FFFFFF; border: none; font-weight: 700; display: flex; align-items: center; gap: 6px; box-shadow: 0 2px 6px rgba(124,58,237,0.3); cursor: pointer;">
-              <span>🚪</span> Simulate Geofence Breach
+              <span>🚪</span> Test "left the ward"
             </button>
           </div>
         </div>
@@ -145,22 +145,22 @@
       <!-- Card: Real-Time MQTT Telemetry Inspector -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Real-Time MQTT Telemetry Inspector</span>
+          <span class="card-title">Messages from the wall sensors</span>
           <span style="font-size: 12px; color: var(--text-muted);" id="packet-counter">Packets Received: 0</span>
         </div>
         <div class="data-table-container">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Server Timestamp</th>
-                <th>MQTT Topic</th>
-                <th>Decoded Physiological Payload</th>
-                <th>Delivery Status</th>
+                <th>Time</th>
+                <th>Channel (MQTT topic)</th>
+                <th>Content</th>
+                <th>Result</th>
               </tr>
             </thead>
             <tbody id="log-body">
               <tr>
-                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Waiting for packets from ESP32-S3 Gateway...</td>
+                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">Waiting for the first message from a wall sensor…</td>
               </tr>
             </tbody>
           </table>

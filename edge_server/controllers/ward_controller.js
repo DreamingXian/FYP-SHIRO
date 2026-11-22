@@ -5,6 +5,8 @@ const logger = require('../utils/logger');
 const wardService = require('../services/ward_service');
 const headsetAnchors = require('../services/headset_anchor_service');
 const placement = require('../services/ips/placement');
+// The same rules the ward editor checks before saving
+const wardRules = require('../public/js/ward_config/ward_rules');
 const { broadcastToClients } = require('../services/websocket_service');
 const { HttpError, sendJson, sendFailure, parseJsonBody } = require('../utils/http');
 const {
@@ -110,6 +112,16 @@ function checkAnchorCount(payload) {
 }
 
 /**
+ * The layout rules the ward editor shows (public/js/ward_config/ward_rules.js):
+ * everything inside the room, one LiDAR, at most 15 obstacles, beds by floor
+ * space. A stored ward must keep them; the planner may get a layout in progress.
+ */
+function checkLayoutRules(payload) {
+  const { errors } = wardRules.checkWardLayout(payload);
+  if (errors.length) throw new HttpError(400, errors.join(' '));
+}
+
+/**
  * POST /api/ward/placement-plan
  * Suggests where to mount the anchors and the LiDAR for the layout the ward
  * editor holds (saved or not). Computes only: nothing is stored.
@@ -167,6 +179,7 @@ async function saveWard(req, res, body) {
     const payload = parseJsonBody(body);
     checkWardPayload(payload);
     checkAnchorCount(payload);
+    checkLayoutRules(payload);
     const result = await wardService.saveWardConfig(payload);
 
     // Notify connected WebSockets (Web Dashboard & Meta Quest 3)

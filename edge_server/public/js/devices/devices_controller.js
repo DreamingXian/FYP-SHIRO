@@ -8,6 +8,8 @@ let cachedUnprovisioned = [];
 let currentDeviceTypeFilter = 'ALL';
 let currentStatusFilter = null; // null | 'ONLINE' | 'OFFLINE'
 let currentAvailFilter = null;  // null | 'AVAILABLE' | 'IN_USE' | 'UNAVAILABLE'
+let devicesPage = 1;           // pages of 8 (ui_kit.js)
+let discoveryPage = 1;
 let isWsListenersRegistered = false;
 // Live picture of the LiDAR room sensors (Phase 10), by device ID and by MAC address
 const roomSensorLive = new Map();
@@ -164,17 +166,32 @@ function setupDeviceWsListeners() {
 /**
  * Dynamically marks a device as ONLINE/OFFLINE and updates its row in the UI in real time.
  */
+// With an On/Off filter, a status change redraws the table: at most once a second
+let liveFilterTimer = null;
+function scheduleFilteredRedraw() {
+  if (liveFilterTimer) return;
+  liveFilterTimer = setTimeout(() => {
+    liveFilterTimer = null;
+    filterDevicesTable();
+    updateFleetCounts();
+  }, 1000);
+}
+
 function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
   const dev = cachedFleet.find(d => d.device_id === deviceId);
   if (dev) {
-    dev.status = extra.status || 'ONLINE';
+    const status = extra.status || 'ONLINE';
+    const battery = (extra.battery !== null && extra.battery !== undefined) ? extra.battery : dev.battery_level;
+    // A wall sensor sends several messages a second: the page changes only when what
+    // it shows does (status or battery), never on each message
+    const changed = dev.status !== status || String(battery) !== String(dev.battery_level);
+    dev.status = status;
     dev.last_seen = extra.status === 'OFFLINE' ? 'Signal Lost' : 'Just now (Live)';
-    if (extra.battery !== null && extra.battery !== undefined) {
-      dev.battery_level = extra.battery;
-    }
+    dev.battery_level = battery;
+    if (!changed) return;
 
     if (currentStatusFilter !== null) {
-      filterDevicesTable();
+      scheduleFilteredRedraw();
     } else {
       // Update status badge directly in DOM if visible
       const row = document.querySelector(`tr[data-device-id="${CSS.escape(String(deviceId))}"]`);
@@ -182,11 +199,11 @@ function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
         const statusCell = row.querySelector('.device-status-cell');
         if (statusCell) {
           if (dev.status === 'ONLINE') {
-            statusCell.innerHTML = `<span class="badge badge-live">● ONLINE</span>`;
+            statusCell.innerHTML = `<span class="badge badge-live">● On</span>`;
           } else if (dev.status === 'OFFLINE') {
-            statusCell.innerHTML = `<span class="badge badge-alert">● OFFLINE</span>`;
+            statusCell.innerHTML = `<span class="badge badge-neutral" title="Off, or out of reach">○ Off</span>`;
           } else if (dev.status === 'CHARGING') {
-            statusCell.innerHTML = `<span class="badge badge-warning">⚡ CHARGING</span>`;
+            statusCell.innerHTML = `<span class="badge badge-warning">⚡ Charging</span>`;
           } else {
             statusCell.innerHTML = `<span class="badge badge-neutral">● ${escapeHtml(dev.status)}</span>`;
           }
@@ -231,11 +248,11 @@ async function loadDevicesFleet() {
       filterDevicesTable();
       updateFleetCounts();
     } else {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--danger); padding:24px;">Failed to load fleet: ${escapeHtml(data.error || 'Server error')}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--danger);">The devices could not be loaded: ${escapeHtml(data.error || 'server error')}</td></tr>`;
     }
   } catch (err) {
     console.error('loadDevicesFleet error:', err);
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--danger); padding:24px;">Network error loading hardware fleet from edge server.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--danger);">The server does not answer. Check that it is running, then reload the page.</td></tr>`;
   }
 }
 
@@ -262,17 +279,27 @@ async function loadUnprovisionedDiscovery() {
 /**
  * Triggers manual scan / refresh for nearby devices.
  */
-async function refreshDiscoveryRadar() {
+async function refreshDiscoveryRadar(button) {
   const badge = document.getElementById('radar-status-badge');
-  if (badge) badge.innerText = '● Scanning Spectrum...';
+  const done = window.ShiroUI.busy(button || document.getElementById('btn-refresh-radar'), 'Searching…');
+  if (badge) badge.innerText = '● Searching…';
+  const before = new Set(cachedUnprovisioned.map(d => d.mac));
+  const started = Date.now();
 
   await loadUnprovisionedDiscovery();
+  // Long enough to be seen, even when the answer is instant
+  const wait = 700 - (Date.now() - started);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  done();
+  if (badge) badge.innerText = '● Listening';
 
-  safeShowToast(`Discovery radar refreshed. ${cachedUnprovisioned.length} unprovisioned node(s) detected.`, 'info');
-
-  setTimeout(() => {
-    if (badge) badge.innerText = '● MQTT Scanner Active';
-  }, 1000);
+  const found = cachedUnprovisioned.length;
+  const fresh = cachedUnprovisioned.filter(d => !before.has(d.mac)).length;
+  if (found === 0) {
+    safeShowToast('No new devices found. Switch the device on near a wall sensor, then search again.', 'info', 5000);
+  } else {
+    safeShowToast(`${found} device${found === 1 ? '' : 's'} waiting to be added${fresh ? ` (${fresh} new)` : ''}.`, 'success');
+  }
 }
 
 /**
@@ -284,7 +311,7 @@ function getRadarSignalHtml(d) {
     return `
       <div style="display:flex; align-items:center; gap:8px;">
         <span class="badge ${isTracking ? 'badge-live' : 'badge-neutral'}" style="font-size:11px;">
-          📡 ${isTracking ? 'Active Tracking' : 'Standby (Scanning)'}
+          📡 ${isTracking ? 'Heard now' : 'Waiting'}
         </span>
       </div>
     `;
@@ -342,12 +369,37 @@ function getRadarBatteryHtml(d) {
  * Never destroys buttons on live updates to prevent jitter, page lag, and unclickable buttons.
  */
 function renderDiscoveryTable(items) {
+  const pagerEl = document.getElementById('unprovisioned-pager');
+  const list = items || [];
+  // Nothing new: one slim line instead of an empty table; something new: a banner
+  const card = document.getElementById('discovery-card');
+  const wrap = document.getElementById('discovery-table-wrap');
+  const summary = document.getElementById('discovery-summary');
+  if (card) card.classList.toggle('has-new', list.length > 0);
+  if (wrap) wrap.style.display = list.length ? '' : 'none';
+  if (summary) {
+    summary.innerText = list.length
+      ? `${list.length} device${list.length === 1 ? ' is' : 's are'} switched on and waiting to be added. Press "Add" on the row.`
+      : 'No new devices. Switch a wristband or sensor on near a wall sensor; it appears here within a few seconds.';
+  }
+  const pageData = window.ShiroUI.paginate(list, discoveryPage);
+  discoveryPage = pageData.page;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'devices',
+      onPage: (n) => { discoveryPage = n; renderDiscoveryTable(cachedUnprovisioned); }
+    });
+  }
+  renderDiscoveryRows(pageData.items);
+}
+
+function renderDiscoveryRows(items) {
   const tbody = document.getElementById('unprovisioned-table-body');
   if (!tbody) return;
 
   if (!items || items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--text-muted); padding:24px;">
-      No unprovisioned hardware currently broadcasting. Power on a physical node (Anchor, Gateway, or Wristband) to discover it live.
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">
+      <strong>No new devices.</strong>Switch a wristband or sensor on near a wall sensor; it appears here within a few seconds.
     </td></tr>`;
     return;
   }
@@ -420,10 +472,23 @@ function getEffectiveAvailability(d) {
   if (d.availability_status === 'UNAVAILABLE' || d.availability_status === 'MAINTENANCE') {
     return 'UNAVAILABLE';
   }
-  if (d.bound_patient_name || d.assigned_ward_id || d.availability_status === 'IN_USE') {
+  if (d.bound_patient_name || d.anchor_slot || d.sensor_slot || d.assigned_ward_id || d.availability_status === 'IN_USE') {
     return 'IN_USE';
   }
   return 'AVAILABLE';
+}
+
+/**
+ * What a device is used for now, in words, or '' when it is free: the patient
+ * wearing a wristband, the ward place of a wall sensor or a LiDAR.
+ */
+function deviceUseText(d) {
+  if (d.bound_patient_name) return `worn by ${d.bound_patient_name} (${d.bound_patient_id})`;
+  if (d.anchor_slot) return `the wall sensor ${d.anchor_slot}`;
+  if (d.sensor_slot) return `the LiDAR ${d.sensor_slot}`;
+  if (d.assigned_ward_id) return `assigned to ${d.assigned_ward_id}`;
+  if (d.availability_status === 'IN_USE') return 'marked as in use';
+  return '';
 }
 
 /**
@@ -431,6 +496,7 @@ function getEffectiveAvailability(d) {
  * Mutually exclusive within Operating group. Clicking active button deactivates it.
  */
 function toggleStatusFilter(status) {
+  devicesPage = 1;
   currentStatusFilter = (currentStatusFilter === status) ? null : status;
   updateFilterButtonsUI();
   filterDevicesTable();
@@ -441,6 +507,7 @@ function toggleStatusFilter(status) {
  * Mutually exclusive within Availability group. Clicking active button deactivates it.
  */
 function toggleAvailFilter(avail) {
+  devicesPage = 1;
   currentAvailFilter = (currentAvailFilter === avail) ? null : avail;
   updateFilterButtonsUI();
   filterDevicesTable();
@@ -494,13 +561,13 @@ function updateFleetCounts() {
   const inUse = cachedFleet.filter(d => getEffectiveAvailability(d) === 'IN_USE').length;
   const unavailable = cachedFleet.filter(d => getEffectiveAvailability(d) === 'UNAVAILABLE').length;
 
-  if (pillAll) pillAll.innerText = `All Nodes (${total})`;
-  if (pillWristband) pillWristband.innerText = `🛏️ Wristbands (${wristbands})`;
-  if (pillAnchor) pillAnchor.innerText = `📡 Anchors (${anchors})`;
-  if (pillHeadset) pillHeadset.innerText = `🥽 Headsets (${headsets})`;
-  if (pillRoomSensor) pillRoomSensor.innerText = `🌀 LiDAR (${roomSensors})`;
+  if (pillAll) pillAll.innerText = `All (${total})`;
+  if (pillWristband) pillWristband.innerText = `Wristbands (${wristbands})`;
+  if (pillAnchor) pillAnchor.innerText = `Wall sensors (${anchors})`;
+  if (pillHeadset) pillHeadset.innerText = `Headsets (${headsets})`;
+  if (pillRoomSensor) pillRoomSensor.innerText = `LiDAR (${roomSensors})`;
 
-  if (countBadge) countBadge.innerText = `${total} Device${total === 1 ? '' : 's'}`;
+  if (countBadge) countBadge.innerText = `${total} device${total === 1 ? '' : 's'}`;
 
   if (elOnlineCount) elOnlineCount.innerText = online;
   if (elOfflineCount) elOfflineCount.innerText = offline;
@@ -514,6 +581,7 @@ function updateFleetCounts() {
  */
 function setDeviceTypeFilter(type, btn) {
   currentDeviceTypeFilter = type;
+  devicesPage = 1;
   document.querySelectorAll('.filter-pills .filter-pill').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   filterDevicesTable();
@@ -583,8 +651,18 @@ function renderDevicesTable(filtered) {
   const tbody = document.getElementById('devices-table-body');
   if (!tbody) return;
 
+  const pagerEl = document.getElementById('devices-pager');
+  const pageData = window.ShiroUI.paginate(filtered, devicesPage);
+  devicesPage = pageData.page;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'devices',
+      onPage: (n) => { devicesPage = n; renderDevicesTable(filtered); }
+    });
+  }
+
   if (filtered.length === 0) {
-    let msg = 'No registered hardware devices in MySQL yet. Power on your physical hardware to discover and enroll them above, or click "➕ Manually Add Device".';
+    let msg = 'No devices added yet. Switch a device on: it appears under "New devices nearby", ready to add. Or use "＋ Add device by hand".';
     if (cachedFleet.length > 0) {
       const activeFilters = [];
       if (currentDeviceTypeFilter !== 'ALL') activeFilters.push(`Category: ${currentDeviceTypeFilter}`);
@@ -594,23 +672,26 @@ function renderDevicesTable(filtered) {
       const q = input ? input.value.trim() : '';
       if (q) activeFilters.push(`Search: "${q}"`);
 
-      msg = `No registered hardware matches the active filters (${activeFilters.join(', ')}).`;
+      msg = `No device matches the filters (${activeFilters.join(', ')}).`;
     }
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:var(--text-muted); padding:32px;">${escapeHtml(msg)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${escapeHtml(msg)}</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = filtered.map(d => {
+  tbody.innerHTML = pageData.items.map(d => {
     const typeBadge = deviceTypeBadge(d.device_type);
 
-    let statusBadge = `<span class="badge badge-live">● ONLINE</span>`;
+    let statusBadge = `<span class="badge badge-live">● On</span>`;
     if (d.status === 'CHARGING') {
-      statusBadge = `<span class="badge badge-warning">⚡ CHARGING</span>`;
+      statusBadge = `<span class="badge badge-warning">⚡ Charging</span>`;
     } else if (d.status === 'OFFLINE' || (!d.status || d.status === 'STANDBY')) {
-      statusBadge = `<span class="badge badge-alert">● OFFLINE</span>`;
+      statusBadge = `<span class="badge badge-neutral" title="Off, or out of reach">○ Off</span>`;
     }
 
-    let powerDisplay = `<span style="color:var(--text-muted); font-size:11px;">⚡ Mains / USB</span>`;
+    // Wall sensors run on mains; anything else that has not reported a battery level says so
+    let powerDisplay = d.device_type === 'ANCHOR'
+      ? '<span style="color:var(--text-muted); font-size:12px;">⚡ Mains / USB</span>'
+      : '<span style="color:var(--text-muted); font-size:12px;">not reported yet</span>';
     if (d.device_type === 'ROOM_SENSOR') {
       powerDisplay = lidarLiveHtml(roomSensorLive.get(d.device_id) || roomSensorLive.get(String(d.mac_address || '').toUpperCase()));
     } else if (d.battery_level !== null && d.battery_level !== undefined) {
@@ -631,33 +712,28 @@ function renderDevicesTable(filtered) {
     }
 
     const effectiveAvail = getEffectiveAvailability(d);
-    let availBadge = `<span class="badge badge-live" style="font-size:10px;">Available</span>`;
+    let availBadge = '<span class="badge badge-live">Free</span>';
     if (effectiveAvail === 'IN_USE') {
-      let inUseDetail = '';
-      if (d.bound_patient_name) {
-        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">👤 ${escapeHtml(d.bound_patient_name)}</div>`;
-      } else if (d.assigned_ward_id) {
-        inUseDetail = `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">📍 ${escapeHtml(d.assigned_ward_id)}</div>`;
-      }
-      availBadge = `<span class="badge badge-info" style="font-size:10px;">In Use</span>${inUseDetail}`;
+      availBadge = '<span class="badge badge-info">In use</span>';
     } else if (effectiveAvail === 'UNAVAILABLE') {
-      availBadge = `<span class="badge badge-alert" style="font-size:10px;">⚠️ Not Available</span>`;
+      availBadge = '<span class="badge badge-warning">Out of use</span>';
     }
+    // Where it is used: the patient wearing it, else its place in a ward
+    const whereText = d.bound_patient_name ? `👤 ${d.bound_patient_name}`
+      : d.anchor_slot || d.sensor_slot ? `📍 ${d.anchor_slot || d.sensor_slot}`
+        : d.assigned_ward_id ? `📍 ${d.assigned_ward_id}` : '–';
+    // Technical details on hover; nothing invented when unknown
+    const details = [`MAC ${d.mac_address || 'unknown'}`, `network ${d.ip_address || (d.device_type === 'WRISTBAND' ? 'none (Bluetooth only)' : 'unknown')}`,
+      `model ${d.hardware_model || 'unknown'}`, `firmware ${d.firmware_version || 'unknown'}`].join(' · ');
 
     return `
       <tr data-device-id="${escapeHtml(d.device_id)}">
-        <td>
-          <div style="font-weight: 700; color: var(--text-primary); font-size:13px;">${escapeHtml(d.device_id)}</div>
+        <td title="${escapeHtml(details)}">
+          <div style="font-weight: 700; color: var(--text-primary);">${escapeHtml(d.device_id)}</div>
+          <div class="mono" style="color: var(--text-muted); font-size: 12px;">${escapeHtml(d.mac_address || '')}</div>
         </td>
         <td>${typeBadge}</td>
-        <td>
-          <div class="mono" style="color: var(--primary); font-weight: 600; font-size:12px;">${escapeHtml(d.mac_address)}</div>
-          <div class="mono" style="color: var(--text-muted); font-size: 11px;">${escapeHtml(d.ip_address || 'BLE Beacon (No IP)')}</div>
-        </td>
-        <td>
-          <div style="font-size:12px; color:var(--text-primary);">${escapeHtml(d.hardware_model)}</div>
-          <span class="badge badge-neutral" style="font-size:10px;">${escapeHtml(d.firmware_version || 'v1.0.0')}</span>
-        </td>
+        <td>${escapeHtml(whereText)}</td>
         <td class="device-power-cell">${powerDisplay}</td>
         <td class="device-status-cell">
           ${statusBadge}
@@ -666,10 +742,10 @@ function renderDevicesTable(filtered) {
           ${availBadge}
         </td>
         <td style="text-align: right; white-space: nowrap;">
-          <button class="btn btn-outline btn-sm"${actionAttrs('openEditDeviceModal', [d.device_id])} title="Configure Availability &amp; Maintenance">
-            ⚙️ Edit
+          <button class="btn btn-outline btn-sm"${actionAttrs('openEditDeviceModal', [d.device_id])} title="Name, ward, model, in use or out of use">
+            ✏️ Edit
           </button>
-          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeleteDevice', [d.device_id])} title="Decommission &amp; Delete Device" style="margin-left:4px;">
+          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeleteDevice', [d.device_id])} title="Delete this device" style="margin-left:4px;">
             🗑️
           </button>
         </td>
@@ -749,7 +825,7 @@ async function openEnrollModal(mac, model, type, battery, ip) {
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Live Connectivity</span>
-          <span class="badge badge-live">● ONLINE</span>
+          <span class="badge badge-live">● On</span>
         </div>
         <div>
           <span style="color:var(--text-muted); font-size:11px; text-transform:uppercase; font-weight:600; display:block; margin-bottom:2px;">Initial Availability</span>
@@ -816,7 +892,7 @@ async function openManualEnrollModal() {
 
     <div class="form-grid-2">
       <div class="form-group">
-        <label class="form-label" style="font-weight:600;">Device Category *</label>
+        <label class="form-label" style="font-weight:600;">Device Category <span class="req" aria-hidden="true">*</span></label>
         <select class="form-control" id="manual-dev-type" onchange="updateSuggestedManualId()">
           <option value="WRISTBAND" selected>🛏️ Wearable Wristband Tag</option>
           <option value="ANCHOR">📡 Stationary Wall Anchor</option>
@@ -832,7 +908,7 @@ async function openManualEnrollModal() {
 
     <div class="form-grid-2">
       <div class="form-group">
-        <label class="form-label" style="font-weight:600;">Physical MAC Address *</label>
+        <label class="form-label" style="font-weight:600;">Physical MAC Address <span class="req" aria-hidden="true">*</span></label>
         <input type="text" class="form-control mono" id="manual-dev-mac" placeholder="e.g. A4:CF:12:01:F8:32" required>
       </div>
       <div class="form-group">
@@ -968,7 +1044,7 @@ function openEditDeviceModal(deviceId) {
 
     <div class="form-grid-2">
       <div class="form-group">
-        <label class="form-label" style="font-weight:600;">Service Availability *</label>
+        <label class="form-label" style="font-weight:600;">Service Availability <span class="req" aria-hidden="true">*</span></label>
         <select class="form-control" id="edit-dev-availability" ${isBound || isAssignedWard ? 'disabled' : ''}>
           <option value="AVAILABLE" ${d.availability_status === 'AVAILABLE' ? 'selected' : ''}>Available (Ready for Use)</option>
           <option value="UNAVAILABLE" ${d.availability_status === 'UNAVAILABLE' ? 'selected' : ''}>Unavailable (Damaged / Maintenance)</option>
@@ -1032,12 +1108,34 @@ function openEditDeviceModal(deviceId) {
 /**
  * Prompts danger confirmation modal before deleting a device record.
  */
+/**
+ * Asks before deleting a device. A device in use says by whom or where, and
+ * what stops when it is deleted.
+ */
 function confirmDeleteDevice(deviceId) {
+  const d = cachedFleet.find(x => x.device_id === deviceId) || { device_id: deviceId };
+  const use = deviceUseText(d);
+  // What stops when it goes, one line each, in the red box of the dialog
+  const effects = [];
+  if (d.bound_patient_name) {
+    effects.push(`It is taken off ${d.bound_patient_name} (${d.bound_patient_id}).`);
+    effects.push('Their heart rate, fall alarms, door alerts and position stop until they get another wristband.');
+  } else if (d.anchor_slot) {
+    effects.push(`Its place (${d.anchor_slot}) stays empty.`);
+    effects.push('Positions in that ward get less accurate; with fewer than 3 working wall sensors its live map stops.');
+  } else if (d.sensor_slot) {
+    effects.push(`Its place (${d.sensor_slot}) stays empty.`);
+    effects.push('That ward goes back to Bluetooth positions (about ±1 m), and its door alerts (at the door, left the ward) stop.');
+  } else if (use) {
+    effects.push('Whatever uses it stops getting its data.');
+  }
+  effects.push('This cannot be undone. Its history is kept.');
   safeShowModal({
-    title: 'Decommission Hardware Device',
-    message: `Are you sure you want to permanently remove device "${deviceId}" from the MySQL database?\n\nIf this device is an active anchor or edge gateway, position tracking in its assigned ward may be disrupted.`,
+    title: use ? `Delete ${deviceId}? It is in use` : `Delete ${deviceId}?`,
+    message: use ? `${deviceId} is ${use}.` : `${deviceId} is not in use.`,
+    impact: { level: 'danger', title: use ? 'Deleting it now will:' : 'Before you delete it', points: effects },
     type: 'danger',
-    confirmText: '🗑️ Delete Permanently',
+    confirmText: use ? 'Delete anyway' : 'Delete',
     cancelText: 'Cancel',
     onConfirm: async () => {
       try {
@@ -1048,14 +1146,14 @@ function confirmDeleteDevice(deviceId) {
         });
         const result = await res.json();
         if (result.success) {
-          safeShowToast(`Device ${deviceId} removed from fleet.`, 'success');
+          safeShowToast(`${deviceId} deleted.`, 'success');
           await loadDevicesFleet();
         } else {
-          safeShowToast(`Deletion failed: ${result.error}`, 'danger');
+          safeShowToast(`Not deleted: ${result.error}`, 'danger');
         }
       } catch (err) {
         console.error('Delete device error:', err);
-        safeShowToast('Network error deleting device.', 'danger');
+        safeShowToast('The server does not answer. The device was not deleted.', 'danger');
       }
     }
   });

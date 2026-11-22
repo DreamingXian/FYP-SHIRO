@@ -1,85 +1,112 @@
-<!-- System Health: live values from /api/system/stats and the device registry (health_monitor.js).
-     Nothing on this page is an example value: what is not known is shown as "--". -->
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <span style="font-size: 12px; color: var(--text-muted);">Updated every 5 seconds while this tab is open.</span>
-        <span style="font-size: 12px; color: var(--text-muted);" id="health-updated">Not loaded yet</span>
+<!-- System status (Setup, admins): live values from /api/system/stats and the device
+     registry (health_monitor.js). Nothing here is an example value: unknown is "--". -->
+      <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
+        <span class="page-title">System status</span>
+        <span style="font-size: 13px; color: var(--text-muted);" id="health-updated">Not loaded yet</span>
       </div>
 
       <div class="form-grid-3" style="margin-bottom: 24px;">
         <div class="card" style="margin-bottom: 0;">
           <div class="card-header">
-            <span class="card-title">Edge Server</span>
+            <span class="card-title">Server</span>
             <span class="badge badge-neutral" id="health-server-badge">--</span>
           </div>
           <div style="font-size: 26px; font-weight: 700; color: var(--text-primary);" id="health-uptime">--</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;" id="health-memory">Memory: --</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="health-loop">Response delay (event loop, 99th percentile): --</div>
+          <div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;" id="health-memory">Memory: --</div>
+          <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;" id="health-loop">Response time: --</div>
         </div>
 
         <div class="card" style="margin-bottom: 0;">
           <div class="card-header">
-            <span class="card-title">Database (MySQL)</span>
+            <span class="card-title">Database</span>
             <span class="badge badge-neutral" id="health-db-badge">--</span>
           </div>
           <div style="font-size: 26px; font-weight: 700; color: var(--text-primary);" id="health-db-rate">--</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;" id="health-db-detail">Queries per second since the last update</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="health-presence">Device presence waiting to be written: --</div>
+          <div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;" id="health-db-detail">Requests to the database</div>
+          <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;" id="health-presence">Waiting to be saved: --</div>
         </div>
 
         <div class="card" style="margin-bottom: 0;">
           <div class="card-header">
-            <span class="card-title">Live Connections</span>
+            <span class="card-title">Connections</span>
             <span class="badge badge-neutral" id="health-conn-badge">--</span>
           </div>
           <div style="font-size: 26px; font-weight: 700; color: var(--text-primary);" id="health-anchor-count">--</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;" id="health-ws-count">Dashboards and headsets connected: --</div>
-          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="health-headset-count">Headsets online: --</div>
+          <div style="font-size: 13px; color: var(--text-muted); margin-top: 6px;" id="health-ws-count">Screens and headsets connected: --</div>
+          <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;" id="health-headset-count">Headsets on: --</div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><span>📡 Enrolled Anchors</span></div>
-          <span style="font-size: 12px; color: var(--text-muted);">OFFLINE after 12 s without a message</span>
+          <div class="card-title"><span>Wall sensors</span></div>
+          <span style="font-size: 13px; color: var(--text-muted);">Shown as off after 12 s without a message</span>
         </div>
         <div class="data-table-container">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Device ID</th>
-                <th>MAC Address</th>
-                <th>LAN IP</th>
-                <th>Status</th>
-                <th>Last Seen</th>
+                <th>Name</th>
+                <th>MAC address</th>
+                <th>Network address</th>
+                <th>On / off</th>
+                <th>Last heard</th>
               </tr>
             </thead>
             <tbody id="health-anchor-rows">
-              <tr><td colspan="5" style="color: var(--text-muted);">Loading...</td></tr>
+              <tr><td colspan="5" class="empty-state">Loading…</td></tr>
             </tbody>
           </table>
         </div>
+        <div id="health-anchor-pager"></div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><span>🥽 Enrolled Headsets</span></div>
-          <span style="font-size: 12px; color: var(--text-muted);">Each headset reports its own ID (QUEST3-xxxxxx)</span>
+          <div class="card-title"><span>LiDAR</span></div>
+          <span style="font-size: 13px; color: var(--text-muted);">Turns per second and points per turn while it scans</span>
         </div>
         <div class="data-table-container">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Device ID</th>
-                <th>MAC Address (derived)</th>
-                <th>LAN IP</th>
-                <th>Battery</th>
-                <th>Status</th>
-                <th>Last Seen</th>
+                <th>Name</th>
+                <th>Ward</th>
+                <th>MAC address</th>
+                <th>On / off</th>
+                <th>Scanning</th>
+                <th>Last heard</th>
               </tr>
             </thead>
-            <tbody id="health-headset-rows">
-              <tr><td colspan="6" style="color: var(--text-muted);">Loading...</td></tr>
+            <tbody id="health-lidar-rows">
+              <tr><td colspan="6" class="empty-state">Loading…</td></tr>
             </tbody>
           </table>
         </div>
+        <div id="health-lidar-pager"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title"><span>Headsets</span></div>
+          <span style="font-size: 13px; color: var(--text-muted);">Each headset reports its own name (QUEST3-…)</span>
+        </div>
+        <div class="data-table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>MAC address</th>
+                <th>Network address</th>
+                <th>Battery</th>
+                <th>On / off</th>
+                <th>Last heard</th>
+              </tr>
+            </thead>
+            <tbody id="health-headset-rows">
+              <tr><td colspan="6" class="empty-state">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="health-headset-pager"></div>
       </div>

@@ -1,10 +1,16 @@
 // =============================================================================
-// SHIRO Hospital Edge Admin - Patients Controller
-// Client-side Controller for Inpatient Admissions, Photo Upload, Bed Sync & Census
+// SHIRO Dashboard - Patients
+// The list of patients (admitted ones first, 8 a page), admitting, the profile,
+// beds, vitals history. Phase 11: the admission form opens on demand; the fall
+// risk score is no longer asked or shown (it changed nothing in the system; the
+// database keeps the column).
 // =============================================================================
 
-let currentPatientFilter = 'ALL';
+let currentPatientFilter = 'ADMITTED';
+let currentPatientPage = 1;
 let cachedPatients = [];
+// The wristband each patient wears now: patient_id -> binding (patient_wristbands.js)
+let bindingByPatient = new Map();
 let cachedWards = [];
 let cachedAvailableBeds = [];
 
@@ -25,6 +31,20 @@ async function initPatientsModule() {
     loadPatientsDirectory()
   ]);
   handleNameOrDobChange();
+}
+
+/** Opens or closes the "Admit a patient" form above the list. */
+function toggleAdmissionForm(open) {
+  const card = document.getElementById('admission-card');
+  if (!card) return;
+  card.style.display = open ? 'block' : 'none';
+  const btn = document.getElementById('btn-open-admission');
+  if (btn) btn.style.display = open ? 'none' : '';
+  if (open) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const name = document.getElementById('adm-name');
+    if (name) setTimeout(() => name.focus(), 250);
+  }
 }
 
 /**
@@ -260,7 +280,7 @@ function populateWardDropdown() {
   if (!wardSelect) return;
 
   const currentVal = wardSelect.value;
-  let optionsHtml = `<option value="">-- None / Unassigned --</option>`;
+  let optionsHtml = `<option value="">Not yet</option>`;
 
   if (cachedWards && cachedWards.length > 0) {
     optionsHtml += cachedWards.map(w => 
@@ -287,7 +307,7 @@ function handleWardSelectionChange() {
 
   const selectedWardId = wardSelect.value;
   if (!selectedWardId) {
-    bedSelect.innerHTML = `<option value="">-- None / Unassigned --</option>`;
+    bedSelect.innerHTML = `<option value="">Not yet</option>`;
     bedSelect.disabled = true;
     return;
   }
@@ -312,19 +332,26 @@ async function loadPatientsDirectory() {
   if (!tbody) return;
 
   try {
-    const res = await fetch(`/api/patients/list?status=${encodeURIComponent(currentPatientFilter)}`);
+    // Every patient once; the filter and the counts work on this list. And the wristbands they wear.
+    const [res, bindingsRes] = await Promise.all([
+      fetch('/api/patients/list?status=ALL'),
+      fetch('/api/bindings/list').catch(() => null)
+    ]);
     const data = await res.json();
+    const bindingsData = bindingsRes ? await bindingsRes.json().catch(() => null) : null;
+    bindingByPatient = new Map((bindingsData && bindingsData.success && Array.isArray(bindingsData.bindings) ? bindingsData.bindings : [])
+      .map(b => [b.patient_id, b]));
 
     if (data.success) {
       cachedPatients = data.patients || [];
-      renderPatientsTable(cachedPatients);
       updateCensusCounts();
+      filterPatientTable(true);
     } else {
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--danger); padding:24px;">Failed to load patients: ${escapeHtml(data.error || 'Server error')}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--danger);">The patients could not be loaded: ${escapeHtml(data.error || 'server error')}</td></tr>`;
     }
   } catch (err) {
     console.error('Failed to load patients directory:', err);
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; color:var(--danger); padding:24px;">Network error loading patients from edge server.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="color:var(--danger);">The server does not answer. Check that it is running, then reload the page.</td></tr>`;
   }
 }
 
@@ -338,8 +365,8 @@ function updateCensusCounts() {
   const admittedCount = cachedPatients.filter(p => p.status === 'ADMITTED').length;
   const dischargedCount = cachedPatients.filter(p => p.status === 'DISCHARGED').length;
 
-  if (admittedBadge) admittedBadge.innerText = `${admittedCount} Admitted`;
-  if (dischargedBadge) dischargedBadge.innerText = `${dischargedCount} Discharged`;
+  if (admittedBadge) admittedBadge.innerText = String(admittedCount);
+  if (dischargedBadge) dischargedBadge.innerText = String(dischargedCount);
 }
 
 /**
@@ -349,47 +376,64 @@ function renderPatientsTable(patients) {
   const tbody = document.getElementById('patients-table-body');
   if (!tbody) return;
 
+  const pagerEl = document.getElementById('patients-pager');
   if (!patients || patients.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding:32px; color:var(--text-muted);">
-      No inpatient records found matching current criteria.
-    </td></tr>`;
+    const searching = (document.getElementById('patient-search-input')?.value || '').trim() !== '';
+    const emptyHtml = searching
+      ? '<strong>No patient matches the search.</strong>Check the spelling, or search by ID, IC, ward or bed.'
+      : currentPatientFilter === 'DISCHARGED'
+        ? '<strong>No discharged patients.</strong>'
+        : '<strong>No patients admitted.</strong>Press "＋ Admit patient" to add the first one.';
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${emptyHtml}</td></tr>`;
+    if (pagerEl) window.ShiroUI.renderPager(pagerEl, { total: 0, page: 1, noun: 'patients' });
     return;
   }
 
-  tbody.innerHTML = patients.map(p => {
+  const pageData = window.ShiroUI.paginate(patients, currentPatientPage);
+  currentPatientPage = pageData.page;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'patients',
+      onPage: (n) => { currentPatientPage = n; renderPatientsTable(patients); }
+    });
+  }
+
+  tbody.innerHTML = pageData.items.map(p => {
     // Photo or initials fallback
     const initials = p.full_name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
     const photoImg = p.photo_url 
       ? `<img src="${escapeHtml(p.photo_url)}" alt="${escapeHtml(p.full_name)}"${imgFallbackAttrs(initials)}>`
       : escapeHtml(initials);
 
-    // Fall risk badge
-    let riskBadge = `<span class="badge badge-live">● LOW RISK</span>`;
-    if (p.fall_risk_score === 'MEDIUM') riskBadge = `<span class="badge badge-warning">● MEDIUM</span>`;
-    if (p.fall_risk_score === 'HIGH') riskBadge = `<span class="badge badge-alert">● HIGH RISK</span>`;
-
     // Bed and Ward info
     const bedInfo = p.status === 'ADMITTED' && p.assigned_bed_id
       ? `<span class="badge badge-info">${escapeHtml(p.assigned_ward_id)} · ${escapeHtml(p.bed_code || p.assigned_bed_id)}</span>`
-      : `<span class="badge badge-neutral">No Active Bed</span>`;
+      : `<span class="badge badge-neutral">No bed</span>`;
 
     // Status pill
     const statusBadge = p.status === 'ADMITTED'
       ? `<span class="badge badge-live">● Admitted</span>`
       : `<span class="badge badge-neutral">● Discharged</span>`;
 
-    // Discharge / Assign Bed Action button
-    let secondaryActionBtn = '';
-    if (p.status === 'ADMITTED' && p.assigned_bed_id) {
-      secondaryActionBtn = `<button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDischargePatient', [p.patient_id, p.full_name, p.assigned_ward_id ? p.assigned_ward_id + ' · ' + (p.bed_code || p.assigned_bed_id) : 'assigned bed'], { stop: true })}>Discharge</button>`;
-    } else {
-      secondaryActionBtn = `<button class="btn btn-primary btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })}>Assign Bed</button>`;
-    }
+    // The wristband: worn now, or a button to give one (admitted patients only)
+    const worn = bindingByPatient.get(p.patient_id);
+    const wristbandCell = worn
+      ? `<span class="badge badge-info">${escapeHtml(worn.device_id)}</span> <span class="status-word" style="color: var(--text-muted);">${escapeHtml(worn.device_status === 'ONLINE' || worn.device_status === 'CHARGING' ? '● ON' : '○ OFF')}</span>`
+      : p.status === 'ADMITTED'
+        ? `<button class="btn btn-outline btn-sm"${actionAttrs('openGiveWristband', [p.patient_id, p.full_name], { stop: true })}>＋ Give wristband</button>`
+        : '<span style="color: var(--text-muted);">–</span>';
+    // The one obvious next step: a bed for an admitted patient without one; a discharged
+    // patient who comes back is admitted again with a bed (same record, a new stay)
+    const secondaryActionBtn = p.status === 'ADMITTED' && !p.assigned_bed_id
+      ? `<button class="btn btn-primary btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })} style="margin-right: 4px;">Give bed</button>`
+      : p.status === 'DISCHARGED'
+        ? `<button class="btn btn-outline btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id], { stop: true })} style="margin-right: 4px;" title="The patient is back: choose a bed, the stay starts now">↩ Admit again</button>`
+        : '';
 
     const genderLabel = p.gender === 'FEMALE' ? 'Female' : p.gender === 'MALE' ? 'Male' : 'Other';
 
     return `
-      <tr class="table-row-clickable"${actionAttrs('viewPatientProfileReadOnly', [p.patient_id])} title="Click to view full clinical profile for ${escapeHtml(p.full_name)}">
+      <tr class="table-row-clickable"${actionAttrs('viewPatientProfileReadOnly', [p.patient_id])} title="Open the profile of ${escapeHtml(p.full_name)}">
         <td>
           <div class="patient-cell">
             <div class="patient-thumb" title="${escapeHtml(p.full_name)}">
@@ -397,23 +441,21 @@ function renderPatientsTable(patients) {
             </div>
             <div>
               <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(p.full_name)}</div>
-              <div class="mono" style="font-size: 11px; color: var(--primary); font-weight: 600;">${escapeHtml(p.patient_id)}</div>
+              <div class="mono" style="font-size: 12px; color: var(--text-muted); font-weight: 600;">${escapeHtml(p.patient_id)}</div>
             </div>
           </div>
         </td>
-        <td class="mono">${escapeHtml(p.nric_passport)}</td>
-        <td>${escapeHtml(p.age !== null ? p.age + ' yrs' : '-')}</td>
-        <td><span class="badge badge-neutral" style="font-size: 11px;">${genderLabel}</span></td>
+        <td>${escapeHtml(p.age !== null ? p.age + ' years' : '–')}</td>
+        <td>${genderLabel}</td>
         <td>${bedInfo}</td>
-        <td>${riskBadge}</td>
-        <td style="color: var(--text-secondary); font-size: 12px;">${escapeHtml(p.admission_date || '-')}</td>
+        <td>${wristbandCell}</td>
+        <td style="color: var(--text-secondary);">${escapeHtml(p.admission_date || '–')}</td>
         <td>${statusBadge}</td>
         <td style="text-align: right; white-space: nowrap;">
-          <button class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="View InfluxDB Historical Vitals" style="margin-right: 4px;">📈 Vitals</button>
-          <button class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Falls and other incidents of this patient" style="margin-right: 4px;">🚨 Incidents</button>
-          <button class="btn btn-outline btn-sm"${actionAttrs('editPatientInfo', [p.patient_id], { stop: true })} style="margin-right: 4px;">Edit Infos</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Heart rate and SpO2 over time" style="margin-right: 4px;">📈 Vitals</button>
+          <button class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name], { stop: true })} title="Falls, critical vitals and door alerts of this patient" style="margin-right: 4px;">🚨 Incidents</button>
           ${secondaryActionBtn}
-          <button class="btn btn-danger-outline btn-sm"${actionAttrs('confirmDeletePatient', [p.patient_id, p.full_name], { stop: true })} title="Delete record" style="margin-left: 4px;">🗑️</button>
+          <button class="btn btn-outline btn-sm" data-row-menu="1"${actionAttrs('openPatientRowMenu', [p.patient_id], { stop: true, element: true })} title="Edit, bed, wristband, discharge, delete" aria-haspopup="true">⋯</button>
         </td>
       </tr>
     `;
@@ -425,26 +467,30 @@ function renderPatientsTable(patients) {
  */
 function setPatientFilter(filter, btn) {
   currentPatientFilter = filter;
-  document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+  currentPatientPage = 1;
+  document.querySelectorAll('#patient-filter-pills .filter-pill').forEach(b => b.classList.toggle('active', b.getAttribute('data-filter') === filter));
   if (btn) btn.classList.add('active');
-
-  loadPatientsDirectory();
+  filterPatientTable(true);
 }
 
 /**
  * Real-time search filter across patient name, ID, NRIC, bed, or ward.
  */
-function filterPatientTable() {
+function filterPatientTable(keepPage = false) {
   const input = document.getElementById('patient-search-input');
-  if (!input) return;
-  const q = input.value.trim().toLowerCase();
+  const q = input ? input.value.trim().toLowerCase() : '';
+  if (keepPage !== true) currentPatientPage = 1;
+
+  const byStatus = currentPatientFilter === 'ALL'
+    ? cachedPatients
+    : cachedPatients.filter(p => p.status === currentPatientFilter);
 
   if (!q) {
-    renderPatientsTable(cachedPatients);
+    renderPatientsTable(byStatus);
     return;
   }
 
-  const filtered = cachedPatients.filter(p => {
+  const filtered = byStatus.filter(p => {
     return (
       p.full_name.toLowerCase().includes(q) ||
       p.patient_id.toLowerCase().includes(q) ||
@@ -595,7 +641,6 @@ async function handlePatientAdmission(event) {
   const phone = document.getElementById('adm-phone').value.trim();
   const wardId = document.getElementById('adm-ward').value;
   const bedId = document.getElementById('adm-bed').value;
-  const risk = document.querySelector('input[name="fall_risk"]:checked').value;
   const history = document.getElementById('adm-history').value.trim();
   let photoUrl = document.getElementById('adm-photo-url').value;
   const body = readBodyMeasurements('adm-height', 'adm-weight');
@@ -615,13 +660,13 @@ async function handlePatientAdmission(event) {
     const wardTitle = wardOption ? wardOption.innerText : wardId;
     const bedTitle = bedOption ? bedOption.innerText : bedId;
 
-    confirmTitle = 'Confirm Patient Admission';
-    confirmMessage = `Admit patient "${name}" (${id}, NRIC: ${nric}) to:\n\n• Unit: ${wardTitle}\n• Bed: ${bedTitle}\n• Fall Risk Level: ${risk}\n\nThis will mark the cubicle bed as OCCUPIED in MySQL.`;
-    confirmButtonText = '➕ Confirm Admission to Bed';
+    confirmTitle = 'Admit this patient?';
+    confirmMessage = `${name} (${id})\n\n• Ward: ${wardTitle}\n• Bed: ${bedTitle}\n\nThe bed will show as occupied.`;
+    confirmButtonText = 'Admit';
   } else {
-    confirmTitle = 'Register Patient Without Bed Assignment';
-    confirmMessage = `Admit patient "${name}" (${id}, NRIC: ${nric}) WITHOUT an assigned hospital bed cubicle?\n\nThis patient will be registered as an Inpatient / Observation case without an active bed reservation. A bed can be assigned later via the census table.`;
-    confirmButtonText = '➕ Register Without Bed Assignment';
+    confirmTitle = 'Admit without a bed?';
+    confirmMessage = `${name} (${id}) will be admitted without a ward and bed.\n\nYou can give a bed later with "Assign bed" in the list.`;
+    confirmButtonText = 'Admit without a bed';
   }
 
   // Show Confirmation Modal
@@ -660,7 +705,6 @@ async function handlePatientAdmission(event) {
             phone_number: phone,
             assigned_ward_id: wardId || null,
             assigned_bed_id: bedId || null,
-            fall_risk_score: risk,
             height_cm: body.height_cm,
             weight_kg: body.weight_kg,
             medical_history: history,
@@ -676,9 +720,11 @@ async function handlePatientAdmission(event) {
           const result = await res.json();
           if (result.success) {
             if (window.showToast) {
-              window.showToast(`Patient ${name} (${result.patient_id}) registered successfully!`, 'success');
+              window.showToast(`${name} (${result.patient_id}) admitted.`, 'success');
             }
             resetAdmissionForm();
+            toggleAdmissionForm(false);
+            setPatientFilter('ADMITTED');
             // Refresh data
             await Promise.all([
               fetchNextPatientId(),
@@ -688,8 +734,8 @@ async function handlePatientAdmission(event) {
           } else {
             if (window.showModal) {
               window.showModal({
-                title: 'Registration Failed',
-                message: result.error || 'Failed to admit patient into MySQL.',
+                title: 'The patient was not admitted',
+                message: result.error || 'The server could not save the patient. Try again.',
                 type: 'danger',
                 confirmText: 'OK',
                 cancelText: null
@@ -698,7 +744,7 @@ async function handlePatientAdmission(event) {
           }
         } catch (err) {
           console.error('Admission error:', err);
-          if (window.showToast) window.showToast('Network error during patient admission.', 'danger');
+          if (window.showToast) window.showToast('The server does not answer. The patient was not admitted; try again.', 'danger');
         }
       }
     });
@@ -710,11 +756,21 @@ async function handlePatientAdmission(event) {
  */
 function confirmDischargePatient(patientId, patientName, bedInfo) {
   if (window.showModal) {
+    const worn = bindingByPatient.get(patientId);
     window.showModal({
-      title: 'Discharge Inpatient',
-      message: `Are you sure you want to discharge "${patientName}" (${patientId})?\n\nThis will update the patient status to DISCHARGED and automatically release ${bedInfo} back to AVAILABLE for new admissions.`,
-      type: 'danger',
-      confirmText: 'Discharge Patient',
+      title: `Discharge ${patientName}?`,
+      message: `${patientName} (${patientId}) leaves the ward. The record and its history stay; "Admit again" brings them back.`,
+      impact: {
+        level: 'warning',
+        title: 'Discharging will:',
+        points: [
+          `Free their bed (${bedInfo}) for another patient.`,
+          worn ? `Take off their wristband ${worn.device_id}: heart rate, fall alarms, door alerts and position stop.` : 'They wear no wristband: nothing else stops.',
+          'Remove them from the ward map and the patient list (they stay under Discharged).'
+        ]
+      },
+      type: 'warning',
+      confirmText: 'Discharge',
       cancelText: 'Cancel',
       onConfirm: async () => {
         try {
@@ -750,10 +806,19 @@ function confirmDischargePatient(patientId, patientName, bedInfo) {
 function confirmDeletePatient(patientId, patientName) {
   if (window.showModal) {
     window.showModal({
-      title: 'Delete Patient Record',
-      message: `Are you sure you want to permanently delete patient "${patientName}" (${patientId}) from MySQL database?\n\nIf the patient is currently assigned to a bed, the bed will automatically be released back to AVAILABLE. This action cannot be undone.`,
+      title: `Delete the record of ${patientName}?`,
+      message: `To end a stay normally, use "Discharge" instead: it keeps the record.`,
+      impact: {
+        level: 'danger',
+        title: 'Deleting the record will:',
+        points: [
+          `Delete ${patientName} (${patientId}) and their wristband history for good.`,
+          'Free their bed and their wristband; heart rate, fall alarms and position stop.',
+          'This cannot be undone.'
+        ]
+      },
       type: 'danger',
-      confirmText: '🗑️ Delete Permanently',
+      confirmText: 'Delete for good',
       cancelText: 'Cancel',
       onConfirm: async () => {
         try {
@@ -787,7 +852,74 @@ function confirmDeletePatient(patientId, patientName) {
 /**
  * Opens a modal to assign a bed to a discharged or unassigned patient.
  */
-async function openAssignBedModal(patientId) {
+/**
+ * The ward seen from above in the "give a bed" dialog: free beds green and
+ * clickable, taken or unavailable beds grey. Same layout as the ward editor
+ * (x east, y north, from the south-west corner).
+ */
+async function drawBedPickerMap(wardId, freeBedIds) {
+  const box = document.getElementById('modal-bed-map');
+  if (!box) return;
+  box.innerHTML = '<div class="empty-state">Loading the ward…</div>';
+  let ward;
+  try {
+    const res = await fetch(`/api/ward/config?ward_id=${encodeURIComponent(wardId)}`);
+    const data = await res.json();
+    ward = data.success ? data.ward : null;
+  } catch (err) {
+    ward = null;
+  }
+  if (!ward || !(Number(ward.length_x) > 0) || !(Number(ward.width_y) > 0)) {
+    box.innerHTML = '<div class="empty-state">The layout of this ward is not drawn yet. Choose the bed in the list.</div>';
+    return;
+  }
+  const L = Number(ward.length_x);
+  const W = Number(ward.width_y);
+  const scale = Math.min(460 / L, 240 / W);
+  const pad = 10;
+  const sw = L * scale + pad * 2;
+  const sh = W * scale + pad * 2;
+  const bedShapes = (ward.beds || []).map(bed => {
+    const rot = ((parseInt(bed.rotation_deg, 10) || 0) % 360 + 360) % 360;
+    const along = rot === 90 || rot === 270;
+    const bw = (along ? Number(bed.length) || 2 : Number(bed.width) || 0.9) * scale;
+    const bl = (along ? Number(bed.width) || 0.9 : Number(bed.length) || 2) * scale;
+    const x = pad + (Number(bed.x) || 0) * scale;
+    const y = pad + (W - (Number(bed.y) || 0)) * scale - bl;
+    const free = freeBedIds.has(bed.bed_id);
+    return `<g class="bed-pick ${free ? 'free' : 'taken'}" data-bed="${escapeHtml(bed.bed_id)}">
+        <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bl.toFixed(1)}" rx="4"></rect>
+        <text x="${(x + bw / 2).toFixed(1)}" y="${(y + bl / 2 + 4).toFixed(1)}" text-anchor="middle">${escapeHtml(bed.bed_code || bed.bed_id)}</text>
+        <title>${escapeHtml(free ? 'Free: click to choose' : 'Taken or out of use')}</title>
+      </g>`;
+  }).join('');
+  box.innerHTML = `<svg viewBox="0 0 ${sw.toFixed(1)} ${sh.toFixed(1)}" role="img" aria-label="Beds of the ward">
+      <rect class="room" x="${pad.toFixed(1)}" y="${pad.toFixed(1)}" width="${(L * scale).toFixed(1)}" height="${(W * scale).toFixed(1)}"></rect>
+      ${bedShapes}
+    </svg>`;
+  box.querySelectorAll('.bed-pick.free').forEach(g => {
+    g.addEventListener('click', () => {
+      const sel = document.getElementById('modal-assign-bed');
+      if (sel) sel.value = g.getAttribute('data-bed');
+      highlightChosenBed();
+    });
+  });
+}
+
+/** Marks the bed chosen in the list on the map. */
+function highlightChosenBed() {
+  const sel = document.getElementById('modal-assign-bed');
+  const chosen = sel ? sel.value : '';
+  document.querySelectorAll('#modal-bed-map .bed-pick').forEach(g => g.classList.toggle('chosen', g.getAttribute('data-bed') === chosen));
+}
+window.highlightChosenBed = highlightChosenBed;
+
+/**
+ * The bed dialog. leavingWardId: the patient moves out of that ward (it is being
+ * deleted): its beds are not offered, and the ward's delete dialog opens again
+ * after the move.
+ */
+async function openAssignBedModal(patientId, leavingWardId = null) {
   try {
     const res = await fetch(`/api/patients/get?id=${encodeURIComponent(patientId)}`);
     const data = await res.json();
@@ -800,14 +932,16 @@ async function openAssignBedModal(patientId) {
     // Refresh available beds list
     const bedsRes = await fetch('/api/patients/available-beds');
     const bedsData = await bedsRes.json();
-    const wards = bedsData.wards || [];
-    const availableBeds = bedsData.availableBeds || [];
+    const wards = (bedsData.wards || []).filter(w => w.ward_id !== leavingWardId);
+    const availableBeds = (bedsData.availableBeds || []).filter(b => b.ward_id !== leavingWardId);
 
     if (availableBeds.length === 0) {
       if (window.showModal) {
         window.showModal({
-          title: 'No Available Beds',
-          message: 'All hospital beds across all configured wards are currently OCCUPIED or UNAVAILABLE.\n\nPlease discharge a patient or add beds in Ward Config first.',
+          title: 'No free bed',
+          message: leavingWardId
+            ? `No other ward has a free bed for ${p.full_name}.\n\nDischarge the patient (Patients page), or add beds to another ward under Setup → Wards & layout.`
+            : 'Every bed in every ward is taken or out of use.\n\nDischarge a patient, or add beds under Setup → Wards & layout.',
           type: 'warning',
           confirmText: 'OK',
           cancelText: null
@@ -816,51 +950,60 @@ async function openAssignBedModal(patientId) {
       return;
     }
 
-    const wardOptions = wards.map(w => `<option value="${escapeHtml(w.ward_id)}">${escapeHtml(w.ward_id)} - ${escapeHtml(w.room_title)}</option>`).join('');
+    // Open on the first ward that has a free bed
+    const firstFree = (wards.find(w => availableBeds.some(b => b.ward_id === w.ward_id)) || {}).ward_id;
+    const wardOptions = wards.map(w => `<option value="${escapeHtml(w.ward_id)}"${w.ward_id === firstFree ? ' selected' : ''}>${escapeHtml(w.ward_id)} - ${escapeHtml(w.room_title)}${escapeHtml(availableBeds.some(b => b.ward_id === w.ward_id) ? '' : ' (no free bed)')}</option>`).join('');
 
+    const readmit = p.status === 'DISCHARGED';
+    const moving = Boolean(leavingWardId);
     const modalContent = `
-      <div style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">
-        Assigning active bed cubicle for <strong>${escapeHtml(p.full_name)}</strong> (${escapeHtml(p.patient_id)}, NRIC: ${escapeHtml(p.nric_passport)}).
+      <div style="font-size:14px; color:var(--text-secondary); margin-bottom:12px;">
+        ${readmit ? 'Admit' : moving ? 'Move' : 'A bed for'} <strong>${escapeHtml(p.full_name)}</strong> (${escapeHtml(p.patient_id)})${readmit ? ' again: a new stay starts now, with the same record and history' : ''}${escapeHtml(moving ? ` out of ${leavingWardId}, to a bed in another ward` : '')}. Click a green bed on the map, or choose it in the list.
       </div>
       <div class="form-group">
-        <label class="form-label">Target Ward Unit *</label>
+        <label class="form-label">Ward</label>
         <select class="form-control" id="modal-assign-ward" onchange="updateAssignBedModalBeds()">
           ${wardOptions}
         </select>
       </div>
+      <div id="modal-bed-map" class="bed-map"></div>
+      <div class="bed-map-legend"><span><i class="free"></i> Free</span><span><i class="taken"></i> Taken or out of use</span><span><i class="chosen"></i> Chosen</span></div>
       <div class="form-group" style="margin-bottom:0;">
-        <label class="form-label">Available Bed Cubicle *</label>
-        <select class="form-control" id="modal-assign-bed">
+        <label class="form-label">Bed</label>
+        <select class="form-control" id="modal-assign-bed" onchange="highlightChosenBed()">
         </select>
       </div>
     `;
 
     window._modalAvailableBeds = availableBeds;
-    window.updateAssignBedModalBeds = function() {
+    window.updateAssignBedModalBeds = async function() {
       const wardEl = document.getElementById('modal-assign-ward');
       const bedEl = document.getElementById('modal-assign-bed');
       if (!wardEl || !bedEl) return;
       const filtered = window._modalAvailableBeds.filter(b => b.ward_id === wardEl.value);
       if (filtered.length === 0) {
-        bedEl.innerHTML = `<option value="" disabled selected>No available beds in this ward</option>`;
+        bedEl.innerHTML = `<option value="" disabled selected>No free bed in this ward</option>`;
       } else {
-        bedEl.innerHTML = filtered.map(b => `<option value="${escapeHtml(b.bed_id)}">🟢 ${escapeHtml(b.bed_code)} (${escapeHtml(b.bed_id)})</option>`).join('');
+        bedEl.innerHTML = filtered.map(b => `<option value="${escapeHtml(b.bed_id)}">${escapeHtml(b.bed_code)}</option>`).join('');
       }
+      await drawBedPickerMap(wardEl.value, new Set(filtered.map(b => b.bed_id)));
+      highlightChosenBed();
     };
 
     if (window.showModal) {
       window.showModal({
-        title: `Assign Bed Cubicle: ${p.full_name}`,
+        title: readmit ? `Admit ${p.full_name} again` : moving ? `Move ${p.full_name} out of ${leavingWardId}` : `Give ${p.full_name} a bed`,
         customHtml: modalContent,
+        isWide: true,
         type: 'info',
-        confirmText: 'Assign & Occupy Bed',
+        confirmText: readmit ? 'Admit with this bed' : moving ? 'Move to this bed' : 'Give this bed',
         cancelText: 'Cancel',
         onConfirm: async () => {
           const wardId = document.getElementById('modal-assign-ward')?.value;
           const bedId = document.getElementById('modal-assign-bed')?.value;
 
           if (!wardId || !bedId) {
-            if (window.showToast) window.showToast('Please select a valid available bed.', 'warning');
+            if (window.showToast) window.showToast('Choose a free bed first.', 'warning');
             return;
           }
 
@@ -876,17 +1019,21 @@ async function openAssignBedModal(patientId) {
             });
             const assignResult = await assignRes.json();
             if (assignResult.success) {
-              if (window.showToast) window.showToast(`Bed successfully assigned to ${p.full_name}!`, 'success');
+              if (window.showToast) window.showToast(readmit ? `${p.full_name} is admitted again.` : `${p.full_name} now has a bed.`, 'success');
+              // Back on the Admitted list, where they are now
+              if (readmit && typeof window.setPatientFilter === 'function') window.setPatientFilter('ADMITTED');
+              // Moved out of a ward being deleted: back to its delete dialog (the next patient, or the delete)
+              if (moving && typeof window.deleteWardRecord === 'function') setTimeout(() => window.deleteWardRecord(leavingWardId), 400);
               await Promise.all([
                 fetchAvailableBedsAndWards(),
                 loadPatientsDirectory()
               ]);
             } else {
-              if (window.showToast) window.showToast(`Assignment failed: ${assignResult.error}`, 'danger');
+              if (window.showToast) window.showToast(`Not given: ${assignResult.error}`, 'danger');
             }
           } catch (err) {
             console.error('Assign bed error:', err);
-            if (window.showToast) window.showToast('Network error assigning bed.', 'danger');
+            if (window.showToast) window.showToast('The server does not answer. The bed was not given.', 'danger');
           }
         }
       });
@@ -936,10 +1083,6 @@ async function viewPatientProfileReadOnly(patientId) {
           <strong style="color:var(--text-primary);">${escapeHtml(bedDesc)}</strong>
         </div>
         <div>
-          <span style="color:var(--text-muted);">Fall Risk Level:</span><br>
-          <strong style="color:${p.fall_risk_score === 'HIGH' ? 'var(--danger)' : p.fall_risk_score === 'MEDIUM' ? 'var(--warning)' : 'var(--success)'};">● ${escapeHtml(p.fall_risk_score)} RISK</strong>
-        </div>
-        <div>
           <span style="color:var(--text-muted);">Height / Weight:</span><br>
           <strong style="color:var(--text-primary);">${escapeHtml(bodySummary(p))}</strong>
         </div>
@@ -954,21 +1097,23 @@ async function viewPatientProfileReadOnly(patientId) {
       </div>
 
       <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:12px;">
-        <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">Medical History, Chronic Conditions &amp; Drug Allergies:</div>
-        <div style="color:var(--text-secondary); line-height:1.5; white-space:pre-wrap;">${escapeHtml(p.medical_history || 'No recorded chronic illnesses or known drug allergies.')}</div>
+        <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">Medical history and allergies</div>
+        <div style="color:var(--text-secondary); line-height:1.5; white-space:pre-wrap;">${escapeHtml(p.medical_history || 'Nothing recorded.')}</div>
       </div>
 
       <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openPatientVitalsHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; color:var(--primary); border-color:var(--primary);">
-        📈 <span>View InfluxDB Historical Vitals Trends (Table 4.10: 30-Day Retention)</span>
+        📈 <span>Vitals history (heart rate, SpO2)</span>
       </button>
       <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openIncidentHistoryModal', [p.patient_id, p.full_name])} style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px; font-weight:600; padding:8px 12px; margin-top:8px; color:var(--danger); border-color:var(--danger);">
-        🚨 <span>Incident History (falls, critical vitals, ward exits)</span>
+        🚨 <span>Incidents (falls, critical vitals, door alerts)</span>
       </button>
 
-      <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:12px;">
-        <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">🔗 Wristband History</div>
-        <div id="profile-binding-history" style="color:var(--text-muted);">Loading…</div>
-      </div>
+      <!-- Wristband history: closed until clicked, 8 a page (Phase 11 review) -->
+      <details class="profile-history">
+        <summary>⌚ Wristband history <span class="badge badge-neutral" id="profile-binding-count">…</span></summary>
+        <div id="profile-binding-history" style="color:var(--text-muted); margin-top:8px;">Loading…</div>
+        <div id="profile-binding-pager"></div>
+      </details>
     `;
 
     if (window.showModal) {
@@ -987,39 +1132,58 @@ async function viewPatientProfileReadOnly(patientId) {
 }
 
 /**
- * Fills the profile's "Wristband History": every wristband this patient wore, newest first.
+ * Fills the profile's wristband history: every wristband this patient wore,
+ * newest first, as a table of 8 a page (the same pager as the other tables).
  */
+let profileHistory = [];
+
+function renderProfileBindingHistory(page = 1) {
+  const box = document.getElementById('profile-binding-history');
+  const pagerEl = document.getElementById('profile-binding-pager');
+  if (!box) return;
+  const pageData = window.ShiroUI.paginate(profileHistory, page);
+  const duration = window.formatBindingDuration || ((m) => `${m} min`);
+  const historyItems = pageData.items.map(b => `<tr>
+      <td><span class="mono" style="font-weight:600; color:var(--text-primary);">${escapeHtml(b.device_id || 'deleted wristband')}</span></td>
+      <td>${escapeHtml(b.bound_at || 'not recorded')}<div class="profile-history-who">${escapeHtml(b.bound_by || '')}</div></td>
+      <td>${escapeHtml(b.status === 'ACTIVE' ? 'now' : (b.unbound_at || 'not recorded'))}<div class="profile-history-who">${escapeHtml(b.status === 'ACTIVE' ? '' : (b.unbound_by || ''))}</div></td>
+      <td><span class="badge ${b.status === 'ACTIVE' ? 'badge-live' : 'badge-neutral'}">${escapeHtml(b.status === 'ACTIVE' ? 'Worn now' : b.status === 'DISCHARGED' ? 'Discharged' : 'Taken off')}</span></td>
+      <td>${escapeHtml(duration(b.duration_minutes))}${escapeHtml(b.status === 'ACTIVE' ? ' so far' : '')}</td>
+    </tr>`).join('');
+  box.innerHTML = `<table class="data-table profile-history-table">
+      <thead><tr><th>Wristband</th><th>From</th><th>Until</th><th>Ended</th><th>For</th></tr></thead>
+      <tbody>${historyItems}</tbody>
+    </table>`;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'wristbands',
+      onPage: (n) => renderProfileBindingHistory(n)
+    });
+  }
+}
+
 async function loadProfileBindingHistory(patientId) {
+  const box = document.getElementById('profile-binding-history');
+  const countEl = document.getElementById('profile-binding-count');
+  profileHistory = [];
   let text = null;
-  let historyItems = '';
   try {
-    const res = await fetch(`/api/bindings/history?patient_id=${encodeURIComponent(patientId)}&limit=50`);
+    const res = await fetch(`/api/bindings/history?patient_id=${encodeURIComponent(patientId)}&limit=500`);
     const data = await res.json();
     if (!data.success || !Array.isArray(data.history)) {
       text = 'Wristband history could not be loaded.';
     } else if (data.history.length === 0) {
-      text = 'No wristband has been bound to this patient.';
+      text = 'No wristband has been given to this patient yet.';
     } else {
-      const duration = window.formatBindingDuration || ((m) => `${m} min`);
-      historyItems = data.history.map(b => `
-        <div style="padding:6px 0; border-top:1px solid var(--border);">
-          <span class="mono" style="color:var(--text-primary); font-weight:600;">${escapeHtml(b.device_id || 'deleted wristband')}</span>
-          <span class="mono" style="color:var(--text-muted);">(${escapeHtml(b.mac_address || 'MAC not recorded')})</span>
-          · ${escapeHtml(b.status === 'ACTIVE' ? 'worn now' : b.status === 'DISCHARGED' ? 'ended at discharge' : 'unbound')}
-          <div style="color:var(--text-secondary); margin-top:2px;">
-            ${escapeHtml(b.bound_at || 'not recorded')} (${escapeHtml(b.bound_by || 'not recorded')})
-            → ${escapeHtml(b.status === 'ACTIVE' ? 'now' : `${b.unbound_at || 'not recorded'} (${b.unbound_by || 'not recorded'})`)}
-            · ${escapeHtml(duration(b.duration_minutes))}
-          </div>
-        </div>`).join('');
+      profileHistory = data.history;
     }
   } catch (err) {
     text = 'Wristband history could not be loaded.';
   }
-  const box = document.getElementById('profile-binding-history');
+  if (countEl) countEl.innerText = text === null ? String(profileHistory.length) : '0';
   if (!box) return;
   if (text !== null) box.textContent = text;
-  else box.innerHTML = historyItems;
+  else renderProfileBindingHistory(1);
 }
 
 /**
@@ -1120,27 +1284,10 @@ async function editPatientInfo(patientId) {
 
       <div style="border-top:1px solid var(--border); padding-top:12px;">
         <div class="form-group">
-          <label class="form-label" style="font-weight:600;">Emergency Contact Phone *</label>
+          <label class="form-label" style="font-weight:600;">Emergency Contact Phone <span class="req" aria-hidden="true">*</span></label>
           <input type="text" class="form-control" id="edit-patient-phone" value="${escapeHtml(p.phone_number || '')}" placeholder="+6012-3456789">
         </div>
 
-        <div class="form-group">
-          <label class="form-label" style="font-weight:600;">Clinical Fall Risk Stratification *</label>
-          <div class="radio-pills">
-            <label class="radio-pill-item">
-              <input type="radio" name="edit_fall_risk" value="LOW" ${p.fall_risk_score === 'LOW' ? 'checked' : ''}>
-              <span class="radio-pill-label risk-low">● LOW RISK</span>
-            </label>
-            <label class="radio-pill-item">
-              <input type="radio" name="edit_fall_risk" value="MEDIUM" ${p.fall_risk_score === 'MEDIUM' ? 'checked' : ''}>
-              <span class="radio-pill-label risk-med">● MEDIUM</span>
-            </label>
-            <label class="radio-pill-item">
-              <input type="radio" name="edit_fall_risk" value="HIGH" ${p.fall_risk_score === 'HIGH' ? 'checked' : ''}>
-              <span class="radio-pill-label risk-high">● HIGH RISK</span>
-            </label>
-          </div>
-        </div>
 
         <div class="form-row" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div class="form-group">
@@ -1169,7 +1316,6 @@ async function editPatientInfo(patientId) {
         cancelText: 'Cancel',
         onConfirm: () => {
           const updatedPhone = document.getElementById('edit-patient-phone')?.value.trim();
-          const updatedRisk = document.querySelector('input[name="edit_fall_risk"]:checked')?.value || p.fall_risk_score;
           const updatedHistory = document.getElementById('edit-patient-history')?.value.trim();
           let updatedPhoto = document.getElementById('edit-patient-photo-url')?.value || photoSrc;
           const updatedBody = readBodyMeasurements('edit-patient-height', 'edit-patient-weight');
@@ -1186,10 +1332,10 @@ async function editPatientInfo(patientId) {
 
           // Confirmation prompt before saving notes / changes
           window.showModal({
-            title: 'Confirm Changes',
-            message: `Save updated clinical information for "${p.full_name}" (${p.patient_id})?\n\n• Phone: ${updatedPhone}\n• Fall Risk: ${updatedRisk}\n• Height / Weight: ${bodySummary(updatedBody)}\n• Photo: ${updatedPhoto !== photoSrc ? 'Updated' : 'Unchanged'}`,
+            title: 'Save the changes?',
+            message: `${p.full_name} (${p.patient_id})\n\n• Phone: ${updatedPhone}\n• Height / weight: ${bodySummary(updatedBody)}\n• Photo: ${updatedPhoto !== photoSrc ? 'new photo' : 'unchanged'}`,
             type: 'info',
-            confirmText: '💾 Save Changes',
+            confirmText: 'Save',
             cancelText: 'Cancel',
             onConfirm: async () => {
               try {
@@ -1214,7 +1360,6 @@ async function editPatientInfo(patientId) {
                   body: JSON.stringify({
                     patient_id: p.patient_id,
                     phone_number: updatedPhone,
-                    fall_risk_score: updatedRisk,
                     height_cm: updatedBody.height_cm,
                     weight_kg: updatedBody.weight_kg,
                     medical_history: updatedHistory,
@@ -1276,10 +1421,6 @@ function resetAdmissionForm() {
     if (el) el.value = '';
   }
 
-  // Reset Fall Risk radio to LOW
-  const lowRiskRadio = document.querySelector('input[name="fall_risk"][value="LOW"]');
-  if (lowRiskRadio) lowRiskRadio.checked = true;
-
   handleNameOrDobChange();
 
   // Restore next patient ID & Ward
@@ -1305,9 +1446,8 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
           <span>📈 ${escapeHtml(safeName)}</span>
           <span class="mono" style="font-size: 12px; color: var(--primary); font-weight: 600;">(${escapeHtml(patientId)})</span>
         </div>
-        <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-          InfluxDB Engine · Bucket: <span class="mono">shiro_telemetry</span> · 
-          <span class="badge badge-info" style="font-size: 10px; padding: 2px 6px;">Table 4.10: 30-Day Vitals Retention</span>
+        <div style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
+          Heart rate and SpO2 measured by the wristband. Kept for 30 days.
         </div>
       </div>
       
@@ -1317,7 +1457,11 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
         <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-6h"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-6h'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">6h</button>
         <button type="button" class="btn btn-primary btn-sm range-btn" data-range="-24h"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-24h'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">24h</button>
         <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-7d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-7d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;">7d</button>
-        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-30d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-30d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;" title="Full 30-Day InfluxDB Table 4.10 Retention">30d</button>
+        <button type="button" class="btn btn-outline btn-sm range-btn" data-range="-30d"${actionAttrs('switchVitalsHistoryRange', [patientId, safeName, '-30d'], { element: true })} style="padding: 4px 10px; font-size: 11px; font-weight: 600;" title="The last 30 days">30d</button>
+      </div>
+      <div style="display: flex; gap: 6px;">
+        <button type="button" class="btn btn-outline btn-sm" onclick="downloadVitalsCsv()" title="Every reading of this period, for Excel">⬇ CSV</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="printVitalsReport()" title="A report of this period to print or save as PDF">🖨 Print / PDF</button>
       </div>
     </div>
 
@@ -1325,14 +1469,14 @@ async function openPatientVitalsHistoryModal(patientId, patientName, defaultRang
     <div id="vitals-history-dynamic-container" style="min-height: 380px;">
       <div style="text-align: center; padding: 48px; color: var(--text-muted);">
         <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
-        <div>Querying InfluxDB time-series records for ${escapeHtml(safeName)}...</div>
+        <div>Loading the vitals of ${escapeHtml(safeName)}…</div>
       </div>
     </div>
   `;
 
   if (window.showModal) {
     window.showModal({
-      title: `Patient Physiological Telemetry (InfluxDB)`,
+      title: 'Vitals history',
       customHtml: modalHtml,
       isWide: true,
       type: 'info',
@@ -1366,7 +1510,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
   container.innerHTML = `
     <div style="text-align: center; padding: 48px; color: var(--text-muted);">
       <div style="font-size: 24px; margin-bottom: 8px;">⏳</div>
-      <div>Loading InfluxDB records for range ${escapeHtml(range)}...</div>
+      <div>Loading…</div>
     </div>
   `;
 
@@ -1374,18 +1518,18 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
     const res = await fetch(`/api/patients/vitals-history?id=${encodeURIComponent(patientId)}&range=${encodeURIComponent(range)}`);
     const data = await res.json();
 
+    lastVitalsReport = { patientId, patientName, range, vitals: data.success && Array.isArray(data.vitals) ? data.vitals : [] };
     if (!data.success || !Array.isArray(data.vitals) || data.vitals.length === 0) {
       container.innerHTML = `
         <div style="background: #F8FAFC; border: 1px dashed var(--border); border-radius: 8px; padding: 36px 20px; text-align: center; margin-top: 10px;">
           <div style="font-size: 32px; margin-bottom: 8px;">📊</div>
-          <div style="font-weight: 700; color: var(--text-primary); font-size: 14px;">No InfluxDB Vitals Recorded for Selected Range (${escapeHtml(range)})</div>
-          <div style="font-size: 12px; color: var(--text-muted); max-width: 520px; margin: 8px auto 14px auto; line-height: 1.5;">
-            Telemetry is automatically ingested into bucket <span class="mono">shiro_telemetry</span> when this patient's wristband is bound and streaming (either in scheduled 3-min passive bursts or active 1 Hz inspection).
+          <div style="font-weight: 700; color: var(--text-primary); font-size: 15px;">No vitals in this period</div>
+          <div style="font-size: 13px; color: var(--text-muted); max-width: 520px; margin: 8px auto 14px auto; line-height: 1.5;">
+            Vitals are saved while the patient wears a linked wristband: one measurement every 3 minutes, or every second in live mode.
           </div>
           <div style="display: flex; gap: 8px; justify-content: center; font-size: 11px;">
             <span class="badge badge-info">Patient: ${escapeHtml(patientId)}</span>
-            <span class="badge badge-neutral">Device: ${escapeHtml(data.device_id || 'Standby')}</span>
-            <span class="badge badge-neutral">MAC: ${escapeHtml(data.wristband_mac || 'Pending')}</span>
+            <span class="badge badge-neutral">Wristband: ${escapeHtml(data.device_id || 'none linked')}</span>
           </div>
         </div>
       `;
@@ -1409,12 +1553,13 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
     // Build SVG Trend Charts
     const hrSvg = generateVitalsSvg(vitals, 'heart_rate', 40, 160, 60, 100, '#DC2626', '#22C55E', 'BPM');
     const spo2Svg = generateVitalsSvg(vitals, 'spo2', 75, 100, 95, 100, '#0284C7', '#0EA5E9', '%');
+    Object.assign(lastVitalsReport, { hrSvg, spo2Svg, avgHR, minHR, maxHR, avgSpO2, minSpO2, maxSpO2 });
 
     container.innerHTML = `
       <!-- 4-Card Summary KPI Strip -->
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px;">
         <div style="background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px 12px;">
-          <div style="font-size: 11px; font-weight: 600; color: #991B1B;">❤️ Mean Heart Rate</div>
+          <div style="font-size: 11px; font-weight: 600; color: #991B1B;">❤️ Average heart rate</div>
           <div style="font-size: 20px; font-weight: 800; color: #DC2626; margin-top: 2px;">
             ${avgHR} <span style="font-size: 11px; font-weight: 500;">BPM</span>
           </div>
@@ -1422,7 +1567,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
         </div>
 
         <div style="background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 10px 12px;">
-          <div style="font-size: 11px; font-weight: 600; color: #166534;">🫁 Mean SpO2 Saturation</div>
+          <div style="font-size: 11px; font-weight: 600; color: #166534;">🫁 Average SpO2 (indicative)</div>
           <div style="font-size: 20px; font-weight: 800; color: #15803D; margin-top: 2px;">
             ${avgSpO2}<span style="font-size: 11px; font-weight: 500;">%</span>
           </div>
@@ -1430,29 +1575,29 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
         </div>
 
         <div style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;">
-          <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">📊 Trend Points</div>
+          <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary);">📊 Readings shown</div>
           <div style="font-size: 20px; font-weight: 800; color: var(--text-primary); margin-top: 2px;">
-            ${vitals.length} <span style="font-size: 11px; font-weight: 500;">points</span>
+            ${vitals.length}
           </div>
-          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" title="Each point is the median of the readings stored in one interval. Intervals without a reading have no point.">Range: ${escapeHtml(data.range || range)} · median per ${escapeHtml(data.window || 'interval')}</div>
+          <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;" title="Each point is the middle value (median) of the readings in one interval; an interval without a reading has no point.">One value per ${escapeHtml(data.window || 'interval')}</div>
         </div>
 
         <div style="background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; padding: 10px 12px;">
-          <div style="font-size: 11px; font-weight: 600; color: #0369A1;">🛡️ Retention Status</div>
+          <div style="font-size: 11px; font-weight: 600; color: #0369A1;">🗓 Kept for</div>
           <div style="font-size: 14px; font-weight: 700; color: #0284C7; margin-top: 4px;">
-            30-Day Policy
+            30 days
           </div>
-          <div style="font-size: 10px; color: #0284C7; margin-top: 2px;">Downsampled after 7d</div>
+          <div style="font-size: 10px; color: #0284C7; margin-top: 2px;">Older than 7 days: fewer points</div>
         </div>
       </div>
 
       <!-- Trend Chart 1: Heart Rate (BPM) -->
       <div style="background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-          <div style="font-size: 12px; font-weight: 700; color: #991B1B;">❤️ Heart Rate Trend (BPM)</div>
+          <div style="font-size: 12px; font-weight: 700; color: #991B1B;">❤️ Heart rate (bpm)</div>
           <div style="font-size: 10px; color: var(--text-muted);">
             <span style="display: inline-block; width: 10px; height: 10px; background: #DCFCE7; border: 1px solid #86EFAC; border-radius: 2px; margin-right: 4px; vertical-align: middle;"></span>
-            Normal Zone: 60–100 BPM
+            Normal: 60–100 bpm
           </div>
         </div>
         ${hrSvg}
@@ -1461,10 +1606,10 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
       <!-- Trend Chart 2: Blood Oxygen SpO2 (%) -->
       <div style="background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-          <div style="font-size: 12px; font-weight: 700; color: #0369A1;">🫁 Oxygen Saturation Trend (SpO2 %)</div>
+          <div style="font-size: 12px; font-weight: 700; color: #0369A1;">🫁 SpO2 (%, indicative)</div>
           <div style="font-size: 10px; color: var(--text-muted);">
             <span style="display: inline-block; width: 10px; height: 10px; background: #E0F2FE; border: 1px solid #7DD3FC; border-radius: 2px; margin-right: 4px; vertical-align: middle;"></span>
-            Normal Zone: 95–100%
+            Normal: 95–100%
           </div>
         </div>
         ${spo2Svg}
@@ -1473,14 +1618,14 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
       <!-- Compact Recent Point Log -->
       <details style="font-size: 11px; color: var(--text-secondary); margin-top: 6px;">
         <summary style="cursor: pointer; font-weight: 600; padding: 4px 0; color: var(--primary);">
-          📋 View Most Recent Trend Points (${Math.min(vitals.length, 10)} of ${vitals.length})
+          📋 The latest ${Math.min(vitals.length, 10)} readings (of ${vitals.length})
         </summary>
         <div style="max-height: 140px; overflow-y: auto; margin-top: 6px; border: 1px solid var(--border); border-radius: 6px;">
           <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
             <thead>
               <tr style="background: #F8FAFC; border-bottom: 1px solid var(--border); text-align: left;">
-                <th style="padding: 6px 10px;">Timestamp</th>
-                <th style="padding: 6px 10px;">Heart Rate</th>
+                <th style="padding: 6px 10px;">Time</th>
+                <th style="padding: 6px 10px;">Heart rate</th>
                 <th style="padding: 6px 10px;">SpO2</th>
               </tr>
             </thead>
@@ -1505,7 +1650,7 @@ async function switchVitalsHistoryRange(patientId, patientName, range, clickedBt
   } catch (err) {
     container.innerHTML = `
       <div style="padding: 24px; text-align: center; color: var(--danger);">
-        Error loading InfluxDB vitals: ${escapeHtml(err.message)}
+        The vitals could not be loaded: ${escapeHtml(err.message)}
       </div>
     `;
   }
@@ -1550,7 +1695,7 @@ function generateVitalsSvg(points, field, minAxis, maxAxis, normalLow, normalHig
 
     const isAbnormal = p[field] < normalLow || p[field] > normalHigh;
     const dotColor = isAbnormal ? '#DC2626' : strokeColor;
-    const timeLabel = new Date(p.time).toLocaleTimeString();
+    const timeLabel = new Date(p.time).toLocaleString();
     circles.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${validPoints.length > 50 ? 2 : 3.5}" fill="${dotColor}" stroke="#FFFFFF" stroke-width="1.5"><title>${escapeHtml(timeLabel)}: ${escapeHtml(p[field])} ${unit}</title></circle>`);
   });
 
@@ -1564,9 +1709,16 @@ function generateVitalsSvg(points, field, minAxis, maxAxis, normalLow, normalHig
     `;
   }).join('');
 
-  // Start & End Time labels
-  const startTimeStr = new Date(validPoints[0].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const endTimeStr = new Date(validPoints[validPoints.length - 1].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // Time axis: start, middle and end; with the date when the period is longer than a day
+  const firstT = new Date(validPoints[0].time).getTime();
+  const lastT = new Date(validPoints[validPoints.length - 1].time).getTime();
+  const withDate = lastT - firstT > 20 * 3600 * 1000;
+  const axisText = (t) => withDate
+    ? new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    : new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const startTimeStr = axisText(firstT);
+  const endTimeStr = axisText(lastT);
+  const midTimeStr = axisText((firstT + lastT) / 2);
 
   return `
     <svg viewBox="0 0 ${w} ${h}" style="width: 100%; height: auto; display: block; overflow: visible;">
@@ -1585,12 +1737,87 @@ function generateVitalsSvg(points, field, minAxis, maxAxis, normalLow, normalHig
       <!-- X-Axis Labels -->
       <text x="${padLeft}" y="${h - 4}" font-size="9" fill="#64748B">${startTimeStr}</text>
       <text x="${w - padRight}" y="${h - 4}" font-size="9" text-anchor="end" fill="#64748B">${endTimeStr}</text>
+      <text x="${(padLeft + (w - padRight)) / 2}" y="${h - 4}" font-size="9" text-anchor="middle" fill="#64748B">${escapeHtml(midTimeStr)}</text>
     </svg>
   `;
 }
 
 // Global exports for inline HTML event handlers and SPA router
+// ----- Vitals: download and print (Phase 11) -----
+let lastVitalsReport = null;
+const VITALS_RANGE_TEXT = { '-1h': 'the last hour', '-6h': 'the last 6 hours', '-24h': 'the last 24 hours', '-7d': 'the last 7 days', '-30d': 'the last 30 days' };
+const pad2 = (n) => String(n).padStart(2, '0');
+const localStamp = (t) => { const d = new Date(t); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
+
+/** Every reading of the shown period as a CSV file for Excel (UTF-8, local times, empty = not measured). */
+function downloadVitalsCsv() {
+  const r = lastVitalsReport;
+  if (!r || !r.vitals.length) {
+    if (window.showToast) window.showToast('No vitals in this period to download.', 'info');
+    return;
+  }
+  const lines = ['Time (local),Heart rate (bpm),SpO2 (%; indicative)'];
+  for (const v of r.vitals) {
+    const hr = v.heart_rate > 0 ? String(Math.round(v.heart_rate)) : '';
+    const spo2 = v.spo2 > 0 ? String(Number(v.spo2)) : '';
+    lines.push(`${localStamp(v.time)},${hr},${spo2}`);
+  }
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `vitals_${r.patientId}_${r.range.replace('-', '')}_${localStamp(Date.now()).replace(/[-: ]/g, '').slice(0, 12)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/** A one-page report of the shown period: who, when, summary, both charts, the latest readings. */
+function printVitalsReport() {
+  const r = lastVitalsReport;
+  if (!r || !r.vitals.length) {
+    if (window.showToast) window.showToast('No vitals in this period to print.', 'info');
+    return;
+  }
+  const win = window.open('', '_blank');
+  if (!win) {
+    if (window.showToast) window.showToast('The browser blocked the report window. Allow pop-ups for this page.', 'warning');
+    return;
+  }
+  const by = window.shiroAuth && window.shiroAuth.user ? window.shiroAuth.user.full_name : '';
+  const first = localStamp(r.vitals[0].time);
+  const last = localStamp(r.vitals[r.vitals.length - 1].time);
+  const latest = r.vitals.slice(-100).reverse();
+  const readingRows = latest.map(v => `<tr><td>${escapeHtml(localStamp(v.time))}</td><td>${escapeHtml(v.heart_rate > 0 ? Math.round(v.heart_rate) : '–')}</td><td>${escapeHtml(v.spo2 > 0 ? v.spo2 : '–')}</td></tr>`).join('');
+  const hrSvg = r.hrSvg || '';
+  const spo2Svg = r.spo2Svg || '';
+  win.document.write(`<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Vitals ${escapeHtml(r.patientId)}</title>
+<style>
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #0F172A; margin: 24px; font-size: 13px; }
+  h1 { font-size: 20px; margin: 0 0 4px; } .meta { color: #475569; margin-bottom: 14px; }
+  table { border-collapse: collapse; width: 100%; } td, th { border: 1px solid #CBD5E1; padding: 4px 8px; text-align: left; }
+  th { background: #F1F5F9; } .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 14px 0; }
+  .note { color: #64748B; font-size: 12px; margin-top: 6px; } @media print { .noprint { display: none; } }
+</style></head><body>
+  <button class="noprint" onclick="window.print()" style="float: right; padding: 6px 14px;">Print / Save as PDF</button>
+  <h1>Vitals report: ${escapeHtml(r.patientName || r.patientId)} (${escapeHtml(r.patientId)})</h1>
+  <div class="meta">Period: ${escapeHtml(VITALS_RANGE_TEXT[r.range] || r.range)}, readings from ${escapeHtml(first)} to ${escapeHtml(last)} · ${Number(r.vitals.length)} readings · printed ${escapeHtml(localStamp(Date.now()))}${escapeHtml(by ? ' by ' + by : '')}</div>
+  <table><tr><th></th><th>Average</th><th>Lowest</th><th>Highest</th></tr>
+    <tr><td>Heart rate (bpm)</td><td>${escapeHtml(r.avgHR)}</td><td>${escapeHtml(r.minHR)}</td><td>${escapeHtml(r.maxHR)}</td></tr>
+    <tr><td>SpO2 (%, indicative: not calibrated)</td><td>${escapeHtml(r.avgSpO2)}</td><td>${escapeHtml(r.minSpO2)}</td><td>${escapeHtml(r.maxSpO2)}</td></tr>
+  </table>
+  <div class="charts"><div><b>Heart rate (bpm)</b>${hrSvg}</div><div><b>SpO2 (%)</b>${spo2Svg}</div></div>
+  <b>Latest readings</b>${escapeHtml(r.vitals.length > 100 ? ' (the newest 100; every reading is in the CSV download)' : '')}
+  <table><tr><th>Time</th><th>Heart rate (bpm)</th><th>SpO2 (%)</th></tr>${readingRows}</table>
+  <div class="note">Measured by the SHIRO wristband. SpO2 is indicative only and raises no alarm.</div>
+</body></html>`);
+  win.document.close();
+  win.focus();
+}
+
+window.downloadVitalsCsv = downloadVitalsCsv;
+window.printVitalsReport = printVitalsReport;
 window.initPatientsModule = initPatientsModule;
+window.toggleAdmissionForm = toggleAdmissionForm;
 window.handlePatientAdmission = handlePatientAdmission;
 window.handlePhotoFileUpload = handlePhotoFileUpload;
 window.selectAvatarPreset = selectAvatarPreset;

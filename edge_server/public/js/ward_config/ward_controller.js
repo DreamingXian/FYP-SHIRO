@@ -65,7 +65,7 @@
         if (dev.availability_status === 'IN_USE' && dev.assigned_ward_id !== currentWard.ward_id && dev.device_id !== selectedDeviceId) return;
 
         const isSelected = selectedDeviceId && selectedDeviceId === dev.device_id;
-        const statusDot = dev.status === 'ONLINE' ? '● Online' : '○ Offline';
+        const statusDot = dev.status === 'ONLINE' ? '● ON' : '○ OFF';
         optionsHtml += `<option value="${escapeHtml(dev.device_id)}" ${isSelected ? 'selected' : ''}>${escapeHtml(dev.device_id)} (${escapeHtml(statusDot)})</option>`;
       });
       return optionsHtml;
@@ -77,7 +77,7 @@
       selects.forEach(sel => {
         const opt = sel.querySelector(`option[value="${CSS.escape(String(deviceId))}"]`);
         if (opt) {
-          const statusDot = status === 'ONLINE' ? '● Online' : '○ Offline';
+          const statusDot = status === 'ONLINE' ? '● ON' : '○ OFF';
           opt.textContent = `${deviceId} (${statusDot})`;
         }
       });
@@ -136,6 +136,11 @@
         return;
       }
 
+      // Each wall sensor sends several signal messages a second: the page changes only
+      // when its status does (ON to OFF or back), not on every message
+      const wardAnchors = currentWard && Array.isArray(currentWard.anchors) ? currentWard.anchors : [];
+      if (dev.status === cleanStatus && !wardAnchors.some(a => a.device_id === targetId && a.status !== cleanStatus)) return;
+
       // Update cached device status
       dev.status = cleanStatus;
 
@@ -185,6 +190,11 @@
     function startAnchorStatusPolling() {
       if (anchorStatusPollTimer) return;
       anchorStatusPollTimer = setInterval(async () => {
+        // Only while the ward editor is open (Setup, Wards & layout): every 3 s on every
+        // page would ask the server for the device list for nothing
+        const editorView = document.getElementById('ward-editor-view');
+        const pane = document.getElementById('tab-ward-config');
+        if (document.hidden || !editorView || editorView.style.display === 'none' || !pane || !pane.classList.contains('active')) return;
         try {
           const res = await fetch('/api/devices/list?type=ANCHOR');
           const data = await res.json();
@@ -242,7 +252,7 @@
       isDirty = false;
       const dbBadge = document.getElementById('db-sync-badge');
       if (dbBadge) {
-        dbBadge.innerText = '● MySQL Synchronized';
+        dbBadge.innerText = '● Saved';
         dbBadge.className = 'badge badge-live';
       }
     }
@@ -297,43 +307,59 @@
 
       const countBadge = document.getElementById('ward-total-count');
       if (countBadge) {
-        countBadge.innerText = `${wards.length} Ward${wards.length === 1 ? '' : 's'} Configured`;
+        countBadge.innerText = `${wardsList.length} ward${wardsList.length === 1 ? '' : 's'}`;
       }
 
+      const pageData = window.ShiroUI.paginate(wards, window.wardDirectoryPage || 1);
+      window.wardDirectoryPage = pageData.page;
+      window.ShiroUI.renderPager(document.getElementById('wards-pager'), {
+        total: pageData.total, page: pageData.page, noun: 'wards',
+        onPage: (n) => { window.wardDirectoryPage = n; renderWardDirectoryTable(wards); }
+      });
+
       if (wards.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 24px;">No wards found in database. Click "➕ Create New Ward" above to configure your first room.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">${wardsList.length ? 'No ward matches the search.' : '<strong>No wards yet.</strong>Press "＋ New ward" to draw the first room.'}</td></tr>`;
         return;
       }
 
-      wards.forEach(w => {
+      pageData.items.forEach(w => {
         const updated = w.updated_at ? new Date(w.updated_at).toLocaleString() : 'Recently';
-        const uuidShort = w.spatial_anchor_uuid ? `${escapeHtml(w.spatial_anchor_uuid.substring(0, 8))}...` : '<span style="color:var(--text-muted);">None</span>';
         const isLiveMapReady = (w.anchor_count >= 3 && w.assigned_anchor_count >= w.anchor_count);
         const liveMapBtn = isLiveMapReady
-          ? `<button class="btn btn-primary btn-sm"${actionAttrs('openWardLiveMap', [w.ward_id], { stop: true })} style="background:#0EA5E9; border-color:#0284C7;">🗺️ View Live Map</button>`
-          : `<button class="btn btn-outline btn-sm" disabled style="opacity:0.45; cursor:not-allowed;" title="Please complete anchor registration &amp; assignment for all anchor slots to enable the live map function." onclick="event.stopPropagation();">🗺️ View Live Map</button>`;
+          ? `<button class="btn btn-outline btn-sm"${actionAttrs('navigateToWardLiveMap', [w.ward_id], { stop: true })} title="Open this ward on the Ward page">🗺️ Live map</button>`
+          : `<button class="btn btn-outline btn-sm" disabled title="The live map needs at least 3 wall sensors, each linked to a device." onclick="event.stopPropagation();">🗺️ Live map</button>`;
+        const sensorsOk = w.anchor_count >= 3;
 
-        const row = `<tr class="table-row-clickable"${actionAttrs('viewWardDetailsReadOnly', [w.ward_id])} title="Click to view layout &amp; specifications for ${escapeHtml(w.room_title || w.ward_id)}">
-          <td><b style="color: var(--primary);">${escapeHtml(w.ward_id)}</b></td>
-          <td><b style="color: var(--text-primary);">${escapeHtml(w.room_title || 'Ward')}</b></td>
-          <td><span class="mono">${Number(w.length_x).toFixed(2)}m × ${Number(w.width_y).toFixed(2)}m × ${Number(w.height_z).toFixed(2)}m</span></td>
-          <td><span class="badge badge-neutral">${escapeHtml(w.door_wall || 'SOUTH')} @ ${Number(w.door_x).toFixed(2)}m (${Number(w.door_width).toFixed(2)}m w)</span></td>
-          <td><span class="badge badge-info">${escapeHtml(w.bed_count)} Beds</span></td>
-          <td><span class="badge ${w.anchor_count >= 3 ? 'badge-live' : 'badge-warning'}">${escapeHtml(w.anchor_count)} Nodes</span></td>
-          <td><span class="badge badge-neutral">${escapeHtml(w.obstacle_count)} Cutout${w.obstacle_count === 1 ? '' : 's'}</span></td>
-          <td class="mono" style="font-size: 11px;" title="${escapeHtml(w.spatial_anchor_uuid)}">${uuidShort}</td>
-          <td style="color: var(--text-muted); font-size: 12px;">${escapeHtml(updated)}</td>
-          <td>
-            <div style="display: flex; gap: 6px;">
+        const row = `<tr class="table-row-clickable"${actionAttrs('viewWardDetailsReadOnly', [w.ward_id])} title="Show the layout of ${escapeHtml(w.room_title || w.ward_id)}">
+          <td><b style="color: var(--text-primary);">${escapeHtml(w.ward_id)}</b></td>
+          <td>${escapeHtml(w.room_title || '–')}</td>
+          <td>${Number(w.length_x).toFixed(1)} × ${Number(w.width_y).toFixed(1)} m</td>
+          <td>${escapeHtml(w.bed_count)}</td>
+          <td><span class="badge ${sensorsOk ? 'badge-live' : 'badge-warning'}" title="${sensorsOk ? '' : 'At least 3 are needed to locate the wristbands'}">${escapeHtml(w.anchor_count)}${sensorsOk ? '' : ' (need 3)'}</span></td>
+          <td style="color: var(--text-muted);">${escapeHtml(updated)}</td>
+          <td style="text-align: right;">
+            <div style="display: inline-flex; gap: 6px;">
               ${liveMapBtn}
-              <button class="btn btn-outline btn-sm"${actionAttrs('openWardEditor', [w.ward_id], { stop: true })}>✏️ Configure Layout</button>
-              <button class="btn btn-danger-outline btn-sm"${actionAttrs('deleteWardRecord', [w.ward_id], { stop: true })}>🗑 Delete</button>
+              <button class="btn btn-outline btn-sm"${actionAttrs('openWardEditor', [w.ward_id], { stop: true })}>✏️ Edit layout</button>
+              <button class="btn btn-danger-outline btn-sm"${actionAttrs('deleteWardRecord', [w.ward_id], { stop: true })} title="Delete this ward">🗑</button>
             </div>
           </td>
         </tr>`;
         tbody.insertAdjacentHTML('beforeend', row);
       });
     }
+
+    /** Refresh with a visible answer. */
+    async function refreshWardDirectory(button) {
+      const done = window.ShiroUI.busy(button, 'Refreshing…');
+      const started = Date.now();
+      await loadWardDirectory();
+      const wait = 600 - (Date.now() - started);
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      done();
+      if (window.showToast) window.showToast(`Up to date: ${wardsList.length} ward${wardsList.length === 1 ? '' : 's'}.`, 'success', 2500);
+    }
+    window.refreshWardDirectory = refreshWardDirectory;
 
     function filterWardDirectory() {
       const q = (document.getElementById('ward-search-input').value || '').toLowerCase().trim();
@@ -347,11 +373,12 @@
     function returnToWardDirectory(force = false) {
       if (!force && hasUnsavedWardChanges()) {
         showModal({
-          title: 'Unsaved Changes',
-          message: `You have unsaved changes to ward "${currentWard.ward_id}".\n\nIf you leave now, your changes will not be saved to MySQL.`,
+          title: 'Leave without saving?',
+          message: `The layout of ${currentWard.ward_id} has changes that are not saved.`,
+          impact: { level: 'warning', title: 'If you leave now:', points: ['Every change since the last save is lost.'] },
           type: 'warning',
-          confirmText: 'Discard & Leave',
-          cancelText: 'Continue Editing',
+          confirmText: 'Leave without saving',
+          cancelText: 'Keep editing',
           onConfirm: () => {
             forceReturnToWardDirectory();
           }
@@ -363,11 +390,10 @@
 
     function forceReturnToWardDirectory() {
       isDirty = false;
+      // The live map is on the Ward page (tab-ward) since Phase 11: not hidden from here
       const editorView = document.getElementById('ward-editor-view');
-      const liveMapView = document.getElementById('ward-live-map-view');
       const dirView = document.getElementById('ward-directory-view');
       if (editorView) editorView.style.display = 'none';
-      if (liveMapView) liveMapView.style.display = 'none';
       if (dirView) dirView.style.display = 'block';
       loadWardDirectory();
     }
@@ -390,26 +416,28 @@
               <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-bottom:1px solid var(--border-light); font-size:12px;">
                 <div><strong>${escapeHtml(b.bed_code || b.bed_id)}</strong> <span style="font-size:10px; color:var(--text-muted); font-weight:600;">[${rotLabel}]</span></div>
                 <div style="font-family:monospace; color:var(--text-muted);">${Number(b.x).toFixed(2)}m, ${Number(b.y).toFixed(2)}m</div>
-                <span class="badge ${b.status === 'AVAILABLE' ? 'badge-live' : b.status === 'OCCUPIED' ? 'badge-alert' : 'badge-neutral'}">${escapeHtml(b.status)}</span>
+                <span class="badge ${b.status === 'AVAILABLE' ? 'badge-live' : b.status === 'OCCUPIED' ? 'badge-info' : 'badge-warning'}">${escapeHtml(b.status === 'AVAILABLE' ? 'Free' : b.status === 'OCCUPIED' ? 'Taken' : 'Out of use')}</span>
               </div>`;
             }).join('')
-          : '<div style="color:var(--text-muted); font-size:12px; padding:8px; text-align:center;">No beds configured.</div>';
+          : '<div style="color:var(--text-muted); font-size:12px; padding:8px; text-align:center;">No beds yet.</div>';
 
         // Format Wall Anchors as structured individual cards
         const anchorsList = (w.anchors && w.anchors.length > 0)
           ? w.anchors.map(a => {
               const isAssigned = !!a.device_id;
               const liveStatus = isAssigned ? (a.status || 'OFFLINE') : 'STANDBY';
-              const badgeClass = liveStatus === 'ONLINE' ? 'badge-live' : (liveStatus === 'OFFLINE' ? 'badge-alert' : 'badge-neutral');
+              // Off is grey (red is only for a patient who needs help)
+              const badgeClass = liveStatus === 'ONLINE' ? 'badge-live' : (liveStatus === 'OFFLINE' ? 'badge-neutral' : 'badge-warning');
+              const statusWord = liveStatus === 'ONLINE' ? 'On' : liveStatus === 'OFFLINE' ? 'Off' : 'No device';
               const nodeDisplay = isAssigned 
-                ? `<div class="mono" style="font-size:11px; color:var(--primary); font-weight:700;">Node: ${escapeHtml(a.device_id)}</div>`
-                : `<div style="font-size:11px; color:var(--text-muted); font-style:italic;">Node: Unassigned (Standby Slot)</div>`;
+                ? `<div class="mono" style="font-size:11px; color:var(--primary); font-weight:700;">Device: ${escapeHtml(a.device_id)}</div>`
+                : `<div style="font-size:11px; color:var(--text-muted); font-style:italic;">No device linked yet (Edit layout → Wall sensors)</div>`;
 
               return `
               <div class="modal-anchor-card" data-device-id="${escapeHtml(a.device_id || '')}" style="background: #F8FAFC; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.03);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 4px;">
                   <strong style="color:var(--text-primary); font-size:12px;">📡 ${escapeHtml(a.anchor_id)}</strong>
-                  <span class="badge modal-anchor-badge ${badgeClass}" style="font-size:10px;">● ${escapeHtml(liveStatus)}</span>
+                  <span class="badge modal-anchor-badge ${badgeClass}" style="font-size:10px;">● ${escapeHtml(statusWord)}</span>
                 </div>
                 <div style="font-size:11px; color:var(--text-secondary); margin-bottom: 3px;">
                   Position: (${Number(a.x).toFixed(2)}m, ${Number(a.y).toFixed(2)}m, ${Number(a.z).toFixed(2)}m) · ${escapeHtml(a.wall_location || 'Wall')}
@@ -417,7 +445,7 @@
                 ${nodeDisplay}
               </div>`;
             }).join('')
-          : '<div style="color:var(--text-muted); font-size:12px; padding:12px; text-align:center;">No BLE anchors configured.</div>';
+          : '<div style="color:var(--text-muted); font-size:12px; padding:12px; text-align:center;">No wall sensors yet.</div>';
 
         // Format Obstacles as structured individual cards (fixing undefined bug)
         const obstaclesList = (w.obstacles && w.obstacles.length > 0)
@@ -439,7 +467,7 @@
                   </div>
                 </div>`;
             }).join('')
-          : '<div style="color:var(--text-muted); font-size:12px; padding:12px; text-align:center;">No obstacles configured.</div>';
+          : '<div style="color:var(--text-muted); font-size:12px; padding:12px; text-align:center;">No obstacles.</div>';
 
         // Door details handling (fixing undefined @ NaNm)
         const doorWall = w.door?.wall || w.door_wall || 'SOUTH';
@@ -451,8 +479,7 @@
             <!-- Left Column: 2D Architectural Floor Plan Canvas -->
             <div>
               <div style="font-weight: 700; font-size: 12px; color: var(--text-primary); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-                <span>📐 2D Architectural Floor Plan</span>
-                <span class="badge badge-live">Digital Twin Active</span>
+                <span>📐 Floor plan</span>
               </div>
               <div style="position: relative; width: 100%; height: 320px; border-radius: 10px; overflow: hidden; border: 1.5px solid var(--border); background: #FFFFFF; box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);">
                 <canvas id="modal-ward-preview-canvas" width="460" height="320" style="width: 100%; height: 100%; display: block;"></canvas>
@@ -467,26 +494,26 @@
             <div>
               <div style="margin-bottom: 12px;">
                 <div style="font-size: 16px; font-weight: 700; color: var(--text-primary);">${escapeHtml(w.room_title || 'Ward')}</div>
-                <div style="font-size: 11px; color: var(--primary); font-weight: 600;" class="mono">${escapeHtml(w.ward_id)} · Archetype: ${escapeHtml(w.layout_type || 'RECTANGLE')}</div>
+                <div style="font-size: 11px; color: var(--primary); font-weight: 600;" class="mono">${escapeHtml(w.ward_id)}</div>
               </div>
 
               <!-- Quick Meta Card -->
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 12px; font-size: 11px;">
                 <div>
-                  <span style="color: var(--text-muted);">Spatial UUID:</span><br>
-                  <span class="mono" style="font-size: 10px; color: var(--text-secondary); word-break: break-all;" title="${escapeHtml(w.spatial_anchor_uuid || '')}">${escapeHtml(w.spatial_anchor_uuid ? w.spatial_anchor_uuid.substring(0, 16) + '...' : 'Not Mapped')}</span>
+                  <span style="color: var(--text-muted);">Headset room anchor</span><br>
+                  <span style="font-size: 12px; color: var(--text-secondary);" title="Set from the headset app, never typed here">${escapeHtml(w.spatial_anchor_uuid ? 'Set by a headset' : 'Not set yet: set it from the headset app')}</span>
                 </div>
                 <div>
-                  <span style="color: var(--text-muted);">Total Inventory:</span><br>
-                  <strong style="color: var(--text-primary);">${w.beds ? w.beds.length : 0} Beds · ${w.anchors ? w.anchors.length : 0} BLE Nodes</strong>
+                  <span style="color: var(--text-muted);">In the room</span><br>
+                  <strong style="color: var(--text-primary);">${w.beds ? w.beds.length : 0} beds · ${w.anchors ? w.anchors.length : 0} wall sensors</strong>
                 </div>
               </div>
 
               <!-- Beds Fleet Table -->
               <div style="background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 10px;">
                 <div style="font-weight: 700; font-size: 11px; color: var(--text-primary); margin-bottom: 6px; display: flex; justify-content: space-between;">
-                  <span>🛏️ Hospital Beds Fleet</span>
-                  <span class="badge badge-info">${w.beds ? w.beds.length : 0} Beds</span>
+                  <span>🛏️ Beds</span>
+                  <span class="badge badge-info">${w.beds ? w.beds.length : 0}</span>
                 </div>
                 <div style="max-height: 120px; overflow-y: auto;">
                   ${bedsList}
@@ -497,7 +524,7 @@
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                 <div style="background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;">
                   <div style="font-weight: 700; font-size: 11px; color: var(--text-primary); margin-bottom: 6px; display: flex; justify-content: space-between;">
-                    <span>📡 Wall Anchors</span>
+                    <span>📡 Wall sensors</span>
                     <span class="badge badge-neutral" style="font-size:10px;">${w.anchors ? w.anchors.length : 0}</span>
                   </div>
                   <div style="max-height: 160px; overflow-y: auto;">
@@ -524,23 +551,23 @@
 
         if (window.showModal) {
           window.showModal({
-            title: `Ward Specifications & 2D Floor Plan: ${w.ward_id}`,
+            title: w.room_title ? `${w.ward_id} – ${w.room_title}` : w.ward_id,
             customHtml: modalHtml,
             isWide: true,
             type: 'info',
-            confirmText: '✏️ Configure Layout',
+            confirmText: '✏️ Edit layout',
             cancelText: 'Close',
-            extraButtonText: '🗺️ View Live Map',
+            // Same name as on the ward list; off (greyed) until every wall sensor slot has its device
+            extraButtonText: '🗺️ Live map',
             extraButtonClass: isModalMapReady ? 'btn btn-primary btn-sm' : 'btn btn-outline btn-sm',
             extraButtonDisabled: !isModalMapReady,
-            extraButtonTitle: isModalMapReady ? 'Open real-time 2D IPS live tracking map' : 'Please complete anchor registration & assignment for all anchor slots to enable the live map function.',
+            extraButtonTitle: isModalMapReady ? 'Open this ward on the Ward page' : 'The live map needs at least 3 wall sensors, each linked to a device (Edit layout → Wall sensors).',
             onConfirm: () => {
               openWardEditor(w.ward_id);
             },
             onExtra: () => {
-              if (typeof window.openWardLiveMap === 'function') {
-                window.openWardLiveMap(w.ward_id);
-              }
+              // The map is on the Ward page: switch to it, then show this ward
+              if (typeof window.navigateToWardLiveMap === 'function') window.navigateToWardLiveMap(w.ward_id);
             }
           });
 
@@ -571,8 +598,6 @@
           isCreatingNew = false;
           currentWard = data.ward;
           document.getElementById('ward-directory-view').style.display = 'none';
-          const liveMapView = document.getElementById('ward-live-map-view');
-          if (liveMapView) liveMapView.style.display = 'none';
           document.getElementById('ward-editor-view').style.display = 'block';
           const badge = document.getElementById('editor-ward-badge');
           if (badge) badge.innerText = `${currentWard.ward_id} (${currentWard.room_title})`;
@@ -639,12 +664,63 @@
       if (window.requestAnimationFrame) window.requestAnimationFrame(redrawWardMap);
     }
 
-    function deleteWardRecord(wardId) {
+    /**
+     * Deleting a ward (Phase 11 review). While admitted patients are in it, the
+     * ward is not deleted: the dialog lists them, each with "Move…" (a bed in
+     * another ward); after each move it opens again. Once the ward is empty it
+     * asks to confirm, saying what goes (the server refuses too while patients remain).
+     */
+    async function deleteWardRecord(wardId) {
+      let inWard = [];
+      try {
+        const res = await fetch('/api/patients/list?status=ADMITTED');
+        const data = await res.json();
+        inWard = (data.patients || []).filter(p => p.assigned_ward_id === wardId);
+      } catch (err) {
+        showToast('The server does not answer. Nothing was deleted.', 'danger');
+        return;
+      }
+      const ward = (wardsList || []).find(w => w.ward_id === wardId) || { ward_id: wardId };
+
+      if (inWard.length) {
+        const peopleHtml = inWard.map(p => `<div class="modal-impact-person">
+            <span><b>${escapeHtml(p.full_name)}</b> <span class="mono" style="color: var(--text-muted);">${escapeHtml(p.patient_id)}</span> · ${escapeHtml(p.bed_code || p.assigned_bed_id || 'no bed')}</span>
+            <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id, wardId])}>Move…</button>
+          </div>`).join('');
+        showModal({
+          title: `${wardId} still has ${inWard.length} patient${inWard.length === 1 ? '' : 's'}`,
+          customHtml: `<div style="font-size: 14px; color: var(--text-secondary);">Move ${inWard.length === 1 ? 'this patient' : 'each patient'} to a bed in another ward first. After the last one, the ward can be deleted.</div>
+            <div class="modal-impact-people">${peopleHtml}</div>`,
+          impact: {
+            level: 'warning',
+            title: `${wardId} cannot be deleted yet`,
+            points: [
+              'Deleting a ward with patients in it would take away their ward and bed: they would disappear from every map and the shift report.',
+              'Move each one (Move…), or discharge them on the Patients page.'
+            ]
+          },
+          type: 'warning',
+          confirmText: 'Close'
+        });
+        return;
+      }
+
+      const sensors = Number(ward.assigned_anchor_count) || 0;
       showModal({
-        title: 'Delete Hospital Ward',
-        message: `Are you sure you want to permanently delete ward "${wardId}"?\n\nThis will remove the room geometry, beds fleet, BLE wall anchors, and obstacle cutouts from MySQL.`,
+        title: `Delete ${wardId}${ward.room_title ? ` – ${ward.room_title}` : ''}?`,
+        message: 'No patient is in this ward.',
+        impact: {
+          level: 'danger',
+          title: 'Deleting it will:',
+          points: [
+            `Remove the room, its ${Number(ward.bed_count) || 0} bed${Number(ward.bed_count) === 1 ? '' : 's'} and its furniture.`,
+            sensors ? `Free its ${sensors} wall sensor${sensors === 1 ? '' : 's'} and its LiDAR for another ward; this ward's live map and door alerts stop.` : 'Remove the places of its wall sensors and LiDAR.',
+            'Keep past incidents and shift reports (they show the ward ID).',
+            'This cannot be undone.'
+          ]
+        },
         type: 'danger',
-        confirmText: 'Delete Ward',
+        confirmText: 'Delete ward',
         cancelText: 'Cancel',
         onConfirm: async () => {
           try {
@@ -653,13 +729,13 @@
             });
             const data = await res.json();
             if (data.success) {
-              showToast(`Ward ${wardId} deleted successfully.`, 'success');
+              showToast(`Ward ${wardId} deleted.`, 'success');
               loadWardDirectory();
             } else {
-              showModal({ title: 'Delete Error', message: data.error, type: 'danger', confirmText: 'Dismiss' });
+              showModal({ title: 'Not deleted', message: data.error, type: 'warning', confirmText: 'OK' });
             }
           } catch (err) {
-            showModal({ title: 'Server Error', message: err.message, type: 'danger', confirmText: 'Dismiss' });
+            showModal({ title: 'Not deleted', message: `The server does not answer (${err.message}).`, type: 'danger', confirmText: 'OK' });
           }
         }
       });
@@ -714,8 +790,7 @@
         document.getElementById('cfg-door-width').value = Number(currentWard.door.width || 0.90).toFixed(2);
       }
 
-      // Spatial Anchor UUID
-      document.getElementById('cfg-spatial-uuid').value = currentWard.spatial_anchor_uuid || '';
+      // The headset room anchor is not shown: the headset app sets it, and saving keeps it
 
       // Preset Template default is NONE
       const tplSelect = document.getElementById('cfg-template-select');
@@ -735,7 +810,6 @@
     function syncWardMeta() {
       currentWard.ward_id = document.getElementById('cfg-room-id').value.trim() || currentWard.ward_id;
       currentWard.room_title = document.getElementById('cfg-room-title').value.trim();
-      currentWard.spatial_anchor_uuid = document.getElementById('cfg-spatial-uuid').value.trim();
       const badge = document.getElementById('editor-ward-badge');
       if (badge) badge.innerText = `${currentWard.ward_id} (${currentWard.room_title})`;
       markUnsavedChanges();
@@ -766,7 +840,42 @@
       markUnsavedChanges();
     }
 
+    /**
+     * What stops the layout from being saved (outside the room, too many beds,
+     * obstacles or LiDARs) and what is worth a look (beds on top of each other),
+     * under the floor plan; the add buttons are off at the limits.
+     */
+    function renderLayoutProblems() {
+      const rules = window.ShiroWardRules;
+      const box = document.getElementById('ward-layout-problems');
+      if (!rules || !currentWard) return { errors: [], warnings: [] };
+      const result = rules.checkWardLayout(currentWard);
+      if (box) {
+        const items = result.errors.map(e => `<li class="is-error">${escapeHtml(e)}</li>`)
+          .concat(result.warnings.map(w => `<li class="is-warning">${escapeHtml(w)}</li>`));
+        const problemItems = items.join('');   // each item escaped above
+        box.innerHTML = items.length
+          ? `<div class="layout-problems-title">${escapeHtml(result.errors.length ? 'Fix before saving' : 'Worth a look')}</div><ul>${problemItems}</ul>`
+          : '';
+      }
+      const limit = (id, reached, why) => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.disabled = reached;
+        btn.title = reached ? why : '';
+      };
+      const beds = (currentWard.beds || []).length;
+      limit('btn-add-bed', beds >= result.maxBeds, `This room has floor space for ${result.maxBeds} bed${result.maxBeds === 1 ? '' : 's'} (5 m² of free floor each).`);
+      limit('btn-add-obstacle', (currentWard.obstacles || []).length >= rules.LIMITS.maxObstacles, `A ward has at most ${rules.LIMITS.maxObstacles} obstacles.`);
+      limit('btn-add-lidar', (currentWard.room_sensors || []).length >= rules.LIMITS.maxLidars, 'A ward has one LiDAR.');
+      const bedsEl = document.getElementById('stat-active-beds');
+      if (bedsEl) bedsEl.innerText = `${beds} of ${result.maxBeds}`;
+      return result;
+    }
+    window.renderLayoutProblems = renderLayoutProblems;
+
     function markUnsavedChanges() {
+      renderLayoutProblems();
       isDirty = true;
       const presetSelect = document.getElementById('cfg-template-select');
       if (presetSelect && presetSelect.value !== 'NONE') {
@@ -774,7 +883,7 @@
       }
       const badge = document.getElementById('db-sync-badge');
       if (badge) {
-        badge.innerText = '● Unsaved Changes';
+        badge.innerText = '● Not saved yet';
         badge.className = 'badge badge-warning';
       }
     }
@@ -878,16 +987,24 @@
 
     function addObstacle() {
       if (!currentWard.obstacles) currentWard.obstacles = [];
+      const maxObstacles = window.ShiroWardRules ? window.ShiroWardRules.LIMITS.maxObstacles : Infinity;
+      if (currentWard.obstacles.length >= maxObstacles) {
+        showToast(`A ward has at most ${maxObstacles} obstacles.`, 'warning', 4000);
+        return;
+      }
       const roomH = parseFloat(currentWard.height_z) || 2.80;
       const newIdx = currentWard.obstacles.length + 1;
+      // A 1.20 × 0.30 m partition in the north-west corner, smaller in a very small room
+      const width = Math.min(1.20, Math.round((parseFloat(currentWard.length_x) || 1.2) * 100) / 100);
+      const length = Math.min(0.30, Math.round((parseFloat(currentWard.width_y) || 0.3) * 100) / 100);
       currentWard.obstacles.push({
         id: `OBS-${currentWard.ward_id}-${newIdx}`,
         type: 'PARTITION',
         label: `Partition Wall ${newIdx}`,
         x: 0.00,
-        y: Math.max(0, Math.round((currentWard.width_y - 1.20) * 100) / 100),
-        width: 1.20,
-        length: 0.30,
+        y: Math.max(0, Math.round(((parseFloat(currentWard.width_y) || 0) - length) * 100) / 100),
+        width,
+        length,
         height: roomH
       });
       renderObstaclesTable();
@@ -968,26 +1085,55 @@
             </div>
           </td>
           <td>
-            <select class="form-control" style="padding: 4px 8px; font-size: 11px;" onchange="updateBed(${index}, 'status', this.value)">
+            ${b.status === 'OCCUPIED'
+              ? '<span class="badge badge-info" title="A patient has this bed: move them on the Patients page to change it">Taken</span>'
+              : `<select class="form-control" style="padding: 4px 8px; font-size: 11px;" onchange="updateBed(${index}, 'status', this.value)">
               <option value="AVAILABLE" ${statusVal === 'AVAILABLE' ? 'selected' : ''}>✅ Available</option>
               <option value="UNAVAILABLE" ${statusVal === 'UNAVAILABLE' ? 'selected' : ''}>⛔ Unavailable</option>
-            </select>
+            </select>`}
           </td>
           <td>
-            <button class="btn btn-danger-outline btn-sm" onclick="deleteBed(${index})">🗑</button>
+            <button class="btn btn-danger-outline btn-sm" onclick="deleteBed(${index})"${b.status === 'OCCUPIED' ? ' disabled title="A patient has this bed: move them to another bed first"' : ''}>🗑</button>
           </td>
         </tr>`;
         tbody.insertAdjacentHTML('beforeend', row);
       });
     }
 
+    /**
+     * A spot inside the room for a new bed (0.9 × 2.0 m, head to the north) that
+     * no other bed covers: tried every 10 cm from the south-west corner; the
+     * corner itself when the room is full.
+     */
+    function freeBedSpot() {
+      const rules = window.ShiroWardRules;
+      const L = parseFloat(currentWard.length_x) || 6.40;
+      const W = parseFloat(currentWard.width_y) || 4.80;
+      const others = (currentWard.beds || []).map(b => rules.bedRect(b));
+      const hits = (x, y) => others.some(r => x < r.x + r.w + 0.3 && x + 0.9 + 0.3 > r.x && y < r.y + r.l && y + 2.0 > r.y);
+      for (let y = 0.2; y + 2.0 <= W + 1e-9; y += 0.1) {
+        for (let x = 0.2; x + 0.9 <= L + 1e-9; x += 0.1) {
+          if (!hits(x, y)) return { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 };
+        }
+      }
+      return { x: 0, y: 0 };
+    }
+
     function addBed() {
       if (!currentWard.beds) currentWard.beds = [];
-      const newNum = currentWard.beds.length + 1;
-      const col = (newNum - 1) % 2;
-      const row = Math.floor((newNum - 1) / 2);
-      const newX = Math.round((0.80 + col * 3.90) * 100) / 100;
-      const newY = Math.round((0.40 + row * 1.80) * 100) / 100;
+      const cap = window.ShiroWardRules ? window.ShiroWardRules.maxBeds(currentWard) : Infinity;
+      if (currentWard.beds.length >= cap) {
+        showToast(`This room has floor space for ${cap} bed${cap === 1 ? '' : 's'} (5 m² of free floor each). Make the room larger to add more.`, 'warning', 5000);
+        return;
+      }
+      // The first number not used yet: deleting Bed 2 and adding again gives Bed 2 back
+      const usedCodes = new Set(currentWard.beds.map(b => b.bed_code));
+      const usedIds = new Set(currentWard.beds.map(b => b.bed_id));
+      let newNum = 1;
+      while (usedCodes.has(`Bed ${newNum}`) || usedIds.has(`BED-${currentWard.ward_id}-${String(newNum).padStart(2, '0')}`)) newNum++;
+      const spot = window.ShiroWardRules ? freeBedSpot() : { x: 0.2, y: 0.2 };
+      const newX = spot.x;
+      const newY = spot.y;
 
       currentWard.beds.push({
         bed_id: `BED-${currentWard.ward_id}-${String(newNum).padStart(2, '0')}`,
@@ -1025,6 +1171,11 @@
     }
 
     function deleteBed(index) {
+      const bed = currentWard.beds && currentWard.beds[index];
+      if (bed && bed.status === 'OCCUPIED') {
+        showToast(`${bed.bed_code || 'This bed'} is given to a patient. Move them to another bed first (Patients → ⋯ → Move to another bed).`, 'warning', 5000);
+        return;
+      }
       if (currentWard.beds) {
         currentWard.beds.splice(index, 1);
         renderBedsTable();
@@ -1039,7 +1190,7 @@
       const tbody = document.getElementById('anchors-table-body');
       tbody.innerHTML = '';
       const list = currentWard.anchors || [];
-      document.getElementById('anchor-count-badge').innerText = `${list.length} Mounted (3–12)`;
+      document.getElementById('anchor-count-badge').innerText = `${list.length} (3 to 12)`;
       const addBtn = document.getElementById('btn-add-anchor');
       if (addBtn) {
         addBtn.disabled = list.length >= MAX_ANCHORS;
@@ -1198,8 +1349,9 @@
 
       if (grossEl) grossEl.innerText = `${grossArea.toFixed(2)} m²`;
       if (usableEl) usableEl.innerText = `${usableArea.toFixed(2)} m²`;
-      if (bedsEl) bedsEl.innerText = `${currentWard.beds ? currentWard.beds.length : 0} Cubicles`;
-      if (anchorsEl) anchorsEl.innerText = `${currentWard.anchors ? currentWard.anchors.length : 0} Nodes`;
+      if (bedsEl) bedsEl.innerText = `${currentWard.beds ? currentWard.beds.length : 0}`;
+      if (anchorsEl) anchorsEl.innerText = `${currentWard.anchors ? currentWard.anchors.length : 0}`;
+      renderLayoutProblems();
     }
 
     // --- Presets, Persistence & Import/Export ---
@@ -1248,17 +1400,30 @@
         }
       });
 
-      const actionText = isCreatingNew ? 'Create New Ward' : 'Save Changes';
+      // Outside the room, too many beds, obstacles or LiDARs: not saved (the server refuses it too)
+      const problems = renderLayoutProblems();
+      if (problems.errors.length) {
+        showModal({
+          title: 'Fix the layout before saving',
+          message: `${problems.errors.map(e => `• ${e}`).join('\n')}\n\nThe list under the floor plan shows what is still wrong.`,
+          type: 'warning',
+          confirmText: 'OK'
+        });
+        return;
+      }
+
+      const actionText = isCreatingNew ? 'Create ward' : 'Save changes';
       const bedCount = Array.isArray(currentWard.beds) ? currentWard.beds.length : 0;
       const anchorCount = Array.isArray(currentWard.anchors) ? currentWard.anchors.length : 0;
       const obsCount = Array.isArray(currentWard.obstacles) ? currentWard.obstacles.length : 0;
+      const warningText = problems.warnings.length ? `\n\nWorth a look: ${problems.warnings.join(' ')}` : '';
 
       const confirmMsg = isCreatingNew
-        ? `Register and persist new ward "${currentWard.ward_id}" (${currentWard.room_title || 'Standard Ward'}) to MySQL database?\n\nLayout includes ${bedCount} cubicle beds, ${anchorCount} BLE anchors, and ${obsCount} obstacle cutouts.`
-        : `Save configuration changes for ward "${currentWard.ward_id}" (${currentWard.room_title || 'Ward'}) to MySQL database?\n\nRoom dimensions, bed coordinates, and anchor positions will be updated.`;
+        ? `Create ward "${currentWard.ward_id}" (${currentWard.room_title || 'Ward'}) with ${bedCount} bed${bedCount === 1 ? '' : 's'}, ${anchorCount} wall sensors and ${obsCount} obstacle${obsCount === 1 ? '' : 's'}?${warningText}`
+        : `Save the changes to ward "${currentWard.ward_id}" (${currentWard.room_title || 'Ward'})? The room, beds and sensors are updated at once on every screen.${warningText}`;
 
       showModal({
-        title: isCreatingNew ? 'Confirm New Ward Creation' : 'Confirm Save Ward Changes',
+        title: isCreatingNew ? 'Create this ward?' : 'Save the changes?',
         message: confirmMsg,
         type: isCreatingNew ? 'info' : 'warning',
         confirmText: actionText,
@@ -1272,23 +1437,23 @@
             });
             const result = await res.json();
             if (result.success) {
-              showToast(isCreatingNew ? `Success! Ward ${currentWard.ward_id} created and committed to MySQL.` : `Success! Changes for ${currentWard.ward_id} committed to MySQL.`, 'success');
+              showToast(isCreatingNew ? `Ward ${currentWard.ward_id} created.` : `Changes to ${currentWard.ward_id} saved.`, 'success');
               isCreatingNew = false;
               captureWardSnapshot();
               // Directly redirect to Ward Directory list view
               forceReturnToWardDirectory();
             } else {
               showModal({
-                title: 'Database Save Failed',
-                message: `MySQL Error: ${result.error}`,
+                title: 'Not saved',
+                message: result.error || 'The server refused the layout.',
                 type: 'danger',
-                confirmText: 'Dismiss'
+                confirmText: 'OK'
               });
             }
           } catch (err) {
             showModal({
-              title: 'Connection Error',
-              message: `Failed to save ward to server: ${err.message}`,
+              title: 'Not saved',
+              message: `The server does not answer (${err.message}). Check that it is running, then save again.`,
               type: 'danger',
               confirmText: 'Dismiss'
             });
@@ -1335,10 +1500,15 @@
 
     function resetWardDefault() {
       showModal({
-        title: 'Reset Ward Layout',
-        message: `Reset configuration for "${currentWard.ward_id}" back to default?\n\nAny unsaved changes made in this session will be reverted.`,
+        title: isCreatingNew ? 'Start this ward again?' : `Undo your changes to ${currentWard.ward_id}?`,
+        message: isCreatingNew ? 'The new ward goes back to the standard layout.' : 'The layout goes back to the last saved one.',
+        impact: {
+          level: 'warning',
+          title: 'Every change since the last save is lost:',
+          points: ['Room, door, furniture, wall sensors, LiDAR and beds.', 'Nothing saved is changed.']
+        },
         type: 'warning',
-        confirmText: 'Reset Layout',
+        confirmText: isCreatingNew ? 'Start again' : 'Undo changes',
         cancelText: 'Cancel',
         onConfirm: async () => {
           if (isCreatingNew) {

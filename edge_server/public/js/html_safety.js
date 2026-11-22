@@ -48,23 +48,44 @@
     return typeof target === 'function' ? target : null;
   }
 
+  // A click action still working (it returned a promise, e.g. waiting for the server)
+  // is not started again by more clicks on the same thing: a slow answer made people
+  // click again, and the dialog then opened once per click (Phase 11 review 3).
+  // Forgotten after 15 s at the latest, should an action never finish.
+  const pendingActions = new Map();
+  const PENDING_FORGET_MS = 15000;
+
   function runActions(eventName, event) {
     let el = event.target instanceof Element ? event.target : null;
     const nameAttr = `data-${eventName}-action`;
     while (el) {
       el = el.closest(`[${nameAttr}]`);
       if (!el) return;
-      const fn = resolveFunction(el.getAttribute(nameAttr));
+      const name = el.getAttribute(nameAttr);
+      const argsText = el.getAttribute(`data-${eventName}-args`) || '[]';
+      const fn = resolveFunction(name);
       let args = [];
       try {
-        args = JSON.parse(el.getAttribute(`data-${eventName}-args`) || '[]');
+        args = JSON.parse(argsText);
       } catch (err) {
         console.error('[html_safety] Unreadable action arguments', err);
       }
       if (el.hasAttribute(`data-${eventName}-value`)) args.push(el.value);
       if (el.hasAttribute(`data-${eventName}-element`)) args.push(el);
-      if (fn) fn.apply(el, args);
-      else console.error(`[html_safety] Action "${el.getAttribute(nameAttr)}" is not a function`);
+      const key = eventName === 'click' ? `${name}|${argsText}` : null;
+      const since = key ? pendingActions.get(key) : undefined;
+      if (since !== undefined && performance.now() - since < PENDING_FORGET_MS) {
+        // Still working on the same action: this click is not a new request
+      } else if (fn) {
+        const result = fn.apply(el, args);
+        if (key && result && typeof result.then === 'function') {
+          pendingActions.set(key, performance.now());
+          const done = () => pendingActions.delete(key);
+          result.then(done, done);
+        }
+      } else {
+        console.error(`[html_safety] Action "${name}" is not a function`);
+      }
       if (el.hasAttribute(`data-${eventName}-stop`)) {
         event.stopPropagation();
         return;
@@ -76,6 +97,25 @@
   for (const eventName of ['click', 'change', 'input']) {
     document.addEventListener(eventName, (event) => runActions(eventName, event));
   }
+
+  // Clicks that pile up: while the page is busy, the clicks made meanwhile all arrive
+  // together afterwards. A second click on the same button (or other clickable thing)
+  // within 350 ms of the first is ignored, before any handler sees it. Page buttons of
+  // a pager and elements marked data-allow-repeat may be clicked quickly.
+  const REPEAT_CLICK_MS = 350;
+  let lastClick = { el: null, at: 0 };
+  document.addEventListener('click', (event) => {
+    if (!event.isTrusted || !(event.target instanceof Element)) return;
+    const el = event.target.closest('button, summary, [data-click-action], [onclick], [role="button"]');
+    if (!el || el.matches('.pager-btn, [data-allow-repeat]')) return;
+    const now = performance.now();
+    if (lastClick.el === el && now - lastClick.at < REPEAT_CLICK_MS) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    lastClick = { el, at: now };
+  }, true);
 
   /**
    * Attributes for an <img> that shows the given text when the image cannot load.

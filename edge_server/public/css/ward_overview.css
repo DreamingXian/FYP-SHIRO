@@ -1,0 +1,230 @@
+/* =============================================================================
+   SHIRO Ward overview (Phase 11): patients on the left, map on the right.
+   Big separate cards (the style of the Test tools page), one meaning per colour:
+   red = needs help now, amber = check, blue = OK, grey = off.
+   ============================================================================= */
+.wo-layout {
+  display: flex;
+  gap: 18px;
+  align-items: stretch;
+  height: calc(100vh - 190px);
+  min-height: 560px;
+}
+
+.wo-side {
+  width: 420px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.wo-card { margin-bottom: 0; padding: 16px 18px; }
+.wo-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.wo-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.wo-note { font-size: 13px; color: var(--text-muted); margin-top: 8px; }
+.wo-note:empty { display: none; }
+
+/* Patient tiles */
+.wo-patient-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+.wo-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-left-width: 5px;
+  border-radius: 10px;
+  background: #FFFFFF;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+}
+.wo-tile:hover { background: #F8FAFC; }
+.wo-tile.is-selected { border-color: var(--primary); background: var(--primary-subtle); }
+.wo-tile.st-ok { border-left-color: #2563EB; }
+.wo-tile.st-warn { border-left-color: #D97706; }
+.wo-tile.st-alert { border-left-color: #DC2626; background: #FEF2F2; }
+.wo-tile.st-off { border-left-color: #94A3B8; }
+.wo-tile-main { flex: 1; min-width: 0; display: block; }
+.wo-tile-main > span { display: block; }
+.wo-tile-name { font-size: 15px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wo-tile-where { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+.wo-tile-flag { font-size: 12px; font-weight: 700; margin-top: 3px; }
+.wo-tile.st-alert .wo-tile-flag { color: #B91C1C; }
+.wo-tile.st-warn .wo-tile-flag { color: #B45309; }
+.wo-tile-hr { text-align: right; flex-shrink: 0; }
+.wo-tile-hr small { display: block; }
+.wo-tile-hr.is-dim b { color: #94A3B8; }
+.wo-tile-hr b { display: block; font-size: 22px; line-height: 1; color: var(--text-primary); }
+.wo-tile-hr small { font-size: 12px; color: var(--text-muted); }
+
+.wo-initials {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #EFF6FF;
+  color: #1E3A8A;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.wo-initials img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Chosen patient */
+.wo-patient-head { display: flex; gap: 14px; align-items: center; }
+.wo-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #EFF6FF;
+  color: #1E3A8A;
+  font-size: 20px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.wo-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.wo-name { font-size: 19px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wo-sub { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+
+.wo-alert-chip {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #991B1B;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.wo-where { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #F8FAFC; border: 1px solid var(--border); }
+.wo-where-main { font-size: 16px; font-weight: 700; color: var(--text-primary); }
+.wo-where-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+.wo-vitals { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+.wo-vital { border-radius: 12px; padding: 12px 14px; border: 1px solid var(--border); background: #FFFFFF; }
+.wo-vital-hr { background: #FFF5F5; border-color: #FECACA; }
+.wo-vital-spo2 { background: #F8FAFC; }
+.wo-vital-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.wo-vital-hr .wo-vital-label { color: #B91C1C; }
+.wo-vital-value { font-size: 38px; font-weight: 800; line-height: 1.1; color: var(--text-primary); margin-top: 4px; letter-spacing: -1px; }
+.wo-vital-unit { font-size: 14px; font-weight: 600; color: var(--text-muted); margin-left: 4px; letter-spacing: 0; }
+.wo-vital-state { font-size: 12px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; min-height: 17px; }
+.wo-vital-state.is-measuring { color: #1D4ED8; font-weight: 600; }
+.wo-vital-state.is-warn { color: #B45309; font-weight: 600; }
+
+/* "Measuring" animation: the heart beats, the bar fills towards about 15 s */
+@keyframes woBeat { 0%, 100% { transform: scale(1); } 30% { transform: scale(1.18); } }
+.wo-beat { display: inline-block; animation: woBeat 1s ease-in-out infinite; }
+.wo-progress { height: 6px; border-radius: 3px; background: #DBEAFE; margin-top: 6px; overflow: hidden; }
+.wo-progress-fill { height: 100%; width: 0; background: #2563EB; transition: width 0.9s linear; }
+
+.wo-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.wo-facts > div, .wo-tech-grid > div { display: flex; flex-direction: column; font-size: 12px; color: var(--text-muted); }
+.wo-facts b, .wo-tech-grid b { font-size: 14px; color: var(--text-primary); margin-top: 2px; overflow-wrap: anywhere; }
+
+.wo-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.wo-actions .btn-primary { flex: 1; }
+
+.wo-tech { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+.wo-tech summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.wo-tech-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
+/* The map */
+.wo-map {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.wo-map-head {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+.wo-map-body { flex: 1; min-height: 0; position: relative; overflow: hidden; background: #FFFFFF; }
+.wo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.wo-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; border: 3px solid; vertical-align: -2px; margin-right: 3px; background: #FFFFFF; }
+.wo-dot-alert { border-color: #DC2626; }
+.wo-dot-warn { border-color: #D97706; }
+.wo-dot-ok { border-color: #2563EB; }
+.wo-dot-off { border-color: #94A3B8; background: #E2E8F0; }
+.wo-dot-person { border-color: #94A3B8; background: #CBD5E1; border-width: 0; }
+
+@media (max-width: 1100px) {
+  .wo-layout { flex-direction: column; height: auto; }
+  .wo-side { width: 100%; }
+  .wo-map { min-height: 520px; }
+}
+
+/* Phase 11 (review): patients of other wards, below this ward's, one line each */
+.wo-list-divider { font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; margin: 6px 2px 0; padding-top: 8px; border-top: 1px dashed var(--border); }
+.wo-tile.wo-tile-other { padding: 6px 10px; border-left-width: 1.5px; background: #F8FAFC; }
+.wo-tile.wo-tile-other .wo-initials { width: 30px; height: 30px; font-size: 12px; background: #F1F5F9; color: #475569; }
+.wo-tile.wo-tile-other .wo-tile-name { font-size: 14px; font-weight: 600; }
+.wo-tile.wo-tile-other .wo-tile-where { font-size: 12px; }
+.wo-tile-go { font-size: 20px; color: var(--text-muted); flex-shrink: 0; }
+
+/* Nobody chosen: the card shows only how to choose a patient */
+#live-map-patient-card.is-empty #live-map-alert-chip,
+#live-map-patient-card.is-empty .wo-where,
+#live-map-patient-card.is-empty .wo-vitals,
+#live-map-patient-card.is-empty .wo-facts,
+#live-map-patient-card.is-empty .wo-actions,
+#live-map-patient-card.is-empty #live-map-offline-actions,
+#live-map-patient-card.is-empty .wo-tech { display: none !important; }
+#live-map-patient-card.is-empty .wo-avatar { background: #F1F5F9; color: #94A3B8; }
+
+/* Calibration: your own point, typed (x, y) or clicked */
+.cal-custom-xy { margin: -4px 0 14px; padding: 10px 12px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; }
+.cal-custom-row { display: flex; gap: 10px; }
+.cal-custom-row label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--text-primary); }
+.cal-custom-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+.cal-custom-hint.is-error { color: #B91C1C; font-weight: 600; }
+
+/* Phase 11 (review 3): the patient tiles react to the mouse clearly (also those of
+   other wards, whose grey background used to hide the hover) */
+.wo-tile { transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease; }
+.wo-tile:hover { background: var(--primary-subtle); border-color: var(--primary-border); box-shadow: 0 2px 8px rgba(15, 23, 42, 0.10); }
+.wo-tile.is-selected:hover { background: #DBEAFE; border-color: var(--primary); }
+.wo-tile.st-alert:hover { background: #FEE2E2; }
+.wo-tile.st-ok:hover { border-left-color: #2563EB; }
+.wo-tile.st-warn:hover { border-left-color: #D97706; }
+.wo-tile.st-alert:hover { border-left-color: #DC2626; }
+.wo-tile.st-off:hover { border-left-color: #94A3B8; }
+.wo-tile.wo-tile-other:hover { background: var(--primary-subtle); border-color: var(--primary-border); }
+.wo-tile.wo-tile-other:hover .wo-tile-name { color: var(--primary); }
+.wo-tile-go { transition: transform 0.15s ease, color 0.15s ease; }
+.wo-tile:hover .wo-tile-go { color: var(--primary); transform: translateX(3px); }
+.wo-tile:active { transform: translateY(1px); }

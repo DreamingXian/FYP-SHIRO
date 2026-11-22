@@ -523,7 +523,7 @@ function redrawWardMap() {
     const roomY = window.currentWard.width_y || 4.80;
     const padding = 38;
     const scale = Math.min((parentW - padding * 2) / roomX, (parentH - padding * 2) / roomY);
-    scaleText.innerText = `Metric Scale: 1m = ${Math.round(scale)}px`;
+    scaleText.innerText = `1 m = ${Math.round(scale)} px on screen`;
   }
 }
 

@@ -158,10 +158,18 @@ const SAFE_EXPRESSIONS = [
   /^(patientCell|summaryHtml|incidentRowsHtml|pillsHtml|idTag)$/,
   // admin_controller.js: headset assignment cell and its options, other server addresses; from escaped parts
   /^(assignCell|clinicianOptions|stale|othersHtml)$/,
-  // bindings_controller.js and patients_controller.js: binding history, fixed markup or escaped parts
+  // patients_controller.js and patient_wristbands.js: binding history, fixed markup or escaped parts
   /^(deletedNote|historyItems)$/,
   // reports/shift_report.js: report sections built in code from escaped parts
   /^(tilesHtml|patientRowsHtml|deviceRowsHtml|vitalsNote|attnHtml|testTag)$/,
+  // Phase 11: fixed markup only (empty-list texts), or a status badge of a fixed class with escaped text
+  /^(emptyHtml|healthNote|lidarStatusHtml|flagHtml|wristbandCell|rows|readingRows)$/,
+  /^\(padLeft \+ \(w - padRight\)\) \/ 2$/,
+  /^bedShapes$/, /^free \? 'free' : 'taken'$/,
+  // Phase 11 review: the ward editor's problem list, the overview's other-ward tiles (escaped parts)
+  /^(problemItems|otherTilesHtml)$/,
+  // Phase 11 review 2: the patients still in a ward being deleted (escaped parts)
+  /^peopleHtml$/,
   /^getRadar(Signal|Battery)Html\(d\)$/,
   /^statusBadge\(d\.status\)$/, // health_monitor.js: fixed class name, escaped text
   /^isBound \|\| isAssignedWard \? `<option value="IN_USE" selected>In Use \(Currently Deployed\)<\/option>` : ''$/,

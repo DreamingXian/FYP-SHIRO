@@ -189,3 +189,72 @@ main.app-content {
   nav.nav-tabs { width: 100%; max-width: 100%; }
 }
 
+
+/* =============================================================================
+   Phase 11: menu by role, page titles
+   ============================================================================= */
+/* Only admins see .admin-only (auth_client.js sets data-role on <body>) */
+body:not([data-role="ADMIN"]) .admin-only { display: none !important; }
+
+a.nav-tab-btn { text-decoration: none; }
+
+.nav-setup { position: relative; display: flex; align-items: flex-end; }
+
+.nav-setup-menu {
+  display: none;
+  position: absolute;
+  top: 60px;
+  right: 0;
+  min-width: 290px;
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px -8px rgba(15, 23, 42, 0.18);
+  padding: 6px;
+  z-index: 200;
+}
+.nav-setup-menu.open { display: block; }
+
+.nav-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.nav-menu-item small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.nav-menu-item:hover { background: var(--primary-subtle); }
+.nav-menu-item.active { background: var(--primary-subtle); color: var(--primary); }
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.page-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
+/* Connection lost: alarms cannot arrive, so it must be seen */
+.server-status-pill.is-offline {
+  background: var(--status-danger-bg);
+  border-color: var(--status-danger-border);
+  color: var(--status-danger-text);
+}

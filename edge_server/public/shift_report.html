@@ -9,7 +9,10 @@
   <link rel="stylesheet" href="/css/components.css">
   <style>
     body { margin: 0; background: #F1F5F9; color: #0F172A; font-size: 13px; }
-    .controls { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; padding: 14px 24px; background: #FFFFFF; border-bottom: 1px solid #E2E8F0; }
+    /* The choices that make the report: centred above it (Phase 11) */
+    .controls { display: flex; gap: 12px; align-items: flex-end; justify-content: center; flex-wrap: wrap; padding: 16px 24px 12px; background: #FFFFFF; border-bottom: 1px solid #E2E8F0; }
+    .controls #report-status { flex-basis: 100%; text-align: center; min-height: 16px; }
+    .sheet > .muted:only-child { text-align: center; padding: 24px 0; }
     .controls label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: #475569; }
     .controls select, .controls input { font-size: 13px; padding: 5px 8px; min-width: 140px; }
     .sheet { max-width: 1000px; margin: 20px auto; background: #FFFFFF; padding: 28px 32px; border: 1px solid #E2E8F0; border-radius: 8px; }

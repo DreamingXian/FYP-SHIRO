@@ -5,12 +5,11 @@
       <div>
         <div
           style="font-size: 16px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 10px;">
-          <span>🏥 Central Hospital Ward Directory</span>
-          <span class="badge badge-info" id="ward-total-count">Loading Wards...</span>
+          <span class="page-title">Wards &amp; layout</span>
+          <span class="badge badge-info" id="ward-total-count">Loading…</span>
         </div>
-        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-          Architectural room layouts, obstacle cutouts, stationary BLE anchor fleets, and hospital beds fleet stored in
-          MySQL.
+        <div style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">
+          Each ward's room size, door, beds and sensors. The maps and the alerts use this layout.
         </div>
       </div>
 
@@ -18,11 +17,10 @@
         <div class="search-input-wrap" style="max-width: 300px;">
           <span class="search-icon">🔍</span>
           <input style="width:300px" type="text" class="form-control" id="ward-search-input"
-            placeholder="Search by Ward ID or Title..." oninput="filterWardDirectory()">
+            placeholder="Search ward" oninput="wardDirectoryPage = 1; filterWardDirectory()">
         </div>
-        <button class="btn btn-outline btn-sm" onclick="loadWardDirectory()">🔄 Refresh</button>
-        <button class="btn btn-primary" style="padding: 9px 18px; font-size: 13px;" onclick="createNewWard()">➕ Create
-          New Ward</button>
+        <button class="btn btn-outline btn-sm" onclick="refreshWardDirectory(this)">🔄 Refresh</button>
+        <button class="btn btn-primary btn-sm" onclick="createNewWard()">＋ New ward</button>
       </div>
     </div>
   </div>
@@ -31,27 +29,22 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">
-        <span>📋 All Configured Hospital Wards</span>
-        <span class="badge badge-live">● MySQL Persistent Storage</span>
+        <span>Wards</span>
       </div>
-      <span style="font-size: 12px; color: var(--text-muted);">Click "Configure Layout" to enter interactive 2D floor
-        plan editor</span>
+      <span style="font-size: 13px; color: var(--text-muted);">"Edit layout" opens the floor plan</span>
     </div>
 
     <div class="data-table-container">
       <table class="data-table" id="wards-directory-table">
         <thead>
           <tr>
-            <th>Ward ID</th>
-            <th>Room Title</th>
-            <th>Dimensions (L × W × H)</th>
-            <th>Door Placement</th>
-            <th>Beds Fleet</th>
-            <th>BLE Anchors</th>
-            <th>Obstacles / Cutouts</th>
-            <th>Spatial Anchor UUID</th>
-            <th>Last Updated</th>
-            <th>Actions</th>
+            <th>Ward</th>
+            <th>Name</th>
+            <th>Room size</th>
+            <th>Beds</th>
+            <th>Wall sensors</th>
+            <th>Last changed</th>
+            <th style="text-align: right;">Actions</th>
           </tr>
         </thead>
         <tbody id="wards-table-body">
@@ -59,5 +52,6 @@
         </tbody>
       </table>
     </div>
+    <div id="wards-pager"></div>
   </div>
 </div>

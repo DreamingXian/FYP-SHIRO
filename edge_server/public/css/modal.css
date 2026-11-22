@@ -17,13 +17,18 @@
   box-sizing: border-box;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  /* Closed: not drawn at all (its blur over the whole page, under a map that moves
+     30 times a second, would cost the browser for nothing); hidden after the fade */
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
   overflow-y: auto;
 }
 
 .modal-backdrop.active {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.2s ease, visibility 0s linear 0s;
 }
 
 .modal-box {
@@ -186,3 +191,27 @@
 .toast-pill.toast-info    { border-left: 5px solid #2563EB; }
 .toast-pill.toast-warning { border-left: 5px solid #D97706; }
 
+
+/* Phase 11: the alarm pop-up says who, where and when in words */
+.em-facts { display: grid; grid-template-columns: 1.2fr 1fr 0.8fr; gap: 12px; margin-bottom: 14px; }
+.em-fact { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px 14px; }
+.em-fact-label { font-size: 12px; font-weight: 600; color: #64748B; }
+.em-fact-main { font-size: 19px; font-weight: 800; color: #0F172A; margin-top: 2px; line-height: 1.25; }
+.em-fact-sub { font-size: 13px; color: #64748B; margin-top: 2px; }
+.em-vitals { font-size: 14px; color: #334155; margin-bottom: 12px; }
+.em-vitals b { font-size: 16px; color: #0F172A; }
+.em-details { margin-bottom: 18px; font-size: 13px; color: #475569; }
+.em-details summary { cursor: pointer; font-weight: 600; }
+.em-detail-row { margin-top: 6px; line-height: 1.5; }
+@media (max-width: 640px) { .em-facts { grid-template-columns: 1fr; } }
+
+/* Phase 11 review: what a risky action breaks or stops, impossible to miss */
+.modal-impact { margin-top: 14px; border-radius: 10px; padding: 12px 14px 12px 16px; border: 1.5px solid; border-left-width: 6px; font-size: 14px; line-height: 1.5; text-align: left; }
+.modal-impact.impact-danger { background: #FEF2F2; border-color: #FCA5A5; border-left-color: #DC2626; color: #7F1D1D; }
+.modal-impact.impact-warning { background: #FFFBEB; border-color: #FCD34D; border-left-color: #D97706; color: #78350F; }
+.modal-impact-title { font-weight: 800; font-size: 15px; margin-bottom: 4px; }
+.modal-impact ul { margin: 6px 0 0; padding-left: 20px; }
+.modal-impact li { margin: 3px 0; }
+.modal-impact li::marker { font-weight: 800; }
+.modal-impact-people { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.modal-impact-person { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #FFFFFF; border: 1px solid #FECACA; border-radius: 8px; padding: 6px 10px; color: #0F172A; }

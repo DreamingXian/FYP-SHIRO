@@ -156,8 +156,8 @@ async function recordIncident(incidentData) {
   // 2. Resolve the latest (X, Y) position from the IPS service if not provided
   let posX = numberOrNull(incidentData.pos_x);
   let posY = numberOrNull(incidentData.pos_y);
+  const liveTag = (deviceId || patientId) ? ipsService.getTagPosition(deviceId || patientId) : null;
   if ((posX === null || posY === null) && (deviceId || patientId)) {
-    const liveTag = ipsService.getTagPosition(deviceId || patientId);
     if (liveTag && Number.isFinite(liveTag.x) && Number.isFinite(liveTag.y)) {
       posX = round2(liveTag.x);
       posY = round2(liveTag.y);
@@ -166,6 +166,10 @@ async function recordIncident(incidentData) {
       posY = null;
     }
   }
+  // The ward the wristband is in, when neither the patient's bed nor the device
+  // names one (until 22 Nov 2026 such incidents were stored with a position but
+  // no ward)
+  if (!wardId && liveTag && liveTag.ward_id) wardId = liveTag.ward_id;
 
   const category = incidentData.incident_category || 'FALL_ACCIDENT';
   // Only a geofence alert has a kind; anything else stays NULL

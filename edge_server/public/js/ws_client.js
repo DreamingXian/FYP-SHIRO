@@ -22,7 +22,9 @@ class WSClient {
         const dot = document.getElementById('global-status-dot');
         const text = document.getElementById('global-server-text');
         if (dot) dot.style.background = '#059669';
-        if (text) text.innerText = `Connected (${window.location.host})`;
+        if (text) text.innerText = 'Connected';
+        const pill = document.getElementById('global-status-pill');
+        if (pill) { pill.classList.remove('is-offline'); pill.title = `Connected to the SHIRO server (${window.location.host}). Alarms arrive live.`; }
 
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer);
@@ -43,7 +45,9 @@ class WSClient {
         const dot = document.getElementById('global-status-dot');
         const text = document.getElementById('global-server-text');
         if (dot) dot.style.background = '#dc2626';
-        if (text) text.innerText = 'Reconnecting...';
+        if (text) text.innerText = 'Not connected – alarms cannot arrive. Reconnecting…';
+        const pill = document.getElementById('global-status-pill');
+        if (pill) pill.classList.add('is-offline');
 
         // 4001: the server ended this session's access (deactivated, password reset).
         // A refused reconnect also lands here: check the session before trying again.

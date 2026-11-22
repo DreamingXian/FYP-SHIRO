@@ -203,14 +203,27 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
 
    **Stopping the server:** press **Ctrl+C** once in its terminal. It disconnects the anchors and dashboards, writes the device status and InfluxDB points still in memory, closes the database and ends with `[SHUTDOWN] Done.` Closing the terminal window instead skips these steps; at most the last 5 seconds of "last seen" and battery values are then lost.
 
-3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The dashboard offers:
-   * **Ward Configuration Editor:** Room dimensions, obstacle cut-outs, rotatable beds ($0^\circ, 90^\circ, 180^\circ, 270^\circ$), the LiDAR room sensor, and **📐 Plan Anchors & LiDAR**: where to mount each anchor and the LiDAR, which way each faces, and a printable installation sheet (Section 4.5).
-   * **Live Ward Map:** 2D real-time bird's-eye canvas with a scaled patient marker, movement trail, bed docking detection, and landmark calibration of each anchor ($A$ and $n$ parameters).
-   * **Device Provisioning Radar:** Lists nearby anchors, wristbands and headsets that are not yet enrolled, with one-click enrollment.
-   * **Patient Admissions Directory:** Patient profiles, fall risk scores, bed allocation, wristband binding and discharge.
-   * **Live Telemetry & Diagnostics Lab:** Live heart rate, SpO2 (indicative), motion and sensor contact from the wristband, raw versus Kalman-filtered RSSI per anchor, and an MQTT telemetry inspector. The raw pulse waveform is not shown: the wristband sends only computed results.
-   * **System Health:** live server state (uptime, memory, response delay, database queries per second) and the status of every enrolled anchor and headset, refreshed every 5 s.
-   * **Admin** (admins only): clinician accounts, headset pairing and the audit log.
+3. Open your web browser (Chrome / Edge) and navigate to `http://localhost:3000`. Sign in (Section 3.6). The menu follows the role of the person signed in (Phase 11):
+   * **Ward** (the first page): the ward overview, a live map of one ward with its patients and their vitals. Choose the ward at the top; the dashboard opens the same ward next time on that computer. Admins also see 🎯 Calibrate and 📏 Position test there. The same map opens from **🗺️ Live map** on Setup → Wards & layout (greyed out until the ward has at least 3 wall sensors, each linked to a device).
+   * **Patients:** the admitted patients, 8 a page (Discharged and All on the filter). **＋ Admit patient** opens the admission form. Each row shows the ward and bed and the wristband the patient wears (**＋ Give wristband** when none), with 📈 Vitals, 🚨 Incidents and a **⋯** menu: edit details, give a bed or move to another bed, give or take off the wristband, wristband history, discharge, delete. A discharged patient who comes back: **↩ Admit again** (Discharged filter, or the **⋯** menu) and choose a bed; the same record continues, with a new admission date. 🚨 Incident log lists the incidents of every patient; ⌚ Wristband history, who wore which wristband and when.
+     * **Give a bed:** a map of the ward opens, free beds in green: click one (or choose it in the list).
+     * **Vitals:** heart rate and SpO2 for the last hour, 6 h, 24 h, 7 or 30 days, with dates on the time axis for the longer periods; **⬇ CSV** downloads every reading for Excel, **🖨 Print / PDF** opens a report to print or save as PDF.
+   * **Shift report ↗:** the handover report, in a new tab.
+   * **⚙ Setup** (admins only):
+     * **Wards & layout:** room size, door, furniture, wall sensors, the LiDAR and beds, and **📐 Plan Anchors & LiDAR**: where to mount each anchor and the LiDAR, which way each faces, and a printable installation sheet (Section 4.5). Rules (the editor lists what breaks them under the floor plan, and the server refuses to save): everything inside the room; one LiDAR per ward; at most 15 obstacles; one bed per 5 m² of free floor (the room minus its obstacles), at least one. Beds that overlap are only a warning. A bed given to a patient shows "Taken" and cannot be removed until the patient is moved. The headset room anchor is not typed here: the headset app sets it, and saving the layout keeps it.
+     * **Devices:** new devices that are switched on but not added yet (**🔍 Search again** shows a spinner, then how many it found), and every added device, with who wears it or where it is mounted. Deleting a device in use first says who wears it (or which ward place it fills) and what stops.
+     * **System status:** the server, the database, and every wall sensor, LiDAR and headset, refreshed every 5 s (one refresh at a time, on a steady 5 s beat; "Running for" goes up 5 s each time). "Response time" is the longest the server could not answer in those 5 s (fast up to 50 ms, slow above 200 ms); the database line counts its requests "/ second". A refresh that gets no answer within 8 s says so.
+     * **Accounts & headsets:** sign-in accounts, headset pairing and the activity log.
+     * **Test tools:** live values of the wristband and two wall sensors, raw and smoothed signal strength, the messages from the wall sensors, and test alarms.
+   * Every table shows 8 rows a page: Previous, the first two and last two pages, the current page with its neighbours, and Next (for example `1 2 … 4 5 6 … 9 10`).
+   * Anything that stops something elsewhere (deleting a device or a ward, discharging, taking off a wristband, revoking a headset, leaving unsaved changes) asks first, with a coloured box listing what it will do: red with a red button when it cannot be undone, amber otherwise. Fields marked with a red * must be filled in.
+   * **Deleting a ward:** not while patients are in it. The dialog lists them, each with **Move…** (a bed in another ward); after the last one it asks to delete. The server refuses too.
+   * **Patient profile:** ⌚ Wristband history is closed until clicked; it is a table of 8 a page.
+   * Everything that can be clicked changes under the mouse: buttons and patient tiles turn blue, parts that open on a click (Technician details, Wristband history) too; on the Ward map, a bed given to a patient turns blue and a patient's dot gets a blue halo.
+   * **Clicks:** a second click on the same button within a third of a second is ignored, and an action still waiting for the server is not started again (one dialog, not one per click).
+   * **Load:** the Ward map is drawn only while the Ward page is shown (about 30 times a second), and the lists on the other pages change only when what they show changes. Leaving the dashboard open on another page costs the computer almost nothing.
+
+**Repairing data left by older versions** (beds marked taken with nobody in them, a worn wristband marked free, an admitted patient with a discharge date): in `edge_server`, `node database/repair_data.js` lists what is wrong and changes nothing; `node database/repair_data.js --apply` repairs it in one transaction, after writing an undo file (SQL) to `edge_server/data/repairs/`. Restart the edge server afterwards. It prints IDs only.
 
 ### 3.6 Clinician Accounts and Sign-in
 
@@ -224,11 +237,11 @@ The dashboard and every API address need a signed-in clinician. Two roles exist:
 **First start (once):**
 1. On the **server PC itself**, open `http://localhost:3000`. While no account exists, the sign-in page shows **Create the first admin account**. This form works only on the server PC.
 2. Enter your full name, a username (lowercase, for example `admin`) and a password of at least 10 characters. You are then signed in as admin.
-3. Open the **ADMIN** tab and create an account for each clinician (role `CLINICIAN`). Give each person their initial password in person.
+3. Open **⚙ Setup → Accounts & headsets** and create an account for each clinician (role `CLINICIAN`). Give each person their initial password in person.
 
 **Every day:** sign in with your username and password. A session lasts 12 hours; **Log out** (top right) ends it. After 5 wrong passwords an account is locked for 5 minutes.
 
-**Audit log:** ADMIN tab → Audit Log. Every change (admission, discharge, binding, acknowledgement, device, ward, calibration), every sign-in and failed sign-in, and every account and pairing change is listed with who did it, when and from which address. Filter by actor (`CLN-002`, `QUEST3-…`), action (`PATIENT_ADMIT`) or target (`P-001`).
+**Activity log (audit log):** ⚙ Setup → Accounts & headsets → Activity log. Every change (admission, discharge, wristband, acknowledgement, device, ward, calibration), every sign-in and failed sign-in, and every account and pairing change is listed in words with who did it, when and from which address. Filter by period (today, 7 or 30 days, any time), by person, by action, or by patient or device (`P-001`, `TAG-001`). Hover over an entry for all its details.
 
 **Forgotten admin password:** on the server PC, in `edge_server`, run `node tools/reset_password.js <username>` and type the new password twice (it is not shown). Every session of that account ends.
 
@@ -593,7 +606,7 @@ Ward editor → open the ward → Panel 3 → **📐 Plan Anchors & LiDAR**. The
 1. **Apply to Ward:** the spots fill Panels 3 and 3b.
 2. Print the installation sheet and mount the devices as listed.
 3. Bind each new board in Panel 3 and the LiDAR node in Panel 3b, then **Save Changes**.
-4. Live Map → **🎯 Calibrate Anchors** (new and moved anchors need it).
+4. Live Map → **🎯 Calibrate Anchors** (new and moved anchors need it). The reference point is a bed, the room centre, or **your own point**: type x and y (must be inside the ward, 0.15 m from the walls; outside, it says the allowed range and does not start) or click the map.
 5. The LiDAR: learn the empty room and align it to the walls (4.6).
 
 **WARD-005, 21 Nov 2026** (6 anchors, A, B and C kept):
@@ -644,12 +657,19 @@ Ward editor → the ward → Panel 3b. Under each LiDAR with a node assigned are
 
 Once a LiDAR is placed, aligned and has its empty room, the server finds the people it sees and links each to a wristband nearby (by position; `docs/protocol.md`, section 5). Nothing has to be switched on.
 
-On the **Live Map**:
-* **📡 before the patient's name**, violet dot: the position comes from the LiDAR (about ±0.1 m). The text under the map says "📡 seen by the LiDAR" and how far the Bluetooth estimate is from it; the faint teal circle is that estimate.
-* **🛏**: the patient was last seen at the bed and the LiDAR no longer sees them, normally because they lay down (a lying person is below the scan slice). The position stays there until they get up, or until Bluetooth clearly shows they left. Getting up, they are first seen at the bed, on whichever side they get out, and the violet dot goes with them within about 1 s.
-* **⏸**: the LiDAR lost the patient away from a bed (someone in front of them, or they went down). The last position is held for 10 s, then Bluetooth.
-* **Grey dot, "person (no wristband)"**: someone the LiDAR sees who is not linked to a wristband: a visitor, staff, or a patient whose Bluetooth position is still more than 2 m away.
-* No symbol (teal dot, 🔒 when still): Bluetooth only.
+On the **Ward overview** (Phase 11; the first page after sign-in):
+* **Left, at the top: the chosen patient** (see "The patient card" below); under it **the patients:** one tile each for the patients in this ward (their wristband is heard here, or their bed is here and the wristband is not heard elsewhere), with where they are in words ("🛏 In bed (Bed 1)", "🚪 At the door", "By Bed 3", "In the room", "Wristband not heard"), the heart rate, and why the tile is coloured. Below, **Other wards**: the patients with a wristband elsewhere, one line each, 5 a page. Click a tile (or a patient on the map) to see them below **and** to start their live vitals for 2 minutes; a patient of another ward opens the ward their wristband is heard in, or, when it is not heard, the ward of their bed. Opening the page alone never starts live vitals.
+* **The patient card** is empty until a patient is chosen; when the ward opens, it shows the first patient whose wristband is heard in the ward, if any.
+* **The patient card:** an alert nobody has answered yet (red), where they are and how that was found ("Seen by the LiDAR (about ±0.1 m)", "Seen by a headset", "Estimated from Bluetooth (about ±1 m)"), the heart rate and SpO2 in large figures, battery, wristband, and the last message. The heart rate says what the wristband is doing:
+  * a number with "Live, every second" or "Just measured";
+  * "♥ Measuring… ready in about N s" with a bar: the sensor has skin contact, and the first value usually comes about 15 s later (13 s by design); after 30 s it says to keep the arm still and the strap snug;
+  * "No skin contact: make the strap snug" while live vitals run without contact;
+  * "Next automatic reading within 3 min" (or "in about N min") between the automatic measurements, with the last value in grey and its age;
+  * "No signal for N s" when the wristband has sent nothing for 5 s.
+* **▶ Live vitals for 2 min** starts them again; while they run, the button counts down ("● Live: 1:45 left").
+* **On the map:** each patient is a white disc with their initials and a coloured ring: **red, pulsing** = needs help now (an alert nobody has answered), **amber** = check (no signal, no skin contact, low battery, sensor fault), **blue** = OK, **grey dashed** = wristband off. A small badge: 🛏 in bed (the LiDAR lost them at the bed: lying down, below its scan), 🚪 at the door, ⏸ not seen just now (the position is held 10 s), 👁 seen by a headset. The name shows for the chosen patient and for the one under the mouse. Grey dots are people the LiDAR sees without a wristband (staff, visitors, or a patient not matched yet). Wall sensors are small grey squares, hollow and dashed when off. Each bed shows its name and, when a patient has it, their name and ID (FREE, TAKEN or OUT OF USE otherwise); click such a bed for the patient: their card when they wear a wristband, else their profile. A patient whose wristband is heard in another ward leaves this map.
+* **The alarm pop-up** says who, where in words ("By Bed 3", "At the door") and when. Heart rate and SpO2 are shown only for a vitals alarm: a fall or a door alert comes suddenly, without a measurement of that moment.
+* **Technician details** (admins, at the bottom of the card): position and source, the motion state, the MAC address, which wall sensors hear the wristband, and switches for the distance circles, all names and the 0.5 m grid.
 
 How linking behaves:
 * A patient who walks in is linked within about 1–2 s, when they are the only person near their wristband's Bluetooth position (within 2 m) or clearly the nearest one.
@@ -715,8 +735,8 @@ The Quest 3 client delivers the spatial hospital digital twin, in-situ floating 
 6. **Pair the headset (once per headset).** Press Play. The hand slate's **System** tab shows `Edge Server: 🔑 NOT PAIRED`.
    1. On the dashboard (signed in as admin): **ADMIN** tab → **Headset Pairing** → **Create pairing code**. A 6-digit code appears, valid for 5 minutes and usable once.
    2. On the headset: System tab → **🔑 Pair headset (code)** → type the code on the number pad → **✓ Pair**.
-   3. The headset is enrolled automatically (as `QUEST3-…`, shown in the Unity Console as `[SHIRO NET] This headset is QUEST3-…`) and connects. It stays paired until an admin presses **Revoke** on the ADMIN tab.
-   4. On the ADMIN tab, choose the clinician who uses the headset in its **Used by** column. What the headset does (for example acknowledging an alert) is recorded as `QUEST3-… (name, CLN-…)`; without an assignment it is recorded as `QUEST3-… (no clinician assigned)`. The hand slate header shows the assignment. Pairing again clears it.
+   3. The headset is enrolled automatically (as `QUEST3-…`, shown in the Unity Console as `[SHIRO NET] This headset is QUEST3-…`) and connects. It stays paired until an admin presses **Revoke** on ⚙ Setup → Accounts & headsets.
+   4. On ⚙ Setup → Accounts & headsets, choose the clinician who uses the headset in its **Used by** column. What the headset does (for example acknowledging an alert) is recorded as `QUEST3-… (name, CLN-…)`; without an assignment it is recorded as `QUEST3-… (no clinician assigned)`. The hand slate header shows the assignment. Pairing again clears it.
    The Unity editor on a PC and the app installed on the Quest have different IDs, so each is paired once.
 
 ### 6.3 Running the Client (Two Methods)
@@ -908,10 +928,10 @@ Follow this numbered checklist for demonstrations, laboratory testing, and clini
 | An old firmware still runs after uploading (the banner shows the old version) | The upload came from a copy of the sketch with old files, or from another folder than the one edited. | Open the `.ino` in the repository folder, or copy **all** `.h` files of the repository folder into your copy again (4.1, "Opening a sketch"). |
 | Quest 3 shows `WebSocket Connection Error` on startup | Server IP mismatch or Edge Server offline. | 1. Look at left palm -> Click Hand Slate connection tab.<br>2. Click Wi-Fi preset or retype correct laptop IP.<br>3. Ensure Quest 3 is on the same Wi-Fi LAN. |
 | Quest 3 disconnects repeatedly with rapid reconnect loop | WebSocket ping/pong timeout or port contention. | One persistent connection per headset, with heartbeats. Ensure only one Unity instance is playing. |
-| Hand slate shows `Edge Server: 🔑 NOT PAIRED` | The headset has no pairing, or its pairing was revoked, or the database was recreated. | Section 6.2 step 6: create a code on the ADMIN tab and enter it on the System tab. |
+| Hand slate shows `Edge Server: 🔑 NOT PAIRED` | The headset has no pairing, or its pairing was revoked, or the database was recreated. | Section 6.2 step 6: create a code on ⚙ Setup → Accounts & headsets and enter it on the System tab. |
 | Hand slate says "Pairing refused: The pairing code is wrong or has expired" | The code was mistyped, older than 5 minutes or already used. | Create a new code. After 5 wrong codes the headset's address is locked for 5 minutes. |
 | The dashboard always returns to the sign-in page | The session ended: 12 hours passed, you logged out elsewhere, or an admin deactivated the account or reset its password. | Sign in again; ask an admin if the account is deactivated. |
-| "Too many failed sign-ins for this account" | 5 wrong passwords in a row. | Wait 5 minutes. A forgotten password is reset by an admin (ADMIN tab), or for the last admin with `node tools/reset_password.js <username>` on the server PC. |
+| "Too many failed sign-ins for this account" | 5 wrong passwords in a row. | Wait 5 minutes. A forgotten password is reset by an admin (⚙ Setup → Accounts & headsets), or for the last admin with `node tools/reset_password.js <username>` on the server PC. |
 | "Your account does not have permission for this" | The action needs an admin (accounts, devices, wards, calibration). | Ask an admin, or sign in with an admin account. |
 | Depth view status says "Depth NOT SUPPORTED here"; no panel is ever linked | Over Quest Link, the depth sensor's data is not passed to the PC. | Meta Quest Link app → **Settings → Developer → Spatial Data over Meta Quest Link** on, then restart Quest Link and Play. |
 | Panel stays on "📶 BLUETOOTH POSITION": "nobody within 0.5 m of the wristband" | The Bluetooth estimate is more than 0.5 m from the person (positioning accuracy, F-2), or the person has not moved since the headset came on (still, yellow in the depth view). | **🎯 Re-Attach**, aim at the patient and pinch. **🔄 Auto** returns to automatic linking. |

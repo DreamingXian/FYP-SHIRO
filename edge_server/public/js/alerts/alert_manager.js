@@ -196,60 +196,43 @@ class EmergencyAlertManager {
               </div>
             </div>
             <button id="em-btn-mute" class="btn btn-outline btn-sm" style="font-size: 12px; border-color: #CBD5E1; color: #475569;" title="Mute Alarm Sound">
-              🔔 Mute Alarm
+              🔕 Mute sound
             </button>
           </div>
 
-          <!-- Patient & Telemetry Info Grid -->
-          <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 18px 20px; margin-bottom: 20px;">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
-              <div>
-                <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748B;">Target Patient</div>
-                <div style="font-size: 17px; font-weight: 800; color: #0F172A; margin-top: 2px;" id="em-patient-name">--</div>
-                <div style="font-size: 12px; color: #64748B;" id="em-patient-id">Patient ID: --</div>
-              </div>
-
-              <div>
-                <div style="font-size: 11px; text-transform: uppercase; font-weight: 700; color: #64748B;">Ward & Spatial Location</div>
-                <div style="font-size: 17px; font-weight: 800; color: #0F172A; margin-top: 2px;" id="em-location">--</div>
-                <div style="font-size: 12px; font-family: monospace; color: #1E60F2; font-weight: 700;" id="em-coords">Grid Location: --</div>
-              </div>
+          <!-- Who, where, when, in words (Phase 11); the sensor values folded away -->
+          <div class="em-facts">
+            <div class="em-fact">
+              <div class="em-fact-label">Patient</div>
+              <div class="em-fact-main" id="em-patient-name">--</div>
+              <div class="em-fact-sub" id="em-patient-id">--</div>
             </div>
-
-            <!-- Fall measurements reported by the wristband (shown for fall incidents only) -->
-            <div id="em-fall-row" style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; flex-wrap: wrap; gap: 8px 24px;">
-              <div>
-                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Free-fall Min:</span>
-                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-freefall">--</span>
-              </div>
-              <div>
-                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Impact Force:</span>
-                <span style="font-size: 13px; font-weight: 800; color: #DC2626; margin-left: 4px;" id="em-impact">--</span>
-              </div>
-              <div>
-                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Post-impact Motion:</span>
-                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-stillness">--</span>
-              </div>
+            <div class="em-fact">
+              <div class="em-fact-label">Where</div>
+              <div class="em-fact-main" id="em-location">--</div>
+              <div class="em-fact-sub" id="em-where-sub"></div>
             </div>
-
-            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #E2E8F0; display: flex; flex-wrap: wrap; gap: 8px 24px;">
-              <div>
-                <span style="font-size: 11px; font-weight: 700; color: #64748B;">Heart Rate:</span>
-                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-bpm">-- BPM</span>
-              </div>
-              <div>
-                <span style="font-size: 11px; font-weight: 700; color: #64748B;" title="Not calibrated: shown for information, does not raise alarms.">SpO2 (indicative):</span>
-                <span style="font-size: 13px; font-weight: 800; color: #0F172A; margin-left: 4px;" id="em-spo2">--%</span>
-              </div>
+            <div class="em-fact">
+              <div class="em-fact-label">When</div>
+              <div class="em-fact-main" id="em-when">--</div>
+              <div class="em-fact-sub" id="em-when-sub"></div>
             </div>
           </div>
 
-          <!-- Alert Message Narrative Box -->
-          <div style="background: #FFF1F2; border-left: 4px solid #E11D48; padding: 12px 16px; border-radius: 8px; margin-bottom: 24px;">
-            <div style="font-size: 13px; color: #9F1239; font-weight: 600; line-height: 1.5;" id="em-alert-msg">
-              CRITICAL FALL DETECTED: Sudden impact spike followed by incapacitation stillness.
-            </div>
+          <!-- Vitals only for a vitals alert: a fall or a door alert comes without a fresh measurement -->
+          <div class="em-vitals" id="em-vitals-row">
+            Heart rate <b id="em-bpm">--</b>
+            <span title="Not calibrated: for information only, raises no alarm">· SpO2 (indicative) <b id="em-spo2">--</b></span>
           </div>
+
+          <details class="em-details">
+            <summary>Sensor details</summary>
+            <div id="em-fall-row" class="em-detail-row">
+              Lowest value in the free fall <b id="em-freefall">--</b> · Impact <b id="em-impact">--</b> · Movement after the impact <b id="em-stillness">--</b>
+            </div>
+            <div class="em-detail-row" id="em-coords">Position: --</div>
+            <div class="em-detail-row" id="em-alert-msg"></div>
+          </details>
 
           <!-- Shown when someone else acknowledged this incident while it was open here -->
           <div id="em-ack-status" style="display: none; background: #ECFDF5; border-left: 4px solid #059669; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;">
@@ -260,10 +243,10 @@ class EmergencyAlertManager {
           <!-- Action Buttons -->
           <div style="display: flex; gap: 12px; justify-content: flex-end;">
             <button id="em-btn-locate" class="btn btn-outline" style="border-color: #1E60F2; color: #1E60F2; font-weight: 700; padding: 10px 18px;">
-              📍 Locate on Live Map
+              📍 Show on map
             </button>
             <button id="em-btn-ack" class="btn btn-primary" style="background: #DC2626; border-color: #DC2626; font-weight: 800; padding: 10px 24px; box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);">
-              ✓ ACKNOWLEDGE & RESPOND
+              ✓ Acknowledge – I'm responding
             </button>
             <button id="em-btn-close" class="btn btn-primary" style="display: none; background: #059669; border-color: #059669; font-weight: 800; padding: 10px 24px;">
               OK, close
@@ -391,6 +374,72 @@ class EmergencyAlertManager {
     this.playAudioAlarm();
   }
 
+  /**
+   * "When" and "where" in words: how long ago, and the place in the ward
+   * (at the door, by a bed, in the room) from the ward's layout and the
+   * position stored with the incident.
+   */
+  async fillWhenAndWhere(incident) {
+    const at = incident.trigger_timestamp ? new Date(incident.trigger_timestamp) : null;
+    const whenEl = document.getElementById('em-when');
+    const whenSub = document.getElementById('em-when-sub');
+    if (whenEl) whenEl.innerText = at && window.ShiroUI ? window.ShiroUI.ago(at) || 'just now' : 'not recorded';
+    if (whenSub) whenSub.innerText = at ? at.toLocaleTimeString() : '';
+
+    const whereEl = document.getElementById('em-location');
+    const whereSub = document.getElementById('em-where-sub');
+    const ward = incident.ward_id || null;
+    if (whereSub) whereSub.innerText = ward || '';
+    if (!whereEl) return;
+    if (incident.incident_category === 'GEOFENCE_BREACH') {
+      whereEl.innerText = incident.geofence_kind === 'AT_DOOR' ? '🚪 At the door' : '🚪 Left through the door';
+      return;
+    }
+    if (!ward) {
+      whereEl.innerText = 'Ward not known';
+      return;
+    }
+    const x = Number(incident.pos_x);
+    const y = Number(incident.pos_y);
+    if (incident.pos_x === null || incident.pos_x === undefined || !Number.isFinite(x) || !Number.isFinite(y)) {
+      whereEl.innerText = ward;
+      if (whereSub) whereSub.innerText = 'Exact place not known';
+      return;
+    }
+    whereEl.innerText = ward;
+    try {
+      this.layouts = this.layouts || new Map();
+      if (!this.layouts.has(ward)) {
+        const res = await fetch(`/api/ward/config?ward_id=${encodeURIComponent(ward)}`);
+        const data = await res.json();
+        this.layouts.set(ward, data.success ? data.ward : null);
+      }
+      const layout = this.layouts.get(ward);
+      if (!layout || this.currentModalIncident !== incident) return;
+      const inRect = (r, m = 0) => r && x >= r.x - m && x <= r.x + r.w + m && y >= r.y - m && y <= r.y + r.l + m;
+      const d = layout.door;
+      let door = null;
+      if (d) {
+        const span = (Number(d.width) || 0.9) + 0.2;
+        const start = (Number(d.x) || 0) - 0.1;
+        const L = Number(layout.length_x);
+        const W = Number(layout.width_y);
+        door = { NORTH: { x: start, y: W - 1, w: span, l: 1 }, EAST: { x: L - 1, y: start, w: 1, l: span },
+          WEST: { x: 0, y: start, w: 1, l: span }, SOUTH: { x: start, y: 0, w: span, l: 1 } }[String(d.wall || '').toUpperCase()] || null;
+      }
+      const bed = (layout.beds || []).find(b => {
+        const rot = ((parseInt(b.rotation_deg, 10) || 0) % 360 + 360) % 360;
+        const along = rot === 90 || rot === 270;
+        const w = along ? Number(b.length) || 2 : Number(b.width) || 0.9;
+        const l = along ? Number(b.width) || 0.9 : Number(b.length) || 2;
+        return inRect({ x: Number(b.x) || 0, y: Number(b.y) || 0, w, l }, 0.3);
+      });
+      whereEl.innerText = inRect(door) ? '🚪 At the door' : bed ? `By ${bed.bed_code || bed.bed_id}` : 'In the room';
+    } catch (err) {
+      // The ward name stays
+    }
+  }
+
   showEmergencyModal(incident) {
     this.currentModalIncident = incident;
     const backdrop = document.getElementById('emergency-modal-backdrop');
@@ -422,22 +471,25 @@ class EmergencyAlertManager {
     document.getElementById('em-modal-id').innerText =
       `Incident ID: ${incident.incident_id || 'PENDING'}${simulated ? ' (simulated test alarm)' : ''}`;
     document.getElementById('em-patient-name').innerText = incident.patient_name || 'Unknown patient';
-    document.getElementById('em-patient-id').innerText = `Patient ID: ${incident.patient_id || 'not assigned'}`;
-    document.getElementById('em-location').innerText = incident.ward_id
-      ? `${incident.ward_id}${incident.bed_id ? ` (${incident.bed_id})` : ''}`
-      : 'Ward unknown';
+    document.getElementById('em-patient-id').innerText = [incident.patient_id || 'no patient record', incident.bed_id ? `their bed ${incident.bed_id}` : ''].filter(Boolean).join(' · ');
     document.getElementById('em-coords').innerText = (known(incident.pos_x) && known(incident.pos_y))
-      ? `Grid Location: (${Number(incident.pos_x).toFixed(2)}m, ${Number(incident.pos_y).toFixed(2)}m)`
-      : 'Grid Location: unknown';
+      ? `Position: (${Number(incident.pos_x).toFixed(2)} m, ${Number(incident.pos_y).toFixed(2)} m) from the south-west corner of the room`
+      : 'Position: not known';
+    this.fillWhenAndWhere(incident);
     // The three values of the wristband's fall check, exactly as it measured them
     const gValue = (v) => known(v) ? `${Number(v).toFixed(2)}g` : 'not reported';
     document.getElementById('em-fall-row').style.display =
-      incident.incident_category === 'FALL_ACCIDENT' ? 'flex' : 'none';
+      incident.incident_category === 'FALL_ACCIDENT' ? 'block' : 'none';
     document.getElementById('em-freefall').innerText = gValue(incident.freefall_min_g);
     document.getElementById('em-impact').innerText = gValue(incident.kinematic_impact_force);
     document.getElementById('em-stillness').innerText = gValue(incident.post_impact_stillness);
-    document.getElementById('em-bpm').innerText = known(incident.heart_rate) ? `${incident.heart_rate} BPM` : '-- BPM';
-    document.getElementById('em-spo2').innerText = known(incident.spo2) ? `${incident.spo2}%` : '--%';
+    // A fall or a door alert comes suddenly: nothing says the heart rate was being measured
+    // then, so the pop-up shows no vitals for them (only for a vitals alert)
+    const vitalsAlert = incident.incident_category === 'CRITICAL_VITALS';
+    const vitalsRow = document.getElementById('em-vitals-row');
+    if (vitalsRow) vitalsRow.style.display = vitalsAlert ? '' : 'none';
+    document.getElementById('em-bpm').innerText = known(incident.heart_rate) && Number(incident.heart_rate) > 0 ? `${incident.heart_rate} bpm` : 'not measured';
+    document.getElementById('em-spo2').innerText = known(incident.spo2) && Number(incident.spo2) > 0 ? `${incident.spo2}%` : 'not measured';
     document.getElementById('em-alert-msg').innerText = incident.alert_message || 'Clinical safety event detected.';
 
     backdrop.style.display = 'flex';

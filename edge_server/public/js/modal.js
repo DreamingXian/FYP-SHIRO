@@ -13,6 +13,10 @@ function showModal({
   extraButtonClass = 'btn btn-outline btn-sm',
   extraButtonDisabled = false,
   extraButtonTitle = null,
+  // What the action breaks or stops elsewhere (Phase 11): a coloured box under the
+  // message, a bold title and one line per effect. { level: 'danger'|'warning',
+  // title, points: [...] }. 'danger' (cannot be undone) also makes the button solid red.
+  impact = null,
   onConfirm = null,
   onCancel = null,
   onExtra = null
@@ -44,6 +48,26 @@ function showModal({
   } else {
     bodyEl.innerText = message || '';
   }
+  // The consequences, as text only (names and server answers are never markup)
+  if (impact && (impact.title || (impact.points && impact.points.length))) {
+    const box = document.createElement('div');
+    box.className = `modal-impact impact-${impact.level === 'danger' ? 'danger' : 'warning'}`;
+    box.setAttribute('role', 'alert');
+    const head = document.createElement('div');
+    head.className = 'modal-impact-title';
+    head.textContent = `${impact.level === 'danger' ? '⛔' : '⚠'} ${impact.title || 'Before you go on'}`;
+    box.appendChild(head);
+    if (Array.isArray(impact.points) && impact.points.length) {
+      const list = document.createElement('ul');
+      impact.points.forEach(p => {
+        const li = document.createElement('li');
+        li.textContent = p;
+        list.appendChild(li);
+      });
+      box.appendChild(list);
+    }
+    bodyEl.appendChild(box);
+  }
 
   let iconText = 'ℹ️';
   let iconClass = 'icon-info';
@@ -55,7 +79,9 @@ function showModal({
   iconEl.className = `modal-icon ${iconClass}`;
 
   btnConfirm.innerText = confirmText;
-  if (type === 'danger') {
+  if (impact && impact.level === 'danger') {
+    btnConfirm.className = 'btn btn-danger btn-sm';
+  } else if (type === 'danger') {
     btnConfirm.className = 'btn btn-danger-outline btn-sm';
   } else {
     btnConfirm.className = 'btn btn-primary btn-sm';

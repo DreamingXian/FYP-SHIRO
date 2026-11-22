@@ -48,33 +48,41 @@
     return v === null || v === undefined || v === '' || !isFinite(Number(v)) ? null : Number(v);
   }
 
-  /** The measurements stored with the incident. Values that were not measured are left out. */
+  /**
+   * The measurements stored with the incident. Values that were not measured are
+   * left out; heart rate and SpO2 only for a vitals alert (a fall or a door alert
+   * comes suddenly, without a measurement of that moment).
+   */
   function measurementsText(inc) {
     const parts = [];
     const impact = numberOrNull(inc.kinematic_impact_force);
     const still = numberOrNull(inc.post_impact_stillness);
     const freefall = numberOrNull(inc.freefall_min_g);
-    const hr = numberOrNull(inc.heart_rate);
-    const spo2 = numberOrNull(inc.spo2);
+    const vitalsAlert = inc.incident_category === 'CRITICAL_VITALS';
+    const hr = vitalsAlert ? numberOrNull(inc.heart_rate) : null;
+    const spo2 = vitalsAlert ? numberOrNull(inc.spo2) : null;
     if (impact !== null) parts.push(`impact ${impact.toFixed(2)} g`);
     if (freefall !== null) parts.push(`free-fall min ${freefall.toFixed(2)} g`);
     if (still !== null) parts.push(`stillness ${still.toFixed(2)} g`);
     if (hr !== null && hr > 0) parts.push(`HR ${hr} bpm`);
     if (spo2 !== null && spo2 > 0) parts.push(`SpO2 ~${Math.round(spo2)} %`);
-    return parts.length ? parts.join(' · ') : 'not measured';
+    return parts.length ? parts.join(' · ') : (vitalsAlert ? 'not measured' : '–');
   }
 
+  // Incidents from before 22 Nov 2026 may have a position but no ward: the ward was
+  // taken only from the patient's bed then. Say so instead of showing a bare position.
   function locationText(inc) {
     const place = [inc.ward_id, inc.bed_id].filter(Boolean).join(' · ');
     const x = numberOrNull(inc.pos_x);
     const y = numberOrNull(inc.pos_y);
-    const pos = x !== null && y !== null ? `(${x.toFixed(1)} m, ${y.toFixed(1)} m)` : '';
-    return [place, pos].filter(Boolean).join(' ') || 'not recorded';
+    const pos = x !== null && y !== null ? `at (${x.toFixed(1)} m, ${y.toFixed(1)} m)` : '';
+    if (!place && pos) return `ward not recorded, ${pos}`;
+    return [place, pos].filter(Boolean).join(', ') || 'not recorded';
   }
 
   function incidentRow(inc, showPatient) {
     const typeBadge = `<span class="badge ${inc.incident_category === 'FALL_ACCIDENT' ? 'badge-alert' : 'badge-warning'}">${escapeHtml(typeLabel(inc))}</span>`
-      + (Number(inc.is_simulated) === 1 ? ' <span class="badge badge-neutral" title="Created on the Live Lab test bench, not by a wristband">TEST</span>' : '');
+      + (Number(inc.is_simulated) === 1 ? ' <span class="badge badge-neutral" title="A test alarm from Test tools, not from a wristband">Test</span>' : '');
 
     let statusBadge;
     if (inc.resolution_status === 'PENDING') {
@@ -113,9 +121,11 @@
       </div>`;
   }
 
-  function renderResult(data) {
+  let incidentPage = 1;
+  function renderResult(data, page = 1) {
     const container = document.getElementById('incident-history-container');
     if (!container) return;
+    incidentPage = page;
     const s = data.summary;
     const showPatient = !state.patientId;
 
@@ -128,22 +138,24 @@
     ].join('');
 
     const testNote = s.simulated > 0 && state.includeSimulated
-      ? `${s.simulated} of these ${s.total} are Live Lab tests (marked TEST).`
+      ? `${s.simulated} of these ${s.total} are test alarms (marked Test).`
       : '';
     const cutNote = data.truncated ? `Showing the newest ${data.count} of ${s.total}.` : '';
     const filterNote = [testNote, cutNote].filter(Boolean).join(' ');
 
+    const pageData = window.ShiroUI.paginate(data.history, incidentPage);
+    incidentPage = pageData.page;
     let incidentRowsHtml;
     if (data.history.length === 0) {
-      incidentRowsHtml = `<tr><td colspan="${showPatient ? '6' : '5'}" style="text-align:center; padding:28px; color:var(--text-muted);">No incidents in this period.</td></tr>`;
+      incidentRowsHtml = `<tr><td colspan="${showPatient ? '6' : '5'}" class="empty-state">No incidents in this period.</td></tr>`;
     } else {
-      incidentRowsHtml = data.history.map(inc => incidentRow(inc, showPatient)).join('');
+      incidentRowsHtml = pageData.items.map(inc => incidentRow(inc, showPatient)).join('');
     }
 
     container.innerHTML = `
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">${summaryHtml}</div>
       <div style="font-size:11px; color:var(--text-muted); margin-bottom:8px; min-height:14px;">${escapeHtml(filterNote)}</div>
-      <div class="data-table-container" style="max-height:420px; overflow:auto;">
+      <div class="data-table-container">
         <table class="data-table">
           <thead>
             <tr>
@@ -157,7 +169,12 @@
           </thead>
           <tbody>${incidentRowsHtml}</tbody>
         </table>
-      </div>`;
+      </div>
+      <div id="incident-history-pager"></div>`;
+    window.ShiroUI.renderPager(document.getElementById('incident-history-pager'), {
+      total: pageData.total, page: pageData.page, noun: 'incidents',
+      onPage: (n) => renderResult(data, n)
+    });
   }
 
   async function loadIncidentHistory() {

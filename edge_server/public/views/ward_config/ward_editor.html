@@ -7,7 +7,7 @@
                 <span class="back-arrow">&lt;</span> Back
               </button>
               <span class="badge badge-info" id="editor-ward-badge" style="font-size: 13px; font-weight: 700; padding: 6px 14px;">WARD-001</span>
-              <span class="badge badge-info" id="db-sync-badge">● MySQL Synchronized</span>
+              <span class="badge badge-info" id="db-sync-badge">● Saved</span>
             </div>
             <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
               <button class="btn btn-outline btn-sm" onclick="exportWardJSON()">📤 Export JSON</button>
@@ -28,20 +28,20 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <span>📐 Panel 1: Room Dimensions & Physical Bounds</span>
+                  <span>1. Room and door</span>
                 </div>
-                <span class="badge badge-live">Parametric 2D</span>
+
               </div>
-              <div class="card-subtitle">Configure ward physical length, width, and entrance door. Backend localization algorithms auto-normalize coordinate grids.</div>
+              <div class="card-subtitle">Measure the room from the south-west corner: x runs east, y runs north.</div>
 
               <!-- Preset Template Selector (New Row below subtitle, before room id and title) -->
               <div style="margin: 16px 0 20px 0; padding: 12px 16px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                 <div>
                   <div style="font-size: 12px; font-weight: 700; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-                    <span>📐 Architectural Layout Preset:</span>
+                    <span>Start from a template:</span>
                   </div>
                   <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
-                    Select an archetype to populate room bounds, beds, and anchors.
+                    Fills in a typical room, beds and sensors; you can change everything afterwards.
                   </div>
                 </div>
                 <select class="form-control" id="cfg-template-select" style="min-width: 280px; max-width: 360px; padding: 8px 12px; font-weight: 600;" onchange="applyWardTemplate(this.value)">
@@ -56,7 +56,7 @@
                 <div class="form-group">
                   <div style="display: flex; justify-content: space-between; align-items: center;">
                     <label class="form-label">Ward Room ID</label>
-                    <span style="font-size: 10px; color: var(--primary); font-weight: 700; text-transform: uppercase;">🔒 Auto-Generated</span>
+                    <span style="font-size: 10px; color: var(--primary); font-weight: 700; text-transform: uppercase;">🔒 Given automatically</span>
                   </div>
                   <input type="text" class="form-control mono" id="cfg-room-id" value="WARD-001" readonly style="background: #F1F5F9; color: var(--primary); font-weight: 700; cursor: not-allowed;" title="Ward ID is system auto-generated to prevent database collisions">
                 </div>
@@ -68,21 +68,21 @@
 
               <div class="form-grid-3">
                 <div class="form-group">
-                  <label class="form-label">Length (X-Max)</label>
+                  <label class="form-label">Length, west to east</label>
                   <div style="display: flex; align-items: center; gap: 6px;">
                     <input type="number" step="0.01" min="0.10" class="form-control" id="cfg-x-max" value="6.40" oninput="syncWardDimensions()">
                     <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">m</span>
                   </div>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Width (Y-Max)</label>
+                  <label class="form-label">Width, south to north</label>
                   <div style="display: flex; align-items: center; gap: 6px;">
                     <input type="number" step="0.01" min="0.10" class="form-control" id="cfg-y-max" value="4.80" oninput="syncWardDimensions()">
                     <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">m</span>
                   </div>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Height (Z)</label>
+                  <label class="form-label">Ceiling height</label>
                   <div style="display: flex; align-items: center; gap: 6px;">
                     <input type="number" step="0.01" min="0.10" class="form-control" id="cfg-z-max" value="2.60" oninput="syncWardDimensions()">
                     <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">m</span>
@@ -90,9 +90,10 @@
                 </div>
               </div>
 
-              <div class="form-grid-3">
+              <!-- The headset room anchor is not typed here: the headset app sets it (Phase 11) -->
+              <div class="form-grid-3" style="margin-bottom: 0;">
                 <div class="form-group">
-                  <label class="form-label">Door Wall Placement</label>
+                  <label class="form-label">Door is in the wall</label>
                   <select class="form-control" id="cfg-door-wall" onchange="syncWardDoor()">
                     <option value="SOUTH">South Wall (Y=0)</option>
                     <option value="NORTH">North Wall (Y=Max)</option>
@@ -101,7 +102,7 @@
                   </select>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Door Offset Along Wall (Edge)</label>
+                  <label class="form-label">Door starts at (along the wall)</label>
                   <div style="display: flex; align-items: center; gap: 6px;">
                     <input type="number" step="0.01" min="0.00" class="form-control" id="cfg-door-pos" value="2.80" oninput="syncWardDoor()">
                     <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">m</span>
@@ -115,26 +116,18 @@
                   </div>
                 </div>
               </div>
-
-              <div class="form-group" style="margin-bottom: 0;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-                  <label class="form-label">Meta Quest 3 Spatial Anchor Origin UUID (Door Threshold)</label>
-                  <span style="font-size: 11px; color: var(--primary); font-weight: 600;">Binds (0,0,0) in Physical Reality</span>
-                </div>
-                <input type="text" class="form-control mono" id="cfg-spatial-uuid" value="a1b2c3d4-e5f6-7890-abcd-ef0123456789" placeholder="e.g. a1b2c3d4-e5f6-7890-abcd-ef0123456789" onchange="syncWardMeta()">
-              </div>
             </div>
 
             <!-- Panel 2: Enclosed Obstacles / Cutout Zones (e.g. Toilets, Structural Pillars) -->
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <span>🚽 Panel 2: Enclosed Obstacles, Partitions & Furniture</span>
-                  <span class="badge-num" id="obstacle-count-badge">1 Cutout</span>
+                  <span>2. Furniture, bathroom, partitions</span>
+                  <span class="badge-num" id="obstacle-count-badge">1</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addObstacle()">➕ Add Obstacle</button>
+                <button class="btn btn-outline btn-sm" id="btn-add-obstacle" onclick="addObstacle()">➕ Add Obstacle</button>
               </div>
-              <div class="card-subtitle">Define architectural indentations, ensuite bathrooms, cupboards, tables, or partitions. Obstacles and heights are factored into anchor line-of-sight & digital twin bounds.</div>
+              <div class="card-subtitle">Things that block walking or the sensors: a bathroom, cupboards, tables, partitions. At most 15, all inside the room.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -159,15 +152,15 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <span>📡 Panel 3: Stationary BLE Wall Anchors (Trilateration Fleet)</span>
-                  <span class="badge-num" id="anchor-count-badge">3 Mounted</span>
+                  <span>3. Wall sensors (anchors)</span>
+                  <span class="badge-num" id="anchor-count-badge">3</span>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                   <button class="btn btn-outline btn-sm" style="color: var(--primary); border-color: var(--primary); background: #EFF6FF; font-weight: 700;" onclick="openPlacementPlanner()" title="Suggest where to mount the anchors and the LiDAR, which way each faces, with an installation sheet to print">📐 Plan Anchors &amp; LiDAR</button>
                   <button class="btn btn-outline btn-sm" id="btn-add-anchor" onclick="addAnchor()">➕ Add BLE Anchor</button>
                 </div>
               </div>
-              <div class="card-subtitle">Specify physical (X, Y, Z) coordinates for the stationary anchors (ESP32-WROOM-32E, ESP32-S3 or XIAO ESP32-C3, same firmware). 3 to 12 anchors per ward (6 for a new ward). Mounting height: 2.40 m, or 15 cm below a lower ceiling; at most 3.0 m; flat on the wall, no tilt. <b>📐 Plan Anchors &amp; LiDAR</b> suggests the spots, which way each board faces, and prints an installation sheet.</div>
+              <div class="card-subtitle">They hear the wristbands and tell roughly where each one is. 3 to 12 per ward, 2.40 m high, flat on the wall. <b>📐 Plan Anchors &amp; LiDAR</b> suggests where to put them and prints an installation sheet.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -191,12 +184,12 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <span>🌀 Panel 3b: LiDAR Room Sensor</span>
-                  <span class="badge-num" id="room-sensor-count-badge">0 Placed</span>
+                  <span>4. LiDAR (exact position)</span>
+                  <span class="badge-num" id="room-sensor-count-badge">0</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addRoomSensor()">➕ Add LiDAR</button>
+                <button class="btn btn-outline btn-sm" id="btn-add-lidar" onclick="addRoomSensor()">➕ Add LiDAR</button>
               </div>
-              <div class="card-subtitle">Where the RPLIDAR C1 stands (centre, metres from the south-west corner), the height of its base above the floor (the laser is 3 cm higher), and the compass direction the ▲ on its top points: 0° north, 90° east, 180° south, 270° west.</div>
+              <div class="card-subtitle">One per ward. Where the LiDAR stands (its centre), how high its base is, and which way the ▲ on top points: 0° north, 90° east, 180° south, 270° west.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -220,12 +213,12 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <span>🛏️ Panel 4: Hospital Beds Fleet & Cubicle Placement</span>
+                  <span>5. Beds</span>
                   <span class="badge-num" id="bed-count-badge">4 Beds</span>
                 </div>
-                <button class="btn btn-outline btn-sm" onclick="addBed()">➕ Add Bed</button>
+                <button class="btn btn-outline btn-sm" id="btn-add-bed" onclick="addBed()">➕ Add Bed</button>
               </div>
-              <div class="card-subtitle">Bottom-left coordinates in meters. Rotate beds (0°, 90°, 180°, 270°) to match clinical ward orientation. Status is Available or Unavailable.</div>
+              <div class="card-subtitle">Each bed's south-west corner, and which way it is turned. A bed taken out of use is "Unavailable". The room takes one bed per 5 m² of free floor.</div>
 
               <div class="data-table-container">
                 <table class="data-table">
@@ -252,12 +245,11 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <span>🗺️ Live 2D Architectural Floor Plan (Real-Time Digital Twin)</span>
-                  <span class="badge badge-live">Live Sync</span>
+                  <span>Floor plan</span>
                 </div>
                 <span style="font-size: 12px; color: var(--text-muted);" id="canvas-scale-text">Metric Scale: 1m = --px</span>
               </div>
-              <div class="card-subtitle">Real-time vector rendering of boundaries, walls, toilet cutouts, door origin, beds, anchors, and active patient tracking.</div>
+              <div class="card-subtitle">Updates as you type. Save to keep the changes.</div>
 
               <div class="floorplan-canvas-wrap" style="height: 440px;">
                 <canvas id="wardMapCanvas"></canvas>
@@ -266,30 +258,33 @@
               <!-- Floor Plan Metrics Bar -->
               <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; padding: 12px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px; text-align: center;">
                 <div>
-                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Gross Footprint</div>
+                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Room area</div>
                   <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); margin-top: 2px;" id="stat-gross-area">30.72 m²</div>
                 </div>
                 <div>
-                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Usable Patient Area</div>
+                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Free floor</div>
                   <div style="font-size: 16px; font-weight: 700; color: var(--status-success-text); margin-top: 2px;" id="stat-usable-area">27.84 m²</div>
                 </div>
                 <div>
-                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Active Beds</div>
+                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Beds</div>
                   <div style="font-size: 16px; font-weight: 700; color: var(--primary); margin-top: 2px;" id="stat-active-beds">4 Cubicles</div>
                 </div>
                 <div>
-                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">BLE Anchors</div>
+                  <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Wall sensors</div>
                   <div style="font-size: 16px; font-weight: 700; color: var(--text-primary); margin-top: 2px;" id="stat-active-anchors">3 Nodes</div>
                 </div>
               </div>
 
+              <!-- What stops the layout from being saved, and what is worth a look (ward_rules.js) -->
+              <div id="ward-layout-problems" class="layout-problems" aria-live="polite"></div>
+
               <!-- Live Legend -->
               <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--text-muted); margin-top: 14px; flex-wrap: wrap; gap: 8px;">
-                <span>🔵 Stationary BLE Anchors</span>
+                <span>🔵 Wall sensors</span>
                 <span style="color: #7C3AED;">🟪 LiDAR (arrow: ▲ direction)</span>
-                <span>🛏️ Hospital Beds</span>
-                <span>🚪 Door Reference (0,0)</span>
-                <span>⬛ Ensuite Toilet Cutout</span>
+                <span>🛏️ Beds</span>
+                <span>🚪 Door</span>
+                <span>⬛ Bathroom, furniture</span>
               </div>
             </div>
           </div>
