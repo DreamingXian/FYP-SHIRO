@@ -200,6 +200,21 @@ namespace ShiroMR.EditorTools
             Get<TextMeshProUGUI>(panel, "_note").color = ShiroTheme.OkText;
             Shoot(canvas, Path.Combine(dir, "panel_patients_note.png"), true);
 
+            // Page 2 of the same six patients (the pager as on the web dashboard)
+            Get<TextMeshProUGUI>(panel, "_note").color = ShiroTheme.TextDim;
+            Call(panel, "GoToPage", 2);
+            Call(panel, "ShowRows", rows);
+            Shoot(canvas, Path.Combine(dir, "panel_patients_page2.png"), true);
+
+            // Fourteen patients: four pages, "…" between the page numbers
+            var many = new List<ShiroWardPanel.PatientRow>(rows);
+            for (int i = 7; i <= 14; i++)
+                many.Add(Row($"Sample patient {i}", $"Bed {i} · Measured 2 min ago", "70", true, ShiroTheme.Ok, ShiroTheme.TextDim, false));
+            Call(panel, "GoToPage", 1);
+            Call(panel, "ShowRows", many);
+            Shoot(canvas, Path.Combine(dir, "panel_patients_many.png"), true);
+            Call(panel, "GoToPage", 1);
+
             // Map: a 6 × 5 m ward, door on the south wall, four beds, three patients (one not heard)
             SelectPage(panel, 1);
             var ward = new WardConfig
@@ -227,8 +242,17 @@ namespace ShiroMR.EditorTools
             Call(map, "Refresh", ward, subjects, true);
             Shoot(canvas, Path.Combine(dir, "panel_map.png"), true);
 
-            // Settings: three wards, this one shown; not paired
+            // Settings: the ward found automatically (the longest status); not paired
             SelectPage(panel, 2);
+            Get<TextMeshProUGUI>(panel, "_wardName").text = "Ward A - Medical";
+            Get<TextMeshProUGUI>(panel, "_wardAuto").text = "No aligned ward found here. A new ward needs its room set up once (Room setup and tools).";
+            var conn = Get<TextMeshProUGUI>(panel, "_connection");
+            conn.text = "Not connected to the edge server at 192.168.1.229:3000.\nHS-7F3A2C1B is not paired yet: Server and pairing.";
+            conn.color = ShiroTheme.WarnText;
+            Shoot(canvas, Path.Combine(dir, "panel_settings.png"), true);
+
+            // Settings, choose by hand: three wards, this one shown
+            Call(panel, "ShowSettingsList", true);
             var wards = new List<WardSummary>
             {
                 new WardSummary { ward_id = "WARD-001", room_title = "Ward A - Medical" },
@@ -236,10 +260,7 @@ namespace ShiroMR.EditorTools
                 new WardSummary { ward_id = "WARD-003", room_title = "" },
             };
             Call(panel, "ShowWards", wards, "WARD-001");
-            var conn = Get<TextMeshProUGUI>(panel, "_connection");
-            conn.text = "Not connected to the edge server at 192.168.1.229:3000.\nHS-7F3A2C1B is not paired yet: Server and pairing.";
-            conn.color = ShiroTheme.WarnText;
-            Shoot(canvas, Path.Combine(dir, "panel_settings.png"), true);
+            Shoot(canvas, Path.Combine(dir, "panel_settings_by_hand.png"), true);
         }
 
         private static ShiroWardPanel.PatientRow Row(string name, string line, string value, bool dim, Color stripe, Color lineColour, bool alert)

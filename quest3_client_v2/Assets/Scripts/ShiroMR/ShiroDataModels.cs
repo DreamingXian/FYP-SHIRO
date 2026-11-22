@@ -166,7 +166,30 @@ namespace ShiroMR
         public bool has_ble;        // ble_x / ble_y are known
         public float ble_x, ble_y;  // the Bluetooth position, always
 
+        public bool lidar_held;     // LIDAR: not seen just now, where the LiDAR last saw them
+        public bool lidar_in_bed;   // LIDAR: held in their bed
+
         public bool FromHeadset => source == "HEADSET";
+
+        /// <summary>
+        /// Version 2: the best position for this headset's panel, in the edge server's order:
+        /// a person seen by another headset's depth sensor ("HEADSET"), else the LiDAR
+        /// ("LIDAR", about ±0.1 m), else Bluetooth ("BLE"). This headset's own depth position
+        /// is not taken back (it would always confirm its own link, see TryGetBle): the panel
+        /// follows its linked person itself, and its decisions use the next best source.
+        /// </summary>
+        public bool TryGetBest(string ownHeadsetId, out float px, out float py, out string from)
+        {
+            if (source == "LIDAR") { px = x; py = y; from = "LIDAR"; return true; }
+            if (source == "HEADSET" && !string.IsNullOrEmpty(seen_by) &&
+                !string.Equals(seen_by, ownHeadsetId, StringComparison.OrdinalIgnoreCase))
+            {
+                px = x; py = y; from = "HEADSET";
+                return true;
+            }
+            from = "BLE";
+            return TryGetBle(out px, out py);
+        }
 
         /// <summary>The Bluetooth position (for the panel's own decisions: bed rule, linking).
         /// False when only a headset's position is known.</summary>

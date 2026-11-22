@@ -433,9 +433,13 @@ namespace ShiroMR
                 }
             }
 
-            // Version 2: the right fingertip is just in front of a button of the new interface:
-            // it is pressed by touch, so the ray is hidden (not while calibrating or re-attaching)
-            if (isHandTrackingActive && !isRoomCalibrating && !isReattaching && ShiroMR.UI.ShiroPokeInteractor.IsRightFingerNearUi)
+            // Version 2: the ray only for an open hand. Pointing with the index finger alone (or a
+            // fist) hides it: the fingertip presses buttons, and a pinch cannot click something
+            // far away by accident. The right fingertip just in front of a button hides it too.
+            // Neither while calibrating the room or re-attaching a panel (those aim with the ray).
+            bool handNotOpen = ShiroHandVisualizer.Instance != null && !ShiroHandVisualizer.Instance.IsRightHandOpen;
+            if (isHandTrackingActive && !isRoomCalibrating && !isReattaching &&
+                (handNotOpen || ShiroMR.UI.ShiroPokeInteractor.IsRightFingerNearUi))
             {
                 if (_lineRenderer != null) _lineRenderer.enabled = false;
                 if (_reticleCursor != null) _reticleCursor.SetActive(false);

@@ -65,11 +65,12 @@ namespace ShiroMR.UI
             if (local.z < 0f && dir.sqrMagnitude < 0.01f) dir = Vector2.right;   // right behind: turn right
             dir.Normalize();
             Vector3 worldDir = _head.right * dir.x + _head.up * dir.y;
-            Vector3 pos = _head.position + _head.forward * 0.6f + worldDir * 0.13f;
+            // 0.35 m ahead: in front of the ward panel, the same size to the eye
+            Vector3 pos = _head.position + _head.forward * 0.35f + worldDir * 0.075f;
             _arrow.gameObject.SetActive(true);
             _arrow.transform.SetPositionAndRotation(pos, Quaternion.LookRotation(_head.forward, worldDir));
             float pulse = 0.85f + 0.15f * Mathf.Sin(Time.time * 6f);
-            _arrow.transform.localScale = Vector3.one * 0.001f * pulse;
+            _arrow.transform.localScale = Vector3.one * 0.001f * 0.6f * pulse;
         }
     }
 }

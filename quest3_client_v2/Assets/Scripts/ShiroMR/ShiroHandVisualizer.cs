@@ -42,6 +42,44 @@ namespace ShiroMR
         public Quaternion LeftWristRotation { get; private set; } = Quaternion.identity;
 
         /// <summary>
+        /// Version 2: the right hand is open (at least two of the middle, ring and little fingers
+        /// stretched out): the pointer ray is shown. Pointing with the index finger alone (the
+        /// others curled), or a fist: false, the fingertip presses buttons and no ray shows, so a
+        /// pinch cannot click something far away by accident. True while no finger joints are
+        /// known (as before).
+        /// </summary>
+        public bool IsRightHandOpen { get; private set; } = true;
+        private float _shapeChangeSince = -1f;
+
+        private void UpdateRightHandShape(bool realJoints)
+        {
+            if (!realJoints) { IsRightHandOpen = true; _shapeChangeSince = -1f; return; }
+            Vector3 wrist = _rightJointWorld[1];
+            int open = 0, curled = 0;
+            Finger(wrist, 12, 15, ref open, ref curled);   // middle: proximal, tip (OpenXR joints)
+            Finger(wrist, 17, 20, ref open, ref curled);   // ring
+            Finger(wrist, 22, 25, ref open, ref curled);   // little
+            bool want = open >= 2 ? true : curled >= 2 ? false : IsRightHandOpen;
+            if (want == IsRightHandOpen) { _shapeChangeSince = -1f; return; }
+            // A change counts after 0.12 s, so the ray does not flicker
+            if (_shapeChangeSince < 0f) _shapeChangeSince = Time.time;
+            else if (Time.time - _shapeChangeSince >= 0.12f) { IsRightHandOpen = want; _shapeChangeSince = -1f; }
+        }
+
+        /// <summary>
+        /// A finger is stretched out when its tip is much further from the wrist than its knuckle
+        /// (about 1.8 times; curled into the palm about 0.7 times): the same for every hand size.
+        /// </summary>
+        private void Finger(Vector3 wrist, int proximal, int tip, ref int open, ref int curled)
+        {
+            float knuckle = Vector3.Distance(_rightJointWorld[proximal], wrist);
+            if (knuckle < 0.01f) return;
+            float ratio = Vector3.Distance(_rightJointWorld[tip], wrist) / knuckle;
+            if (ratio > 1.45f) open++;
+            else if (ratio < 1.25f) curled++;
+        }
+
+        /// <summary>
         /// Version 2: the left palm's centre and the direction it faces (out of the palm),
         /// from the wrist (joint 1), the index base (7) and the little finger base (22),
         /// joints in the OpenXR order. False while the left hand is not tracked.
@@ -356,6 +394,8 @@ namespace ShiroMR
                             SynthesizeHandSkeleton(rightWristPos, rightWristRot, _rightJointWorld, true);
                             _rightJointWorld[10] = RightIndexTipPosition;
                         }
+
+                        UpdateRightHandShape(hasPositions);
 
                         // Build sleek outer boundary contour
                         ComputeHandOutlineContour(_rightJointWorld, rightWristRot, _rightOutlinePoints, true);

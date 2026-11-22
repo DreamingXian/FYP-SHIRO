@@ -80,7 +80,7 @@ namespace ShiroMR.UI
                 ClearStatic();
                 foreach (var m in _marks.Values) Show(m, false);
                 if (_you != null) _you.gameObject.SetActive(false);
-                _status.text = connected ? "No ward loaded yet: choose one in Settings." : "Not connected: the map comes from the edge server.";
+                _status.text = connected ? "No ward yet: walk into a ward this headset has aligned, or see Settings." : "Not connected: the map comes from the edge server.";
                 return;
             }
             string key = $"{ward.ward_id}|{ward.length_x}|{ward.width_y}|{ward.beds?.Count}|{ward.door?.wall}|{ward.door?.x}";

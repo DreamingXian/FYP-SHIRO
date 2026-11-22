@@ -326,7 +326,7 @@ namespace ShiroMR
             SetCardColor(null);
             if (_floorRingObj != null)
             {
-                _floorRingObj.transform.localScale = new Vector3(0.65f, 0.005f, 0.65f);
+                _floorRingObj.transform.localScale = new Vector3(RingSize, 0.005f, RingSize);
                 _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
                 _floorRingObj.SetActive(trackingState != PatientTrackingState.BedDocked);
             }
@@ -564,6 +564,24 @@ namespace ShiroMR
         /// </summary>
         public void UpdatePosition(float wardX, float wardY, string motion)
         {
+            UpdatePosition(wardX, wardY, motion, "BLE", false);
+        }
+
+        /// <summary>
+        /// Version 2: where the position comes from: "HEADSET" (another headset's depth sensor),
+        /// "LIDAR" (about ±0.1 m; held: where it last saw them) or "BLE" (Bluetooth, about ±1 m).
+        /// The panel holds still for small moves of a Bluetooth position (its noise) and follows
+        /// an accurate one closely; the floor circle shows how sure the position is.
+        /// </summary>
+        public string PositionSource { get; private set; } = "BLE";
+        private bool _lidarHeld;
+        private bool Accurate => PositionSource != "BLE";
+        private float RingSize => Accurate ? 0.35f : 0.65f;
+
+        public void UpdatePosition(float wardX, float wardY, string motion, string source, bool lidarHeld)
+        {
+            PositionSource = string.IsNullOrEmpty(source) ? "BLE" : source;
+            _lidarHeld = lidarHeld;
             motionState = motion ?? "STATIONARY";
             isOnline = true;
             HasIpsPosition = true;
@@ -678,6 +696,7 @@ namespace ShiroMR
                 {
                     _floorRingObj.SetActive(true);
                     _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+                    if (!isAlarmActive) _floorRingObj.transform.localScale = new Vector3(RingSize, 0.005f, RingSize);
                 }
 
                 if (motionState == "WALKING")
@@ -693,7 +712,7 @@ namespace ShiroMR
                         _lastStationaryWorldPos = _rawIpsWorldPos;
                         _hasStationaryLock = true;
                     }
-                    else if (Vector3.Distance(_rawIpsWorldPos, _lastStationaryWorldPos) > 0.85f && !_isManuallyLocked)
+                    else if (Vector3.Distance(_rawIpsWorldPos, _lastStationaryWorldPos) > (Accurate ? 0.25f : 0.85f) && !_isManuallyLocked)
                     {
                         _lastStationaryWorldPos = _rawIpsWorldPos;
                     }
@@ -745,7 +764,7 @@ namespace ShiroMR
             }
             else if (trackingState == PatientTrackingState.InTransit && HasIpsPosition && !_isManuallyLocked)
             {
-                // Back to the Bluetooth position
+                // Back to the edge server's position (LiDAR, another headset, or Bluetooth)
                 detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0f, _rawIpsWorldPos.z);
                 _targetPosition = detectedPersonPosition;
             }
@@ -1115,6 +1134,8 @@ namespace ShiroMR
             if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Linked) { colour = ShiroTheme.GoodText; return "Seen by this headset"; }
             if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.LinkedManual) { colour = ShiroTheme.GoodText; return "Following chosen person"; }
             if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Unclear) { colour = ShiroTheme.WarnText; return "Unclear: choose the person"; }
+            if (PositionSource == "HEADSET") { colour = ShiroTheme.GoodText; return "Seen by another headset"; }
+            if (PositionSource == "LIDAR") return _lidarHeld ? "LiDAR: where it last saw them" : "LiDAR, about ±0.1 m";
             return "Bluetooth, about ±1 m";
         }
 

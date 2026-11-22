@@ -32,11 +32,15 @@ namespace ShiroMR.UI
         // Its height follows its text (LayoutCard); H is the usual one.
         private const float W = 380f, H = 272f;          // mm
         private const float Pad = 20f, TagsW = 120f;
-        private const float CardDistance = 0.55f;        // m ahead
-        private const float CardBelow = 0.10f;           // m below eye height
+        // Within easy reach of a fingertip (version 2 test: 0.55 m was too far); a little
+        // smaller than drawn (scale), so it keeps the same size to the eye
+        private const float CardDistance = 0.42f;        // m ahead
+        private const float CardBelow = 0.15f;           // m below eye height
+        private const float CardScale = 0.8f;
         private const float PillW = 300f, PillH = 56f;
-        private const float PillDistance = 0.55f;
-        private const float PillBelow = 0.27f;
+        private const float PillDistance = 0.45f;
+        private const float PillBelow = 0.24f;
+        private const float PillScale = 0.85f;
         private const float FollowAngle = 28f;           // degrees off the view before it moves
         private const float LookedAtAngle = 15f;         // the patient is in view: no arrow
 
@@ -101,6 +105,9 @@ namespace ShiroMR.UI
         /// <summary>True while an alert card or its bar is shown.</summary>
         public bool IsShowing => _mode != Mode.Hidden;
 
+        /// <summary>True while the full card is shown (the ward panel steps aside meanwhile).</summary>
+        public bool IsCardShown => _mode == Mode.Card;
+
         private void Update()
         {
             if (!_subscribed) TrySubscribe();
@@ -110,6 +117,11 @@ namespace ShiroMR.UI
             Follow(_mode == Mode.Card ? _card.transform : _bar.transform,
                 _mode == Mode.Card ? CardDistance : PillDistance,
                 _mode == Mode.Card ? CardBelow : PillBelow);
+            if (_mode == Mode.Bar)
+            {
+                bool panelUp = ShiroWardPanel.Instance != null && ShiroWardPanel.Instance.IsVisible;
+                if (_bar.gameObject.activeSelf == panelUp) _bar.gameObject.SetActive(!panelUp);
+            }
 
             // Waiting for a response: the band (or the bar's dot) blinks
             var am = ShiroAlertManager.Instance;
@@ -429,11 +441,12 @@ namespace ShiroMR.UI
             if (local.z < 0f && dir.sqrMagnitude < 0.01f) dir = Vector2.right;   // right behind: turn right
             dir.Normalize();
             Vector3 worldDir = _head.right * dir.x + _head.up * dir.y;
-            Vector3 pos = _head.position + _head.forward * 0.6f + worldDir * 0.13f;
+            // 0.35 m ahead: in front of the ward panel and the card, the same size to the eye
+            Vector3 pos = _head.position + _head.forward * 0.35f + worldDir * 0.075f;
             _arrow.gameObject.SetActive(true);
             _arrow.transform.SetPositionAndRotation(pos, Quaternion.LookRotation(_head.forward, worldDir));
             float pulse = 0.85f + 0.15f * Mathf.Sin(Time.time * 6f);
-            _arrow.transform.localScale = Vector3.one * 0.001f * pulse;
+            _arrow.transform.localScale = Vector3.one * 0.001f * 0.6f * pulse;
         }
 
         // ----- Building -----
@@ -442,6 +455,7 @@ namespace ShiroMR.UI
         {
             // The card
             _card = ShiroUIKit.WorldCanvas("AlertCard", transform, new Vector2(W, H));
+            _card.transform.localScale = Vector3.one * 0.001f * CardScale;
             var root = _card.transform;
             ShiroUIKit.Fill(ShiroUIKit.Panel(root, "Background", ShiroTheme.Glass, 18f));
             _band = ShiroUIKit.Panel(root, "Band", ShiroTheme.Alert, 18f);
@@ -469,6 +483,7 @@ namespace ShiroMR.UI
 
             // The bar shown after "Show me"
             _bar = ShiroUIKit.WorldCanvas("AlertBar", transform, new Vector2(PillW, PillH));
+            _bar.transform.localScale = Vector3.one * 0.001f * PillScale;
             var bar = _bar.transform;
             ShiroUIKit.Fill(ShiroUIKit.Panel(bar, "Background", ShiroTheme.Glass, PillH / 2f));
             _barDot = ShiroUIKit.Dot(bar, "Dot", ShiroTheme.Alert);

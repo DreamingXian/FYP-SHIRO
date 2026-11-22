@@ -319,13 +319,17 @@ namespace ShiroMR
         {
             if (pos == null || string.IsNullOrEmpty(pos.tag_id)) return;
 
-            // The panel decides with the Bluetooth position (bed rule, linking to a detected
-            // person). x, y may be where a headset sees the patient: fed back here, a wristband
-            // would always seem to be right at the linked person, and a wrong link could never end
-            if (!pos.TryGetBle(out float bleX, out float bleY)) return;
+            // Version 2: the panel follows the best position the edge server has (another
+            // headset's depth sensor, else the LiDAR, else Bluetooth), as the maps do; version 1
+            // always used Bluetooth, so the panel shook with it even where the LiDAR saw the
+            // patient. This headset's own depth position is not taken back: fed back here, a
+            // wristband would always seem to be right at the linked person, and a wrong link
+            // could never end (the panel follows its linked person itself).
+            string own = networkManager != null && networkManager.Identity != null ? networkManager.Identity.DeviceId : null;
+            if (!pos.TryGetBest(own, out float px, out float py, out string from)) return;
             string cleanTag = pos.tag_id.ToUpper().Trim();
             PatientHologram hologram = GetOrCreateHologram(cleanTag);
-            hologram.UpdatePosition(bleX, bleY, pos.motion_state);
+            hologram.UpdatePosition(px, py, pos.motion_state, from, pos.lidar_held);
             // Version 2: the tag says "Wristband not heard" when the edge server says so
             hologram.NoteSignal(pos.status != "OFFLINE");
         }
