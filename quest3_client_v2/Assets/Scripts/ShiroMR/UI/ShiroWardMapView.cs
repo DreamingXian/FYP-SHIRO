@@ -4,9 +4,11 @@
 // The ward from above: walls, door, beds (with their names), each patient where
 // the edge server last placed their wristband (status colour; red and blinking
 // with an alert; grey when not heard for 10 s), and the clinician (a blue arrow,
-// where they look). A tap on a patient: "Show me" in the room.
-// Positions are kept while the map is hidden (the panel passes them on).
-// The version 1 map (other wards, 1 Hz vitals) stays in the version 1 menu.
+// where they look). A tap on a patient opens them (the ward panel's patient view).
+// Positions of every ward are kept while the map is hidden (the panel passes them
+// on), so the panel can show another ward too (stage 4: the ‹ › ward picker; the
+// version 1 Live Map's other wards): its plan and patients come from the edge
+// server, its dots from the same positions; "you" only in this headset's ward.
 // =============================================================================
 using System;
 using System.Collections.Generic;
@@ -30,6 +32,7 @@ namespace ShiroMR.UI
         private float _areaW, _areaH, _scale = 1f;
         private string _drawnKey = "";
         private readonly List<GameObject> _static = new List<GameObject>();
+        private List<TrackedSubject> _shownSubjects;   // the patients of the ward on show
 
         private class Mark
         {
@@ -40,14 +43,15 @@ namespace ShiroMR.UI
         }
         private readonly Dictionary<string, Mark> _marks = new Dictionary<string, Mark>();
 
-        public void Build(Transform page, float x, float w, float pageH, Action<string, string, string> onTap)
+        /// <summary>The map from top (mm) down to the page's bottom, its status line under it.</summary>
+        public void Build(Transform page, float x, float top, float w, float pageH, Action<string, string, string> onTap)
         {
             _onTap = onTap;
             _areaW = w;
-            _areaH = pageH - 42f;
+            _areaH = pageH - top - 42f;
             var areaGo = new GameObject("MapArea", typeof(RectTransform));
             areaGo.transform.SetParent(page, false);
-            _area = ShiroUIKit.Place(areaGo.transform as RectTransform, x, 0, w, _areaH);
+            _area = ShiroUIKit.Place(areaGo.transform as RectTransform, x, top, w, _areaH);
 
             var roomGo = new GameObject("Room", typeof(RectTransform));
             roomGo.transform.SetParent(_area, false);
@@ -57,7 +61,7 @@ namespace ShiroMR.UI
             _room.sizeDelta = Vector2.zero;
 
             _status = ShiroUIKit.Label(page, "MapStatus", "", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true).Fit(9f);
-            ShiroUIKit.Place(_status, x, _areaH + 6f, w, 34f);
+            ShiroUIKit.Place(_status, x, top + _areaH + 6f, w, 34f);
         }
 
         /// <summary>A position from the edge server (any ward; kept while the map is hidden).</summary>
@@ -72,15 +76,20 @@ namespace ShiroMR.UI
             m.Seen = Time.time;
         }
 
-        /// <summary>Draws the ward shown on this headset (null: not loaded).</summary>
-        public void Refresh(WardConfig ward, List<TrackedSubject> subjects, bool connected)
+        /// <summary>
+        /// Draws a ward (null: not loaded; emptyNote says why). otherWard: not the ward this
+        /// headset is in (no "you"; its patients are from the edge server's ward list).
+        /// </summary>
+        public void Refresh(WardConfig ward, List<TrackedSubject> subjects, bool connected, bool otherWard, string emptyNote)
         {
+            _shownSubjects = subjects;
             if (ward == null || ward.length_x <= 0 || ward.width_y <= 0)
             {
                 ClearStatic();
                 foreach (var m in _marks.Values) Show(m, false);
                 if (_you != null) _you.gameObject.SetActive(false);
-                _status.text = connected ? "No ward yet: walk into a ward this headset has aligned, or see Settings." : "Not connected: the map comes from the edge server.";
+                _status.text = emptyNote ?? (connected ? "No ward yet: walk into a ward this headset has aligned, or see Settings." : "Not connected: the map comes from the edge server.");
+                _status.color = ShiroTheme.TextDim;
                 return;
             }
             string key = $"{ward.ward_id}|{ward.length_x}|{ward.width_y}|{ward.beds?.Count}|{ward.door?.wall}|{ward.door?.x}";
@@ -112,13 +121,14 @@ namespace ShiroMR.UI
                 shown++;
                 if (isStale) stale++;
             }
-            UpdateYou(ward);
+            if (otherWard) { if (_you != null) _you.gameObject.SetActive(false); }
+            else UpdateYou(ward);
 
-            string title = !string.IsNullOrEmpty(ward.room_title) ? ward.room_title : ward.ward_id;
             string who = shown == 0 ? "No wristband position yet."
-                : $"{shown} patient{(shown > 1 ? "s" : "")}{(stale > 0 ? $", {stale} not heard (grey)" : "")}. Tap one to see them in the room.";
+                : $"{shown} patient{(shown > 1 ? "s" : "")}{(stale > 0 ? $", {stale} not heard (grey)" : "")}. Tap one for their details.";
             _status.text = (connected ? "" : "Not connected: positions are not updated. ")
-                + $"{title}, {ward.length_x:0.#} × {ward.width_y:0.#} m. {who} Bluetooth positions: about ±1 m.";
+                + $"{ward.length_x:0.#} × {ward.width_y:0.#} m. {who}"
+                + (otherWard ? " Another ward: you are not shown." : "");
             _status.color = connected ? ShiroTheme.TextDim : ShiroTheme.WarnText;
         }
 
@@ -237,10 +247,12 @@ namespace ShiroMR.UI
             if (m.Label != null && m.Label.gameObject.activeSelf != on) m.Label.gameObject.SetActive(on);
         }
 
+        /// <summary>The patient wearing this wristband in the ward on show (null: not known).</summary>
+        internal TrackedSubject ShownSubject(string tag) => FindSubject(_shownSubjects, tag);
+
         private void Tap(string tag)
         {
-            var net = ShiroNetworkManager.Instance;
-            var s = FindSubject(net != null ? net.LastLoadedSubjects : null, tag);
+            var s = FindSubject(_shownSubjects, tag);
             _onTap?.Invoke(tag, s != null ? s.assigned_bed_id : null, s != null && !string.IsNullOrEmpty(s.full_name) ? s.full_name : tag);
         }
 

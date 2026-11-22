@@ -245,8 +245,31 @@ namespace ShiroMR.EditorTools
             Call(map, "PreviewMark", "TAG-001", 0.75f, 3.9f, 1f);
             Call(map, "PreviewMark", "TAG-002", 2.6f, 1.4f, 1f);
             Call(map, "PreviewMark", "TAG-003", 4.4f, 2.2f, 30f);
-            Call(map, "Refresh", ward, subjects, true);
+            Get<TextMeshProUGUI>(panel, "_mapWard").text = "Ward A - Medical (this ward)";
+            Call(map, "Refresh", ward, subjects, true, false, null);
             Shoot(canvas, Path.Combine(dir, "panel_map.png"), true);
+
+            // Another ward (the ‹ › ward picker): its plan and patients, no "you"
+            var other = new WardConfig
+            {
+                ward_id = "WARD-002", room_title = "Ward B - Surgical Recovery", length_x = 4f, width_y = 6f,
+                door = new WardDoor { wall = "WEST", x = 1.0f, width = 1f },
+                beds = new List<WardBed>
+                {
+                    new WardBed { bed_id = "BED-002-01", bed_code = "Bed 1", x = 2.0f, y = 0.6f, width = 0.9f, length = 1.9f },
+                    new WardBed { bed_id = "BED-002-02", bed_code = "Bed 2", x = 2.0f, y = 3.4f, width = 0.9f, length = 1.9f },
+                }
+            };
+            var otherSubjects = new List<TrackedSubject>
+            {
+                new TrackedSubject { full_name = "Lim Mei Ling", device_id = "TAG-004", assigned_bed_id = "BED-002-01", assigned_ward_id = "WARD-002" },
+                new TrackedSubject { full_name = "Nur Aina", device_id = "TAG-005", assigned_bed_id = "BED-002-02", assigned_ward_id = "WARD-002" },
+            };
+            Call(map, "PreviewMark", "TAG-004", 2.4f, 1.6f, 2f);
+            Call(map, "PreviewMark", "TAG-005", 1.2f, 4.5f, 2f);
+            Get<TextMeshProUGUI>(panel, "_mapWard").text = "Ward B - Surgical Recovery";
+            Call(map, "Refresh", other, otherSubjects, true, true, null);
+            Shoot(canvas, Path.Combine(dir, "panel_map_other_ward.png"), true);
 
             // Settings (stage 4): the ward found automatically, what that means; not paired
             var settings = (ShiroSettingsView)Call(panel, "PreviewSettings");

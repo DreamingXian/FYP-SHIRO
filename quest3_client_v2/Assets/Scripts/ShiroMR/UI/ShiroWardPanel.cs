@@ -14,7 +14,8 @@
 //              and an arrow points to it, or to their bed), the last 24 hours,
 //              alerts, profile.
 //   Map      - the ward from above: beds, door, patients, you (a tap on a
-//              patient opens them too).
+//              patient opens them too); ‹ › shows the other wards (their plan
+//              and patients from the edge server; the version 1 Live Map's).
 //   Settings - (ShiroSettingsView, stage 4) the ward and how it was found, room
 //              setup in numbered steps, the server address and pairing keypads,
 //              the test tools under Advanced. The version 1 hand slate is no
@@ -85,8 +86,16 @@ namespace ShiroMR.UI
         private GameObject _mainRoot;
         private readonly ShiroPatientView _patientView = new ShiroPatientView();
 
-        // Map
+        // Map; another ward can be shown (null: the ward this headset is in)
         private ShiroWardMapView _map;
+        private string _mapWardId;
+        private ShiroButton _mapPrev, _mapNext;
+        private TextMeshProUGUI _mapWard;
+        private readonly Dictionary<string, WardInitResponse> _otherWards = new Dictionary<string, WardInitResponse>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, float> _otherWardAt = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _otherWardError = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private string _fetchingWard;
+        private const float OtherWardRefreshS = 30f;
 
         // Settings (stage 4)
         private readonly ShiroSettingsView _settings = new ShiroSettingsView();
@@ -172,12 +181,12 @@ namespace ShiroMR.UI
         /// Stage 3 (UC-05): one patient: now, the last 24 hours, alerts, profile. From a row of
         /// the list, a dot on the map, or "Profile and history" on the patient's tag.
         /// </summary>
-        public void OpenPatient(string tagId)
+        public void OpenPatient(string tagId, TrackedSubject subject = null)
         {
             if (string.IsNullOrEmpty(tagId)) return;
             if (!_open) Open();
             _mainRoot.SetActive(false);
-            _patientView.Show(tagId);
+            _patientView.Show(tagId, subject);
             _refreshIn = 0f;
         }
 
@@ -558,8 +567,69 @@ namespace ShiroMR.UI
         private void RefreshMap()
         {
             var net = ShiroNetworkManager.Instance;
-            WardConfig ward = net != null && net.IsWardLoaded ? net.LastLoadedWardConfig : null;
-            _map.Refresh(ward, net != null ? net.LastLoadedSubjects : null, net != null && net.IsConnected);
+            bool connected = net != null && net.IsConnected;
+            string own = net != null ? net.targetWardId : null;
+            if (!string.IsNullOrEmpty(_mapWardId) && string.Equals(_mapWardId, own, StringComparison.OrdinalIgnoreCase)) _mapWardId = null;
+            bool other = !string.IsNullOrEmpty(_mapWardId);
+            int wards = net != null ? net.AvailableWards.Count : 0;
+            _mapPrev.SetInteractable(wards > 1);
+            _mapNext.SetInteractable(wards > 1);
+
+            if (!other)
+            {
+                WardConfig ward = net != null && net.IsWardLoaded ? net.LastLoadedWardConfig : null;
+                _mapWard.text = net != null && net.HasWard ? $"{WardTitle(net)} (this ward)" : "No ward yet";
+                _map.Refresh(ward, net != null ? net.LastLoadedSubjects : null, connected, false, null);
+                return;
+            }
+            // Another ward: its plan and patients from the edge server, again every 30 s
+            _otherWards.TryGetValue(_mapWardId, out var data);
+            _otherWardAt.TryGetValue(_mapWardId, out float at);
+            if (net != null && _fetchingWard == null && (data == null || Time.time - at > OtherWardRefreshS)) FetchOtherWard(_mapWardId);
+            _mapWard.text = OtherWardTitle(net, _mapWardId, data);
+            _otherWardError.TryGetValue(_mapWardId, out string error);
+            string note = data != null ? null : error != null ? $"Could not load this ward: {error}." : "Loading this ward from the edge server…";
+            _map.Refresh(data != null ? data.ward : null, data != null ? data.tracked_subjects : null, connected, true, note);
+        }
+
+        private static string OtherWardTitle(ShiroNetworkManager net, string wardId, WardInitResponse data)
+        {
+            if (data != null && data.ward != null && !string.IsNullOrEmpty(data.ward.room_title)) return data.ward.room_title;
+            if (net != null)
+                foreach (var w in net.AvailableWards)
+                    if (w != null && string.Equals(w.ward_id, wardId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(w.room_title)) return w.room_title;
+            return wardId;
+        }
+
+        private void FetchOtherWard(string wardId)
+        {
+            var net = ShiroNetworkManager.Instance;
+            if (net == null) return;
+            _fetchingWard = wardId;
+            net.StartCoroutine(net.FetchWardForViewRoutine(wardId, (resp, error) =>
+            {
+                _fetchingWard = null;
+                _otherWardAt[wardId] = Time.time;
+                if (resp != null) { _otherWards[wardId] = resp; _otherWardError.Remove(wardId); }
+                else _otherWardError[wardId] = error ?? "no answer";
+                _refreshIn = 0f;
+            }));
+        }
+
+        /// <summary>‹ ›: the ward before or after the one on show (the ward list from the edge server).</summary>
+        private void StepMapWard(int step)
+        {
+            var net = ShiroNetworkManager.Instance;
+            if (net == null || net.AvailableWards.Count == 0) return;
+            var list = net.AvailableWards;
+            string shown = !string.IsNullOrEmpty(_mapWardId) ? _mapWardId : net.targetWardId;
+            int index = -1;
+            for (int i = 0; i < list.Count; i++)
+                if (list[i] != null && string.Equals(list[i].ward_id, shown, StringComparison.OrdinalIgnoreCase)) { index = i; break; }
+            int next = ((index < 0 ? 0 : index + step) % list.Count + list.Count) % list.Count;
+            string id = list[next] != null ? list[next].ward_id : null;
+            _mapWardId = string.Equals(id, net.targetWardId, StringComparison.OrdinalIgnoreCase) ? null : id;
+            _refreshIn = 0f;
         }
 
         // ----- Settings (stage 4: ShiroSettingsView) -----
@@ -680,8 +750,16 @@ namespace ShiroMR.UI
             }
 
             BuildPatients(_pages[0].transform);
+            // Map: the ward on show and ‹ › for the others, above it
+            Transform mapPage = _pages[1].transform;
+            _mapPrev = ShiroUIKit.Button(mapPage, "WardBefore", "‹", ButtonKind.Secondary, () => StepMapWard(-1), 16f);
+            ShiroUIKit.Place(_mapPrev, Pad, 0, 40, 26);
+            _mapNext = ShiroUIKit.Button(mapPage, "WardAfter", "›", ButtonKind.Secondary, () => StepMapWard(1), 16f);
+            ShiroUIKit.Place(_mapNext, W - Pad - 40, 0, 40, 26);
+            _mapWard = ShiroUIKit.Label(mapPage, "WardShown", "", 13f, ShiroTheme.Text, FontStyles.Bold, TextAlignmentOptions.Center).Fit(9f);
+            ShiroUIKit.Place(_mapWard, Pad + 48, 0, W - 2 * Pad - 96, 26);
             _map = new ShiroWardMapView();
-            _map.Build(_pages[1].transform, Pad, W - 2 * Pad, PageH, (tag, bed, name) => OpenPatient(tag));
+            _map.Build(mapPage, Pad, 30f, W - 2 * Pad, PageH, (tag, bed, name) => OpenPatient(tag, _map.ShownSubject(tag)));
             _settings.Build(_pages[2].transform, this);
             SelectPage(Page.Patients);
 

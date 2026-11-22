@@ -159,10 +159,13 @@ namespace ShiroMR.UI
 
         // ----- Show, hide, refresh -----
 
-        /// <summary>Shows the patient wearing this wristband and asks the edge server for their data.</summary>
-        internal void Show(string tagId)
+        /// <summary>
+        /// Shows the patient wearing this wristband and asks the edge server for their data. The
+        /// patient comes from this ward's list, or is given (a patient of another ward, from the map).
+        /// </summary>
+        internal void Show(string tagId, TrackedSubject subject = null)
         {
-            Begin(tagId, FindSubject(tagId));
+            Begin(tagId, subject ?? FindSubject(tagId));
             FetchProfile();
             FetchHistory();
             FetchIncidents();
@@ -212,6 +215,7 @@ namespace ShiroMR.UI
 
             var now = BuildNow(Holo());
             SetNow(now);
+            _showMe.SetInteractable(!InOtherWard(out _));   // their tag and bed are in another room
             var alert = PendingAlert();
             SetAlert(alert);
             _dot.color = alert != null ? ShiroTheme.Alert : now.Colour;
@@ -256,6 +260,19 @@ namespace ShiroMR.UI
             return null;
         }
 
+        /// <summary>The patient belongs to another ward than this headset's (its name in words).</summary>
+        private bool InOtherWard(out string wardName)
+        {
+            wardName = null;
+            var net = ShiroNetworkManager.Instance;
+            string wardId = _subject != null ? _subject.assigned_ward_id : null;
+            if (net == null || string.IsNullOrEmpty(wardId) || string.Equals(wardId, net.targetWardId, StringComparison.OrdinalIgnoreCase)) return false;
+            wardName = wardId;
+            foreach (var w in net.AvailableWards)
+                if (w != null && string.Equals(w.ward_id, wardId, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(w.room_title)) wardName = w.room_title;
+            return true;
+        }
+
         private ShiroAlertManager.HeadsetAlert PendingAlert()
         {
             var subject = _subject ?? new TrackedSubject { device_id = _tag, patient_id = _patientId };
@@ -270,9 +287,9 @@ namespace ShiroMR.UI
             if (holo == null)
             {
                 s.HeartValue = "--";
-                s.HeartWords = "Waiting for the wristband";
+                s.HeartWords = InOtherWard(out _) ? "Shown on their ward's tags" : "Waiting for the wristband";
                 s.HeartDim = true;
-                s.Where = "No position in this room yet";
+                s.Where = InOtherWard(out string ward) ? $"In another ward: {ward}" : "No position in this room yet";
                 s.How = "";
                 return s;
             }
