@@ -170,6 +170,9 @@ namespace ShiroMR.UI
 
         // ----- Content -----
 
+        /// <summary>What happened, in words ("Fall detected"): the card's title, the ward panel's list.</summary>
+        public static string WhatHappened(IncidentAlert inc) => Words(inc);
+
         /// <summary>What happened, as the card's title.</summary>
         private static string Words(IncidentAlert inc)
         {

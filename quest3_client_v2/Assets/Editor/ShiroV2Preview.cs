@@ -54,6 +54,8 @@ namespace ShiroMR.EditorTools
             {
                 ShootAlerts(dir);
                 ShootTags(dir);
+                ShootWardPanel(dir);
+                ShootWristChip(dir);
             }
             finally
             {
@@ -164,6 +166,109 @@ namespace ShiroMR.EditorTools
             Call(holo, "UpdateAlarmVisuals");
             Call(holo, "FitHeartLine");
             Shoot(tag, Path.Combine(dir, "tag_alarm.png"));
+        }
+
+        // ----- Ward panel and wrist chip (stage 2) -----
+
+        private static void ShootWardPanel(string dir)
+        {
+            var panel = new GameObject("PreviewWardPanel").AddComponent<ShiroWardPanel>();
+            Call(panel, "Build");
+            Transform canvas = Child(panel.transform, "WardPanel");
+            Get<TextMeshProUGUI>(panel, "_title").text = "Ward A - Medical";
+            Get<TextMeshProUGUI>(panel, "_status").text = "Connected · used by Nurse Aisyah Binti Kamarudin";
+            Get<UnityEngine.UI.Image>(panel, "_statusDot").color = ShiroTheme.Good;
+            var tabs = Get<ShiroButton[]>(panel, "_tabs");
+            tabs[0].SetText("Patients (6)");
+
+            // Patients: an alert, a check, fine, resting, not heard, no position (two pages)
+            var rows = new List<ShiroWardPanel.PatientRow>
+            {
+                Row("Siti Nurhaliza binti Ahmad", "Fall detected: waiting for a response", "88", false, ShiroTheme.Alert, ShiroTheme.AlertText, true),
+                Row("Muhammad Hafiz bin Abdullah", "Bed 3 · No skin contact · battery 15 %", "--", true, ShiroTheme.Warn, ShiroTheme.WarnText, false),
+                Row("Tan Ah Kow", "Bed 1 · Live, every second", "72", false, ShiroTheme.Ok, ShiroTheme.TextDim, false),
+                Row("Lim Mei Ling", "Bed 12 · Next reading within 3 min · battery 15 %", "68", true, ShiroTheme.Warn, ShiroTheme.WarnText, false),
+                Row("Rajesh Kumar", "Bed 5 · No signal for 5 min", "--", true, ShiroTheme.Off, ShiroTheme.TextDim, false),
+                Row("Nur Aina", "Bed 6 · no position yet", "--", true, ShiroTheme.Off, ShiroTheme.TextDim, false),
+            };
+            SelectPage(panel, 0);
+            Call(panel, "ShowRows", rows);
+            Shoot(canvas, Path.Combine(dir, "panel_patients.png"), true);
+
+            // A "Show me" note while there are pages (the longest note)
+            Get<TextMeshProUGUI>(panel, "_note").text = "Muhammad: no position yet; the arrow shows their bed.";
+            Get<TextMeshProUGUI>(panel, "_note").color = ShiroTheme.OkText;
+            Shoot(canvas, Path.Combine(dir, "panel_patients_note.png"), true);
+
+            // Map: a 6 × 5 m ward, door on the south wall, four beds, three patients (one not heard)
+            SelectPage(panel, 1);
+            var ward = new WardConfig
+            {
+                ward_id = "WARD-001", room_title = "Ward A - Medical", length_x = 6f, width_y = 5f,
+                door = new WardDoor { wall = "SOUTH", x = 2.5f, width = 1f },
+                beds = new List<WardBed>
+                {
+                    new WardBed { bed_id = "BED-001-01", bed_code = "Bed 1", x = 0.3f, y = 3.0f, width = 0.9f, length = 1.9f },
+                    new WardBed { bed_id = "BED-001-02", bed_code = "Bed 2", x = 1.6f, y = 3.0f, width = 0.9f, length = 1.9f },
+                    new WardBed { bed_id = "BED-001-03", bed_code = "Bed 3", x = 3.5f, y = 3.0f, width = 0.9f, length = 1.9f },
+                    new WardBed { bed_id = "BED-001-04", bed_code = "Bed 4", x = 4.8f, y = 3.0f, width = 0.9f, length = 1.9f },
+                }
+            };
+            var subjects = new List<TrackedSubject>
+            {
+                new TrackedSubject { full_name = "Tan Ah Kow", device_id = "TAG-001", assigned_bed_id = "BED-001-01" },
+                new TrackedSubject { full_name = "Siti Nurhaliza binti Ahmad", device_id = "TAG-002", assigned_bed_id = "BED-001-02" },
+                new TrackedSubject { full_name = "Rajesh Kumar", device_id = "TAG-003", assigned_bed_id = "BED-001-03" },
+            };
+            object map = Get<object>(panel, "_map");
+            Call(map, "PreviewMark", "TAG-001", 0.75f, 3.9f, 1f);
+            Call(map, "PreviewMark", "TAG-002", 2.6f, 1.4f, 1f);
+            Call(map, "PreviewMark", "TAG-003", 4.4f, 2.2f, 30f);
+            Call(map, "Refresh", ward, subjects, true);
+            Shoot(canvas, Path.Combine(dir, "panel_map.png"), true);
+
+            // Settings: three wards, this one shown; not paired
+            SelectPage(panel, 2);
+            var wards = new List<WardSummary>
+            {
+                new WardSummary { ward_id = "WARD-001", room_title = "Ward A - Medical" },
+                new WardSummary { ward_id = "WARD-002", room_title = "Ward B - Surgical Recovery" },
+                new WardSummary { ward_id = "WARD-003", room_title = "" },
+            };
+            Call(panel, "ShowWards", wards, "WARD-001");
+            var conn = Get<TextMeshProUGUI>(panel, "_connection");
+            conn.text = "Not connected to the edge server at 192.168.1.229:3000.\nHS-7F3A2C1B is not paired yet: Server and pairing.";
+            conn.color = ShiroTheme.WarnText;
+            Shoot(canvas, Path.Combine(dir, "panel_settings.png"), true);
+        }
+
+        private static ShiroWardPanel.PatientRow Row(string name, string line, string value, bool dim, Color stripe, Color lineColour, bool alert)
+        {
+            return new ShiroWardPanel.PatientRow
+            {
+                Name = name, Line = line, Value = value, ValueDim = dim, Stripe = stripe, LineColour = lineColour, Alert = alert
+            };
+        }
+
+        private static void SelectPage(ShiroWardPanel panel, int page)
+        {
+            var pageType = typeof(ShiroWardPanel).GetNestedType("Page", BindingFlags.NonPublic);
+            Call(panel, "SelectPage", Enum.ToObject(pageType, page));
+        }
+
+        private static void ShootWristChip(string dir)
+        {
+            var chip = new GameObject("PreviewWristChip").AddComponent<ShiroWristChip>();
+            Call(chip, "Build");
+            Transform canvas = Child(chip.transform, "WristChip");
+            Get<TextMeshProUGUI>(chip, "_text").text = "Ward A - Medical";
+            Get<UnityEngine.UI.Image>(chip, "_dot").color = ShiroTheme.Good;
+            Shoot(canvas, Path.Combine(dir, "wrist_chip.png"), true);
+
+            Get<TextMeshProUGUI>(chip, "_text").text = "2 alerts";
+            Get<UnityEngine.UI.Image>(chip, "_dot").color = Color.white;
+            Get<ShiroButton>(chip, "_button").SetColorOverride(ShiroTheme.Alert);
+            Shoot(canvas, Path.Combine(dir, "wrist_chip_alert.png"), true);
         }
 
         private static void Refresh(PatientHologram holo)

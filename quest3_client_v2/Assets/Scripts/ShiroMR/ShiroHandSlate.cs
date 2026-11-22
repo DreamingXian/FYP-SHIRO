@@ -175,6 +175,30 @@ namespace ShiroMR
 
             // Default to IPS Location tab
             SelectTab(1);
+
+            // Version 2: the ward panel (ShiroWardPanel) is the main menu; this one opens from
+            // its Settings (room setup, server, pairing, test tools) until stage 4 replaces it
+            isSlateVisible = false;
+            if (_slateRoot != null) _slateRoot.SetActive(false);
+        }
+
+        /// <summary>Version 2: opens this (version 1) menu on a tab, from the ward panel's Settings.</summary>
+        public void OpenOldMenu(int tab)
+        {
+            if (!isSlateVisible) ToggleSlateVisibility();
+            SelectTab(tab);
+        }
+
+        /// <summary>
+        /// Version 2: the menu gesture, Y and B. With this menu open they close it; otherwise
+        /// they open or close the ward panel.
+        /// </summary>
+        private void ToggleMainMenu()
+        {
+            if (isSlateVisible) { ToggleSlateVisibility(); return; }
+            var panel = ShiroMR.UI.ShiroWardPanel.Instance;
+            if (panel != null) panel.Toggle();
+            else ToggleSlateVisibility();
         }
 
         private void OnDestroy()
@@ -343,7 +367,7 @@ namespace ShiroMR
             if (toggleRequested && Time.unscaledTime - _lastToggleAt > 0.6f)
             {
                 _lastToggleAt = Time.unscaledTime;
-                ToggleSlateVisibility();
+                ToggleMainMenu();
             }
         }
 
@@ -424,24 +448,9 @@ namespace ShiroMR
                 foundLeftWrist = true;
             }
 
-            // Update Mini Wrist Badge Position (Always sits right at the wrist so user can tap to re-open!)
-            if (_wristBadgeObj != null)
-            {
-                if (foundLeftWrist && !isSlateVisible)
-                {
-                    _wristBadgeObj.SetActive(true);
-                    _wristBadgeObj.transform.position = leftWristPos + leftWristRot * new Vector3(0, 0.04f, 0.02f);
-                    if (_mainCam != null)
-                    {
-                        Vector3 lookDir = (_wristBadgeObj.transform.position - _mainCam.transform.position).normalized;
-                        _wristBadgeObj.transform.rotation = Quaternion.LookRotation(lookDir, Vector3.up);
-                    }
-                }
-                else
-                {
-                    _wristBadgeObj.SetActive(false);
-                }
-            }
+            // Version 2: the version 1 wrist badge is never shown; the wrist chip (ShiroWristChip)
+            // sits in its place on the wrist
+            if (_wristBadgeObj != null && _wristBadgeObj.activeSelf) _wristBadgeObj.SetActive(false);
 
             // If Slate is pinned, maintain world position
             if (isPinnedToWorld)
@@ -1031,7 +1040,7 @@ namespace ShiroMR
             }
             if (_wristBadgeObj != null)
             {
-                _wristBadgeObj.SetActive(!isSlateVisible);
+                _wristBadgeObj.SetActive(false);   // version 2: the wrist chip instead
             }
             PlayClickTone();
         }

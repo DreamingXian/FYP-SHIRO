@@ -293,6 +293,7 @@ namespace ShiroMR
 
             // 6. Emergency alarm: flashing red card and floor ring until it is handled
             if (isAlarmActive) UpdateAlarmVisuals();
+            else UpdateHighlight();
         }
 
         // ----- Emergency alarm (set by ShiroAlertManager) -----
@@ -935,6 +936,65 @@ namespace ShiroMR
             {
                 _statusBannerText.text = "Position from the wristband's Bluetooth signal (about ±1 m)";
                 _statusBannerText.color = ShiroTheme.TextDim;
+            }
+        }
+
+        // ----- For the ward panel (version 2): the tag's state in one line, "Show me" -----
+
+        /// <summary>The tag's state for a row of the ward panel's patient list.</summary>
+        public struct ListState
+        {
+            public string Value;      // heart rate shown, or "--"
+            public string Words;      // its state, the first line of the tag's words
+            public bool Warn;         // amber: needs a look
+            public bool Dim;          // an older value
+            public bool Heard;
+            public bool BatteryLow;
+            public int Battery;
+            public string Bed;
+            public string Where;
+            public Color Colour;      // the tag's status stripe (not the alert red)
+        }
+
+        public ListState GetListState()
+        {
+            var h = Heart();
+            string words = h.Text ?? "";
+            int nl = words.IndexOf('\n');
+            if (nl >= 0) words = words.Substring(0, nl);
+            return new ListState
+            {
+                Value = h.Value, Words = words, Warn = h.Warn, Dim = h.Dim, Heard = IsHeard,
+                BatteryLow = BatteryLow && IsHeard, Battery = batteryPercent,
+                Bed = BedWords(), Where = WhereWords(), Colour = StatusColour(h)
+            };
+        }
+
+        /// <summary>Where "Show me" points: the middle of the tag.</summary>
+        public Vector3 GuidePoint => _hudContainer != null ? _hudContainer.transform.position : transform.position + Vector3.up * 1.2f;
+
+        private float _highlightUntil = -1f;
+        private bool _highlighting;
+
+        /// <summary>"Show me" from the ward panel: the tag pulses blue for a few seconds.</summary>
+        public void Highlight(float seconds)
+        {
+            _highlightUntil = Time.time + seconds;
+        }
+
+        private void UpdateHighlight()
+        {
+            bool on = Time.time < _highlightUntil;
+            if (on)
+            {
+                float k = 0.5f + 0.5f * Mathf.Sin(Time.time * 7f);
+                SetCardColor(Color.Lerp(ShiroTheme.GlassRaised, ShiroTheme.Primary, 0.35f + 0.45f * k));
+                _highlighting = true;
+            }
+            else if (_highlighting)
+            {
+                _highlighting = false;
+                SetCardColor(null);
             }
         }
 
