@@ -15,10 +15,15 @@
 //              alerts, profile.
 //   Map      - the ward from above: beds, door, patients, you (a tap on a
 //              patient opens them too).
-//   Settings - the ward, found automatically (ShiroWardAutoDetect) where this
-//              headset has aligned it, chosen by hand only for a ward not
-//              aligned yet; the connection; the version 1 menu for room setup,
-//              server address, pairing and the test tools (until stage 4).
+//   Settings - (ShiroSettingsView, stage 4) the ward and how it was found, room
+//              setup in numbered steps, the server address and pairing keypads,
+//              the test tools under Advanced. The version 1 hand slate is no
+//              longer opened.
+// The header shows how the ward was found: a badge "Found automatically"
+// (green), "Room not set up" (amber), "Outside this ward" or "Chosen by hand";
+// when the headset switches ward by itself the badge blinks and a note says so.
+// While the room alignment waits for a point at the door, the panel steps aside
+// for a small bar above the view (the step, Cancel), so the ray reaches the floor.
 // Creates itself when the scene loads.
 // =============================================================================
 using System;
@@ -83,12 +88,20 @@ namespace ShiroMR.UI
         // Map
         private ShiroWardMapView _map;
 
-        // Settings: the main view, or the list of wards to choose by hand
-        private GameObject _settingsMain, _settingsList;
-        private TextMeshProUGUI _wardName, _wardAuto, _connection, _listHeading;
-        private ShiroButton _autoBtn, _linkBtn;
-        private readonly List<ShiroButton> _wardBtns = new List<ShiroButton>();
-        private string _wardBtnsKey = "";
+        // Settings (stage 4)
+        private readonly ShiroSettingsView _settings = new ShiroSettingsView();
+
+        // How the ward was found (header badge); blinks after the headset switched ward by itself
+        private Image _badge;
+        private TextMeshProUGUI _badgeText;
+        private float _badgeBlinkUntil = -1f;
+        private bool _detectSubscribed;
+
+        // Room alignment: a small bar above the view while pointing at the door
+        private const float BarW = 340f, BarH = 64f;
+        private Canvas _aimBar;
+        private TextMeshProUGUI _aimText;
+        private bool _aimPlaced;
 
         /// <summary>One patient of the list (the preview tool fills these with sample data).</summary>
         public class PatientRow
@@ -187,11 +200,14 @@ namespace ShiroMR.UI
         /// <summary>The note of the last "Show me" while it is fresh, else null (the patient view shows it too).</summary>
         internal string FreshNote => Time.time < _noteUntil ? _noteText : null;
 
-        /// <summary>Shown while open, except while the alert card is shown (it comes first).</summary>
+        /// <summary>
+        /// Shown while open, except while the alert card is shown (it comes first) and while the
+        /// room alignment waits for a point at the door (the aiming bar is shown instead).
+        /// </summary>
         private void UpdateVisible()
         {
             bool cardUp = ShiroAlertCard.Instance != null && ShiroAlertCard.Instance.IsCardShown;
-            bool show = _open && !cardUp;
+            bool show = _open && !cardUp && !ShiroSettingsView.IsAiming;
             _visible = show;
             if (_canvas != null && _canvas.gameObject.activeSelf != show) _canvas.gameObject.SetActive(show);
         }
@@ -210,10 +226,18 @@ namespace ShiroMR.UI
                 ShiroNetworkManager.Instance.OnAnyPositionUpdated += HandlePosition;
                 _subscribed = true;
             }
-            UpdateVisible();
-            if (!_visible) return;
+            if (!_detectSubscribed && ShiroWardAutoDetect.Instance != null)
+            {
+                ShiroWardAutoDetect.Instance.OnWardDetected += HandleWardDetected;
+                _detectSubscribed = true;
+            }
             if (_head == null && Camera.main != null) _head = Camera.main.transform;
+            UpdateAimBar();
+            UpdateVisible();
+            // After pointing at the door the clinician faces elsewhere: the panel comes back in front
+            if (!_visible) { if (ShiroSettingsView.IsAiming) _placed = false; return; }
             if (_head != null) Place();
+            if (Time.time < _badgeBlinkUntil) BlinkBadge();
 
             _refreshIn -= Time.deltaTime;
             if (_patientView.IsShown)
@@ -266,15 +290,20 @@ namespace ShiroMR.UI
         {
             var net = ShiroNetworkManager.Instance;
             _title.text = WardTitle(net);
-            string status = StatusWords(net, out Color dot);
-            if (WardFoundAutomatically()) status += " · ward found automatically";
-            _status.text = status;
+            _status.text = StatusWords(net, out Color dot);
             _statusDot.color = dot;
+            string badge = ShiroSettingsView.BadgeWords(ShiroSettingsView.ModeOf(net), out Color badgeColour);
+            _badge.gameObject.SetActive(badge != null);
+            if (badge != null)
+            {
+                _badgeText.text = badge;
+                if (Time.time >= _badgeBlinkUntil) _badge.color = badgeColour;
+            }
             int n = CountWithWristband(net);
             _tabs[0].SetText(n > 0 ? $"Patients ({n})" : "Patients");
         }
 
-        private static string WardTitle(ShiroNetworkManager net)
+        internal static string WardTitle(ShiroNetworkManager net)
         {
             if (net == null || !net.HasWard) return "No ward yet";
             var loaded = net.LastLoadedWardConfig;
@@ -309,7 +338,7 @@ namespace ShiroMR.UI
                 _pages[i].SetActive(i == (int)page);
                 _tabs[i].SetKind(i == (int)page ? ButtonKind.Primary : ButtonKind.Secondary);
             }
-            if (page == Page.Settings) ShowSettingsList(false);
+            if (page == Page.Settings) _settings.ShowView(ShiroSettingsView.View.Main);
             _refreshIn = 0f;
         }
 
@@ -533,105 +562,76 @@ namespace ShiroMR.UI
             _map.Refresh(ward, net != null ? net.LastLoadedSubjects : null, net != null && net.IsConnected);
         }
 
-        // ----- Settings -----
+        // ----- Settings (stage 4: ShiroSettingsView) -----
 
-        private void RefreshSettings()
+        private void RefreshSettings() => _settings.Refresh();
+
+        /// <summary>Settings, Room setup (also from the alignment tool's keyboard key in the editor).</summary>
+        public void OpenRoomSetup()
         {
-            var net = ShiroNetworkManager.Instance;
-            if (_settingsList.activeSelf)
-            {
-                var wards = new List<WardSummary>();
-                if (net != null) foreach (var w in net.AvailableWards) if (w != null && !string.IsNullOrEmpty(w.ward_id)) wards.Add(w);
-                ShowWards(wards, net != null ? net.targetWardId : "");
-                return;
-            }
-
-            _wardName.text = WardTitle(net);
-            var det = ShiroWardAutoDetect.Instance;
-            _wardAuto.text = AutoWords(det);
-            _wardAuto.color = WardFoundAutomatically() ? ShiroTheme.GoodText : ShiroTheme.TextDim;
-            _autoBtn.SetText(det != null && det.IsEnabled ? "Automatic: on" : "Automatic: off");
-            _autoBtn.SetInteractable(det != null);
-
-            if (net == null) { _connection.text = "Starting…"; return; }
-            string where = $"{net.serverIp}:{net.serverPort}";
-            string device = net.Identity != null ? net.Identity.DeviceId : "this headset";
-            _connection.text = (net.IsConnected ? $"Connected to the edge server at {where}." : $"Not connected to the edge server at {where}.")
-                + "\n" + (net.IsPaired ? $"{device} is paired." : $"{device} is not paired yet: Server and pairing.");
-            _connection.color = net.IsConnected && net.IsPaired ? ShiroTheme.Text : ShiroTheme.WarnText;
+            if (!_open) Open();
+            if (_patientView.IsShown) ShowList();
+            SelectPage(Page.Settings);
+            _settings.ShowView(ShiroSettingsView.View.RoomSetup);
         }
 
-        /// <summary>What the automatic ward detection is doing, in words.</summary>
-        internal static string AutoWords(ShiroWardAutoDetect det)
+        /// <summary>The preview tool: the Settings view.</summary>
+        internal ShiroSettingsView PreviewSettings()
         {
-            if (det == null) return "Automatic ward detection is not available.";
-            if (!det.IsEnabled) return "Automatic ward detection is off: the ward stays as chosen.";
-            string s = det.StatusText ?? "";
-            if (s.StartsWith("in ", StringComparison.Ordinal)) return "Found automatically: you are inside this ward.";
-            if (s.StartsWith("entered ", StringComparison.Ordinal)) return $"Found automatically when you entered {s.Substring(8)}.";
-            if (s.StartsWith("entering ", StringComparison.Ordinal)) return $"Entering {s.Substring(9).TrimEnd('…')}…";
-            if (s == "not in a calibrated ward") return "Not inside an aligned ward: the last ward stays shown.";
-            if (s == "no calibrated ward here") return "No aligned ward found here. A new ward needs its room set up once (Room setup and tools).";
-            return $"Automatic ward detection: {s}.";
+            SelectPage(Page.Settings);
+            return _settings;
         }
 
-        private void ShowSettingsList(bool list)
+        // ----- How the ward was found -----
+
+        /// <summary>The headset switched ward by itself: the badge blinks and a note says so.</summary>
+        private void HandleWardDetected(string wardId)
         {
-            if (_settingsMain == null) return;
-            _settingsMain.SetActive(!list);
-            _settingsList.SetActive(list);
-            _wardBtnsKey = "";
+            _badgeBlinkUntil = Time.time + 4f;
+            Note($"Now in {WardTitle(ShiroNetworkManager.Instance)}: found automatically as you walked in.");
             _refreshIn = 0f;
         }
 
-        /// <summary>The wards to choose by hand (up to 9), the one shown highlighted. Also used by the preview tool.</summary>
-        internal void ShowWards(List<WardSummary> wards, string active)
+        private void BlinkBadge()
         {
-            string key = active + "|";
-            foreach (var w in wards) key += w.ward_id + ";";
-            if (key == _wardBtnsKey) return;
-            _wardBtnsKey = key;
-            foreach (var b in _wardBtns) if (b != null) Destroy(b.gameObject);
-            _wardBtns.Clear();
+            bool on = Mathf.Repeat(Time.time, 0.5f) < 0.25f;
+            _badge.color = on ? ShiroTheme.GoodText : ShiroTheme.Good;
+        }
 
-            Transform page = _settingsList.transform;
-            float bw = (W - 2 * Pad - 2 * ShiroTheme.Gap) / 3f;
-            int n = Mathf.Min(wards.Count, 9);
-            for (int i = 0; i < n; i++)
+        // ----- Room alignment: the aiming bar -----
+
+        /// <summary>
+        /// While the alignment waits for a point at the door: a bar above the view (the step and
+        /// Cancel), out of the way of the ray toward the floor; it follows the view lazily.
+        /// </summary>
+        private void UpdateAimBar()
+        {
+            bool aiming = ShiroSettingsView.IsAiming;
+            if (_aimBar.gameObject.activeSelf != aiming) { _aimBar.gameObject.SetActive(aiming); _aimPlaced = false; }
+            if (!aiming || _head == null) return;
+            string words = ShiroSettingsView.AimingWords();
+            if (_aimText.text != words) _aimText.text = words;
+
+            Vector3 flat = _head.forward;
+            flat.y = 0f;
+            if (flat.sqrMagnitude < 0.001f) flat = Vector3.forward;
+            flat.Normalize();
+            Vector3 target = _head.position + flat * 0.5f + Vector3.up * 0.10f;
+            Quaternion rot = Quaternion.LookRotation(target - _head.position, Vector3.up);
+            Transform b = _aimBar.transform;
+            if (!_aimPlaced) { b.SetPositionAndRotation(target, rot); _aimPlaced = true; return; }
+            float off = Vector3.Angle(flat, Vector3.ProjectOnPlane(b.position - _head.position, Vector3.up));
+            if (off > 25f || (b.position - target).magnitude > 0.3f)
             {
-                var w = wards[i];
-                string id = w.ward_id;
-                bool shown = string.Equals(id, active, StringComparison.OrdinalIgnoreCase);
-                string label = !string.IsNullOrEmpty(w.room_title) ? w.room_title : id;
-                var b = ShiroUIKit.Button(page, $"Ward_{id}", label, shown ? ButtonKind.Primary : ButtonKind.Secondary, () => ChooseWard(id), 13f);
-                if (b.Label != null) b.Label.fontSizeMin = 9f;   // long ward names shrink further
-                ShiroUIKit.Place(b, Pad + (i % 3) * (bw + ShiroTheme.Gap), 54f + (i / 3) * 40f, bw, 32f);
-                _wardBtns.Add(b);
+                float k = 1f - Mathf.Exp(-4f * Time.deltaTime);
+                b.SetPositionAndRotation(Vector3.Lerp(b.position, target, k), Quaternion.Slerp(b.rotation, rot, k));
             }
-            _listHeading.text = wards.Count == 0 ? "The list of wards comes from the edge server (not connected?)."
-                : wards.Count > 9 ? $"Choose the ward by hand (first 9 of {wards.Count})." : "Choose the ward by hand.";
         }
 
-        private void ChooseWard(string id)
+        private void CancelAiming()
         {
-            var net = ShiroNetworkManager.Instance;
-            if (net != null) net.SwitchWard(id);
-            ShowSettingsList(false);
-        }
-
-        private void ToggleAuto()
-        {
-            var det = ShiroWardAutoDetect.Instance;
-            if (det != null) det.SetEnabled(!det.IsEnabled);
-            _refreshIn = 0f;
-        }
-
-        private void OpenOldMenu(int tab)
-        {
-            var slate = ShiroHandSlate.Instance;
-            if (slate == null) return;
-            Close();
-            slate.OpenOldMenu(tab);
+            var tool = WardAlignmentTool.Instance;
+            if (tool != null) tool.CancelCalibration();
         }
 
         // ----- Building -----
@@ -658,7 +658,13 @@ namespace ShiroMR.UI
             _statusDot = ShiroUIKit.Dot(root, "StatusDot", ShiroTheme.Off);
             ShiroUIKit.Place(_statusDot, Pad, 45, 9, 9);
             _status = ShiroUIKit.Label(root, "Status", "", 12f, ShiroTheme.TextDim).Fit(9f);
-            ShiroUIKit.Place(_status, Pad + 14, 41, W - 2 * Pad - 14, 17);
+            ShiroUIKit.Place(_status, Pad + 14, 41, W - 2 * Pad - 14 - BadgeW - 8, 17);
+            // How the ward was found, as a badge at the right of the status line
+            _badge = ShiroUIKit.Panel(root, "WardBadge", ShiroTheme.Good, 9.5f);
+            ShiroUIKit.Place(_badge, W - Pad - BadgeW, 39, BadgeW, 20);
+            _badgeText = ShiroUIKit.Label(_badge.transform, "Text", "", 11f, Color.white, FontStyles.Bold, TextAlignmentOptions.Center).Fit(8f);
+            ShiroUIKit.Fill(_badgeText, 3f);
+            _badge.gameObject.SetActive(false);
 
             // Tabs
             string[] names = { "Patients", "Map", "Settings" };
@@ -676,13 +682,28 @@ namespace ShiroMR.UI
             BuildPatients(_pages[0].transform);
             _map = new ShiroWardMapView();
             _map.Build(_pages[1].transform, Pad, W - 2 * Pad, PageH, (tag, bed, name) => OpenPatient(tag));
-            BuildSettings(_pages[2].transform);
+            _settings.Build(_pages[2].transform, this);
             SelectPage(Page.Patients);
 
             // One patient (stage 3): in place of the list, in the same frame
             _patientView.Build(_canvas.transform, this);
             _canvas.gameObject.SetActive(false);
+
+            // The aiming bar (room alignment)
+            _aimBar = ShiroUIKit.WorldCanvas("AimBar", transform, new Vector2(BarW, BarH));
+            _aimBar.transform.localScale = Vector3.one * 0.001f * 0.9f;
+            Transform bar = _aimBar.transform;
+            ShiroUIKit.Fill(ShiroUIKit.Panel(bar, "Background", ShiroTheme.Glass, 14f));
+            var stripe = ShiroUIKit.Panel(bar, "Stripe", ShiroTheme.Primary, 3f);
+            ShiroUIKit.Place(stripe, 8, 10, 6, BarH - 20);
+            _aimText = ShiroUIKit.Label(bar, "Step", "", 13f, ShiroTheme.Text, FontStyles.Bold, TextAlignmentOptions.Left, true).Fit(9f);
+            ShiroUIKit.Place(_aimText, 22, 6, BarW - 22 - 96, BarH - 12);
+            var cancel = ShiroUIKit.Button(bar, "Cancel", "Cancel", ButtonKind.Secondary, CancelAiming, 13f);
+            ShiroUIKit.Place(cancel, BarW - 12 - 76, (BarH - 32) / 2f, 76, 32);
+            _aimBar.gameObject.SetActive(false);
         }
+
+        private const float BadgeW = 128f;
 
         private void BuildPatients(Transform page)
         {
@@ -720,69 +741,6 @@ namespace ShiroMR.UI
 
             // Pager (as on the web dashboard)
             _pager.Build(page, Pad, W - Pad, PagerY, PagerH, "patient", GoToPage);
-        }
-
-        private void BuildSettings(Transform page)
-        {
-            float w = W - 2 * Pad;
-            float bw = (w - ShiroTheme.Gap) / 2f;
-
-            // Main view: the ward (found automatically), the connection, the version 1 menu
-            _settingsMain = new GameObject("Main", typeof(RectTransform));
-            _settingsMain.transform.SetParent(page, false);
-            ShiroUIKit.Fill(_settingsMain.transform as RectTransform);
-            Transform m = _settingsMain.transform;
-
-            var wardHeading = ShiroUIKit.Label(m, "WardHeading", "Ward", 12f, ShiroTheme.TextDim);
-            ShiroUIKit.Place(wardHeading, Pad, 0, w, 16);
-            _wardName = ShiroUIKit.Label(m, "WardName", "", 16f, ShiroTheme.Text, FontStyles.Bold).Fit(11f);
-            ShiroUIKit.Place(_wardName, Pad, 17, w, 22);
-            _wardAuto = ShiroUIKit.Label(m, "WardAuto", "", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true).Fit(9f);
-            ShiroUIKit.Place(_wardAuto, Pad, 40, w, 30);
-            var byHand = ShiroUIKit.Button(m, "ChooseByHand", "Choose by hand", ButtonKind.Secondary, () => ShowSettingsList(true), 13f);
-            ShiroUIKit.Place(byHand, Pad, 74, bw, 28);
-            _autoBtn = ShiroUIKit.Button(m, "Automatic", "Automatic: on", ButtonKind.Secondary, ToggleAuto, 13f);
-            ShiroUIKit.Place(_autoBtn, Pad + bw + ShiroTheme.Gap, 74, bw, 28);
-
-            var connHeading = ShiroUIKit.Label(m, "ConnHeading", "Connection", 12f, ShiroTheme.TextDim);
-            ShiroUIKit.Place(connHeading, Pad, 112, w, 16);
-            _connection = ShiroUIKit.Label(m, "Connection", "", 13f, ShiroTheme.Text, FontStyles.Normal, TextAlignmentOptions.TopLeft, true).Fit(10f);
-            ShiroUIKit.Place(_connection, Pad, 129, w, 31);
-            var reconnect = ShiroUIKit.Button(m, "Reconnect", "Reconnect", ButtonKind.Secondary, () =>
-            {
-                var net = ShiroNetworkManager.Instance;
-                if (net != null) net.Connect();
-            }, 13f);
-            ShiroUIKit.Place(reconnect, Pad, 163, bw, 28);
-            // Over Quest Link the edge server runs on the same computer (editor only)
-            _linkBtn = ShiroUIKit.Button(m, "QuestLink", "Server on this PC (Link)", ButtonKind.Secondary, () =>
-            {
-                var net = ShiroNetworkManager.Instance;
-                if (net != null) net.SetServerIp("127.0.0.1");
-            }, 13f);
-            ShiroUIKit.Place(_linkBtn, Pad + bw + ShiroTheme.Gap, 163, bw, 28);
-            _linkBtn.gameObject.SetActive(Application.isEditor);
-            var server = ShiroUIKit.Button(m, "ServerPairing", "Server and pairing", ButtonKind.Secondary, () => OpenOldMenu(3), 13f);
-            ShiroUIKit.Place(server, Pad, 200, bw, 28);
-            var setup = ShiroUIKit.Button(m, "RoomSetup", "Room setup and tools", ButtonKind.Secondary, () => OpenOldMenu(0), 13f);
-            ShiroUIKit.Place(setup, Pad + bw + ShiroTheme.Gap, 200, bw, 28);
-
-            // The list of wards, to choose by hand (a ward not aligned on this headset yet)
-            _settingsList = new GameObject("WardList", typeof(RectTransform));
-            _settingsList.transform.SetParent(page, false);
-            ShiroUIKit.Fill(_settingsList.transform as RectTransform);
-            Transform l = _settingsList.transform;
-            _listHeading = ShiroUIKit.Label(l, "ListHeading", "Choose the ward by hand.", 14f, ShiroTheme.Text, FontStyles.Bold).Fit(10f);
-            ShiroUIKit.Place(_listHeading, Pad, 0, w, 20);
-            var listNote = ShiroUIKit.Label(l, "ListNote",
-                "Only for a ward this headset has not aligned yet: aligned wards are found automatically when you walk in.",
-                12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true).Fit(9f);
-            ShiroUIKit.Place(listNote, Pad, 21, w, 30);
-            var back = ShiroUIKit.Button(l, "Back", "Back", ButtonKind.Secondary, () => ShowSettingsList(false), 13f);
-            ShiroUIKit.Place(back, Pad, 200, bw, 28);
-            var setup2 = ShiroUIKit.Button(l, "RoomSetup", "Room setup and tools", ButtonKind.Secondary, () => OpenOldMenu(0), 13f);
-            ShiroUIKit.Place(setup2, Pad + bw + ShiroTheme.Gap, 200, bw, 28);
-            _settingsList.SetActive(false);
         }
     }
 }

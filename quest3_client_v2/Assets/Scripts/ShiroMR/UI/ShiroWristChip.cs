@@ -5,7 +5,9 @@
 // (a dot: green connected, amber not paired or no ward, grey not connected) and
 // the ward's name; red and blinking with the number of alerts waiting. A tap
 // opens the alert card when an alert waits, else the ward panel. It replaces
-// the wrist badge of version 1 (same place on the wrist).
+// the wrist badge of version 1 (same place on the wrist). When the headset switches
+// ward by itself (it walked into another ward set up on it), the chip turns green
+// with the new ward's name for a few seconds.
 // Creates itself when the scene loads.
 // =============================================================================
 using TMPro;
@@ -27,6 +29,8 @@ namespace ShiroMR.UI
         private Transform _head;
         private Transform _leftController;
         private float _refreshIn;
+        private bool _detectSubscribed;
+        private float _wardFlashUntil = -1f;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -65,6 +69,11 @@ namespace ShiroMR.UI
         private void LateUpdate()
         {
             if (_head == null && Camera.main != null) _head = Camera.main.transform;
+            if (!_detectSubscribed && ShiroWardAutoDetect.Instance != null)
+            {
+                ShiroWardAutoDetect.Instance.OnWardDetected += _ => { _wardFlashUntil = Time.time + 6f; _refreshIn = 0f; };
+                _detectSubscribed = true;
+            }
             bool panelOpen = ShiroWardPanel.Instance != null && ShiroWardPanel.Instance.IsOpen;
             bool oldMenuOpen = ShiroHandSlate.Instance != null && ShiroHandSlate.Instance.isSlateVisible;
             bool show = _head != null && !panelOpen && !oldMenuOpen && TryGetWrist(out Vector3 pos, out Quaternion rot)
@@ -80,6 +89,7 @@ namespace ShiroMR.UI
                 bool on = Mathf.Repeat(Time.time, 0.8f) < 0.4f;
                 _button.SetColorOverride(on ? ShiroTheme.Alert : ShiroTheme.AlertDark);
             }
+            else if (Time.time < _wardFlashUntil) _button.SetColorOverride(ShiroTheme.Good);   // a new ward, found automatically
             else _button.SetColorOverride(null);
 
             _refreshIn -= Time.deltaTime;
@@ -87,7 +97,7 @@ namespace ShiroMR.UI
             _refreshIn = 0.5f;
             var net = ShiroNetworkManager.Instance;
             ShiroWardPanel.StatusWords(net, out Color dot);
-            _dot.color = pending > 0 ? Color.white : dot;
+            _dot.color = pending > 0 || Time.time < _wardFlashUntil ? Color.white : dot;
             if (pending > 0) _text.text = pending == 1 ? "1 alert" : $"{pending} alerts";
             else if (net != null && net.HasWard)
             {

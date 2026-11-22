@@ -57,6 +57,7 @@ namespace ShiroMR.EditorTools
                 ShootWardPanel(dir);
                 ShootPatientView(dir);
                 ShootWristChip(dir);
+                ShootArrows(dir);
             }
             finally
             {
@@ -181,6 +182,10 @@ namespace ShiroMR.EditorTools
             Get<UnityEngine.UI.Image>(panel, "_statusDot").color = ShiroTheme.Good;
             var tabs = Get<ShiroButton[]>(panel, "_tabs");
             tabs[0].SetText("Patients (6)");
+            var badge = Get<UnityEngine.UI.Image>(panel, "_badge");
+            badge.gameObject.SetActive(true);
+            badge.color = ShiroTheme.Good;
+            Get<TextMeshProUGUI>(panel, "_badgeText").text = "Found automatically";
 
             // Patients: an alert, a check, fine, resting, not heard, no position (two pages)
             var rows = new List<ShiroWardPanel.PatientRow>
@@ -243,25 +248,84 @@ namespace ShiroMR.EditorTools
             Call(map, "Refresh", ward, subjects, true);
             Shoot(canvas, Path.Combine(dir, "panel_map.png"), true);
 
-            // Settings: the ward found automatically (the longest status); not paired
-            SelectPage(panel, 2);
-            Get<TextMeshProUGUI>(panel, "_wardName").text = "Ward A - Medical";
-            Get<TextMeshProUGUI>(panel, "_wardAuto").text = "No aligned ward found here. A new ward needs its room set up once (Room setup and tools).";
-            var conn = Get<TextMeshProUGUI>(panel, "_connection");
-            conn.text = "Not connected to the edge server at 192.168.1.229:3000.\nHS-7F3A2C1B is not paired yet: Server and pairing.";
+            // Settings (stage 4): the ward found automatically, what that means; not paired
+            var settings = (ShiroSettingsView)Call(panel, "PreviewSettings");
+            Get<TextMeshProUGUI>(settings, "_wardName").text = "Ward B - Surgical Recovery";
+            Get<UnityEngine.UI.Image>(settings, "_wardDot").color = ShiroTheme.Good;
+            var state = Get<TextMeshProUGUI>(settings, "_wardState");
+            state.text = "Found automatically: you are inside this ward.";
+            state.color = ShiroTheme.GoodText;
+            Get<TextMeshProUGUI>(settings, "_wardHint").text = "Set it up once: then tags stand in place and it is found by itself.";
+            var conn = Get<TextMeshProUGUI>(settings, "_connection");
+            conn.text = "Not connected to the edge server at 192.168.1.229:3000.\nHS-7F3A2C1B is not paired yet: Pair headset.";
             conn.color = ShiroTheme.WarnText;
             Shoot(canvas, Path.Combine(dir, "panel_settings.png"), true);
 
-            // Settings, choose by hand: three wards, this one shown
-            Call(panel, "ShowSettingsList", true);
+            // Choose by hand: three wards, this one shown
+            ShowView(settings, 1);
             var wards = new List<WardSummary>
             {
                 new WardSummary { ward_id = "WARD-001", room_title = "Ward A - Medical" },
                 new WardSummary { ward_id = "WARD-002", room_title = "Ward B - Surgical Recovery" },
                 new WardSummary { ward_id = "WARD-003", room_title = "" },
             };
-            Call(panel, "ShowWards", wards, "WARD-001");
+            Call(settings, "ShowWards", wards, "WARD-001");
             Shoot(canvas, Path.Combine(dir, "panel_settings_by_hand.png"), true);
+
+            // Room setup: steps 1 to 3 done, step 4 now (check and save), the longest message
+            ShowView(settings, 2);
+            Get<TextMeshProUGUI>(settings, "_setupTitle").text = "Room setup: Ward B - Surgical Recovery";
+            Call(settings, "SetSetupSteps", 3, false);
+            Get<ShiroButton>(settings, "_saveBtn").SetInteractable(true);
+            Get<ShiroButton>(settings, "_startBtn").SetText("Align again");
+            foreach (var name in new[] { "_startBtn", "_findBtn", "_sideBtn" }) Get<ShiroButton>(settings, name).SetInteractable(true);
+            var setupStatus = Get<TextMeshProUGUI>(settings, "_setupStatus");
+            setupStatus.text = "Aligned, but the door measured 1.21 m and the plan says 0.90 m: Align again, pointing at the very sides of the frame.";
+            setupStatus.color = ShiroTheme.WarnText;
+            Shoot(canvas, Path.Combine(dir, "panel_room_setup.png"), true);
+
+            // Server address and pairing keypads
+            ShowView(settings, 3);
+            Set(settings, "_addressTyped", "192.168.100.229");
+            Call(settings, "Refresh");
+            Shoot(canvas, Path.Combine(dir, "panel_server_address.png"), true);
+            ShowView(settings, 4);
+            Set(settings, "_pairDigits", "4821");
+            Call(settings, "Refresh");
+            var pairStatus = Get<TextMeshProUGUI>(settings, "_pairStatus");
+            pairStatus.text = "HS-7F3A2C1B, server 192.168.100.229:3000.\nThis headset is not paired yet: type the code from the dashboard.";
+            pairStatus.color = ShiroTheme.WarnText;
+            Shoot(canvas, Path.Combine(dir, "panel_pairing.png"), true);
+
+            // Advanced: the test tools; "press again" on Quit
+            ShowView(settings, 5);
+            Get<ShiroButton>(settings, "_quitBtn").SetText("Press again to quit");
+            Get<TextMeshProUGUI>(settings, "_advStatus").text = "Alerts and vital signs stop on this headset until the app is opened again.";
+            Get<ShiroButton>(settings, "_permBtn").SetText("Spatial data: not allowed");
+            Shoot(canvas, Path.Combine(dir, "panel_advanced.png"), true);
+            ShowView(settings, 0);
+
+            // The aiming bar while pointing at the door (the longest step)
+            Get<TextMeshProUGUI>(panel, "_aimText").text = "Step 2 of 4: point the ray at the floor at the LEFT side of the door frame, and pinch.";
+            Shoot(Child(panel.transform, "AimBar"), Path.Combine(dir, "aim_bar.png"), true);
+        }
+
+        private static void ShowView(ShiroSettingsView settings, int view)
+        {
+            var viewType = typeof(ShiroSettingsView).GetNestedType("View", BindingFlags.NonPublic);
+            Call(settings, "ShowView", Enum.ToObject(viewType, view));
+        }
+
+        /// <summary>"Show me": the arrow (blue from the ward panel, red for an alert).</summary>
+        private static void ShootArrows(string dir)
+        {
+            var arrow = new GameObject("PreviewArrow").AddComponent<ShiroGuideArrow>();
+            Call(arrow, "Awake");
+            Transform canvas = Child(arrow.transform, "GuideArrow");
+            canvas.localScale = Vector3.one * 0.001f;
+            Shoot(canvas, Path.Combine(dir, "arrow_show_me.png"), true);
+            Get<UnityEngine.UI.Image>(arrow, "_image").color = ShiroTheme.Alert;
+            Shoot(canvas, Path.Combine(dir, "arrow_alert.png"), true);
         }
 
         // ----- One patient (stage 3) -----

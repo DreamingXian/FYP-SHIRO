@@ -5,11 +5,12 @@
 // front of the clinician, within reach, and follows the view lazily until it is
 // answered: what happened, to whom, where and when, in words.
 //   - "I'm responding" acknowledges it as this headset (every screen sees it).
-//   - "Show me" folds the card into a small bar low in the view and shows a red
-//     arrow toward the patient, whose tag in the room flashes red, or toward their
-//     bed when they have no tag in the room (no position yet); "Open" brings the
-//     card back. Not available when the patient is in another ward. The arrow goes
-//     once the alert is answered, and while the ward panel is open.
+//   - "Show me" folds the card into a small bar low in the view, opens the
+//     patient on the ward panel (their alert at the top with "I'm responding")
+//     and shows a red arrow toward them for 15 s (ShiroGuideArrow): toward their
+//     tag in the room, which flashes red, or their bed when they have no tag in
+//     the room (no position yet). "Open" on the bar brings the card back. Not
+//     available when the patient is in another ward.
 //   - "Mute" silences the alarm tone of this headset ("Unmute" turns it back on).
 // The card grows to fit its text; nothing is cut.
 // Answered elsewhere (dashboard, another headset): the card turns green, says who
@@ -43,7 +44,6 @@ namespace ShiroMR.UI
         private const float PillBelow = 0.24f;
         private const float PillScale = 0.85f;
         private const float FollowAngle = 28f;           // degrees off the view before it moves
-        private const float LookedAtAngle = 15f;         // the patient is in view: no arrow
 
         private enum Mode { Hidden, Card, Bar }
         private Mode _mode = Mode.Hidden;
@@ -63,9 +63,6 @@ namespace ShiroMR.UI
         private Canvas _bar;
         private Image _barDot;
         private TextMeshProUGUI _barText;
-        // Arrow toward the patient
-        private Canvas _arrow;
-        private Image _arrowImage;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -133,8 +130,6 @@ namespace ShiroMR.UI
             Color band = pending ? (on ? ShiroTheme.Alert : ShiroTheme.AlertDark) : ShiroTheme.Good;
             if (_band.color != band) { _band.color = band; _bandSquare.color = band; }
             if (_barDot != null) _barDot.color = pending ? (on ? ShiroTheme.Alert : ShiroTheme.AlertDark) : ShiroTheme.Good;
-
-            UpdateArrow(cur);
 
             // Once a second: "… s ago", and whether there is a tag or bed to show yet
             _refreshIn -= Time.deltaTime;
@@ -372,9 +367,29 @@ namespace ShiroMR.UI
             var am = ShiroAlertManager.Instance;
             var cur = am != null ? am.Current : null;
             if (cur == null || cur.incident == null) return;
-            _barForId = cur.incident.incident_id;
+            var inc = cur.incident;
+            _barForId = inc.incident_id;
             _placed = false;
             SetMode(Mode.Bar);
+
+            // The patient on the ward panel: their alert at the top with "I'm responding",
+            // where they are, their vitals
+            string tag = TagOf(inc);
+            if (tag != null && ShiroWardPanel.Instance != null) ShiroWardPanel.Instance.OpenPatient(tag);
+            // A red arrow toward their tag (or bed), following them while they move
+            ShiroGuideArrow.Show(() => TryFindTarget(inc, out Vector3 p, out _) ? p : (Vector3?)null, 15f, ShiroTheme.Alert);
+        }
+
+        /// <summary>The wristband of the alert's patient: from the alert, else from the ward's patient list.</summary>
+        private static string TagOf(IncidentAlert inc)
+        {
+            if (!string.IsNullOrEmpty(inc.device_id)) return inc.device_id;
+            var net = ShiroNetworkManager.Instance;
+            if (net == null || net.LastLoadedSubjects == null || string.IsNullOrEmpty(inc.patient_id)) return null;
+            foreach (var s in net.LastLoadedSubjects)
+                if (s != null && !string.IsNullOrEmpty(s.device_id) && string.Equals(s.patient_id, inc.patient_id, StringComparison.OrdinalIgnoreCase))
+                    return s.device_id;
+            return null;
         }
 
         private void ToggleMute()
@@ -390,7 +405,6 @@ namespace ShiroMR.UI
             _mode = mode;
             if (_card != null) _card.gameObject.SetActive(mode == Mode.Card);
             if (_bar != null) _bar.gameObject.SetActive(mode == Mode.Bar);
-            if (_arrow != null && mode != Mode.Bar) _arrow.gameObject.SetActive(false);
             _following = false;
         }
 
@@ -424,37 +438,6 @@ namespace ShiroMR.UI
                 t.SetPositionAndRotation(Vector3.Lerp(t.position, target, k), Quaternion.Slerp(t.rotation, rot, k));
                 if ((t.position - target).sqrMagnitude < 0.0004f) _following = false;
             }
-        }
-
-        /// <summary>
-        /// "Show me": a red arrow at the edge of the view, toward the patient's tag (or bed).
-        /// Only with the bar on view and while the alert still waits for a response: not for
-        /// an alert answered elsewhere, and not while the ward panel is open (the bar steps
-        /// aside then), so the arrow is never left behind on its own.
-        /// </summary>
-        private void UpdateArrow(ShiroAlertManager.HeadsetAlert cur)
-        {
-            if (_arrow == null) return;
-            Vector3 target = Vector3.zero;
-            bool waiting = cur != null && cur.status != ShiroAlertManager.AlertStatus.AcknowledgedElsewhere;
-            bool barOnView = _mode == Mode.Bar && _bar != null && _bar.gameObject.activeSelf;
-            bool found = barOnView && waiting && TryFindTarget(cur.incident, out target, out _);
-            if (!found) { if (_arrow.gameObject.activeSelf) _arrow.gameObject.SetActive(false); return; }
-
-            Vector3 toTarget = target - _head.position;
-            if (Vector3.Angle(_head.forward, toTarget) < LookedAtAngle) { _arrow.gameObject.SetActive(false); return; }
-
-            Vector3 local = _head.InverseTransformDirection(toTarget);
-            Vector2 dir = new Vector2(local.x, local.y);
-            if (local.z < 0f && dir.sqrMagnitude < 0.01f) dir = Vector2.right;   // right behind: turn right
-            dir.Normalize();
-            Vector3 worldDir = _head.right * dir.x + _head.up * dir.y;
-            // 0.35 m ahead: in front of the ward panel and the card, the same size to the eye
-            Vector3 pos = _head.position + _head.forward * 0.35f + worldDir * 0.075f;
-            _arrow.gameObject.SetActive(true);
-            _arrow.transform.SetPositionAndRotation(pos, Quaternion.LookRotation(_head.forward, worldDir));
-            float pulse = 0.85f + 0.15f * Mathf.Sin(Time.time * 6f);
-            _arrow.transform.localScale = Vector3.one * 0.001f * 0.6f * pulse;
         }
 
         // ----- Building -----
@@ -504,13 +487,6 @@ namespace ShiroMR.UI
             var open = ShiroUIKit.Button(bar, "Open", "Open", ButtonKind.Primary, Open, 15f);
             ShiroUIKit.Place(open, PillW - 74, 8, 62, 40);
 
-            // The arrow toward the patient
-            _arrow = ShiroUIKit.WorldCanvas("AlertArrow", transform, new Vector2(36f, 36f));
-            _arrowImage = ShiroUIKit.Panel(_arrow.transform, "Arrow", ShiroTheme.Alert, 0f);
-            _arrowImage.sprite = ShiroUIKit.TriangleSprite;
-            _arrowImage.type = Image.Type.Simple;
-            ShiroUIKit.Fill(_arrowImage);
-            _arrow.gameObject.SetActive(false);
         }
     }
 }

@@ -179,12 +179,8 @@ namespace ShiroMR
 #endif
             try
             {
-                if (OVRInput.GetDown(OVRInput.Button.Two, OVRInput.Controller.RTouch) ||
-                    OVRInput.GetDown(OVRInput.Button.Four, OVRInput.Controller.LTouch) ||
-                    OVRInput.GetDown(OVRInput.Button.Start, OVRInput.Controller.LTouch))
-                {
-                    toggleRequested = true;
-                }
+                // Version 2: Y, B and the menu button open the ward panel (ShiroHandSlate.HandleReopenInputs);
+                // they no longer toggle this tool's panel or the version 1 slate here.
 
                 // Quick Re-Sync via Right Thumbstick Click
                 if (OVRInput.GetDown(OVRInput.Button.PrimaryThumbstick, OVRInput.Controller.RTouch))
@@ -737,6 +733,7 @@ namespace ShiroMR
                     {
                         spatialManager.SaveAlignmentToPrefs(ShiroNetworkManager.Instance.targetWardId);
                     }
+                    OnDoorAligned?.Invoke(true, lastMeasuredLength, expectedW);
                 }
                 else
                 {
@@ -746,6 +743,7 @@ namespace ShiroMR
                         _instructionText.color = new Color(0.95f, 0.3f, 0.2f);
                     }
                     currentStep = AlignmentStep.Idle;
+                    OnDoorAligned?.Invoke(false, 0f, 0f);
                 }
             }
         }
@@ -852,6 +850,35 @@ namespace ShiroMR
         /// <summary>Raised with every message of this tool (text, colour), for the hand slate's Ward tab.</summary>
         public event Action<string, Color> OnAlignmentMessage;
 
+        /// <summary>
+        /// Version 2 (room setup steps): the door frame alignment ended: aligned or not, the
+        /// door width measured between the two points and the width on the ward plan (m).
+        /// </summary>
+        public event Action<bool, float, float> OnDoorAligned;
+
+        /// <summary>Version 2: saving the spatial anchor ended (true: on the headset and on the edge server).</summary>
+        public event Action<bool> OnAnchorSaved;
+
+        /// <summary>
+        /// Version 2: stops pointing at the door frame without aligning. The earlier
+        /// alignment stays; its saved spatial anchor is looked up again (StartDoorCalibration
+        /// let it go so it could not move the new one).
+        /// </summary>
+        public void CancelCalibration()
+        {
+            if (currentStep == AlignmentStep.Idle || currentStep == AlignmentStep.Completed) return;
+            currentStep = AlignmentStep.Idle;
+            if (_point1Marker != null) _point1Marker.SetActive(false);
+            if (_point2Marker != null) _point2Marker.SetActive(false);
+            if (_alignmentLine != null) _alignmentLine.enabled = false;
+            if (wardVisualizer != null && isAligned)
+            {
+                wardVisualizer.ToggleOverlay(true);
+                wardVisualizer.SetCollidersEnabled(true);
+            }
+            if (isAligned) QuickReSync();
+        }
+
         /// <summary>Shows a message on this tool's panel and on the hand slate.</summary>
         private void Notify(string text, Color color)
         {
@@ -951,6 +978,7 @@ namespace ShiroMR
                 // No anchor ID is made up: the server only stores an anchor the headset really saved
                 Debug.LogWarning($"[SHIRO ALIGN] The headset could not save a spatial anchor for {wardId}. Nothing was sent to the server.");
                 Notify($"⚠️ The headset could not save the anchor ({spatialManager.LastAnchorProblem ?? "unknown reason"}). The alignment stays as it is; try saving again. If it keeps failing, restart the app.", MsgProblem);
+                OnAnchorSaved?.Invoke(false);
                 return;
             }
 
@@ -979,17 +1007,26 @@ namespace ShiroMR
                 {
                     Debug.Log($"[SHIRO ALIGN] Persistent Spatial Anchor synced to Edge Server: {anchorUuid}");
                     Notify("💾 Spatial anchor saved on the headset and sent to the edge server. It is restored on restart and after the headset sleeps.", MsgOk);
+                    OnAnchorSaved?.Invoke(true);
                 }
                 else
                 {
                     Debug.LogWarning($"[SHIRO ALIGN] Could not sync anchor to server: {req.error}");
                     Notify($"⚠️ Spatial anchor saved on this headset, but the edge server did not take it ({req.error}). Save again when the server is reachable.", MsgProblem);
+                    OnAnchorSaved?.Invoke(false);
                 }
             }
         }
 
         public void ToggleCalibrationUI()
         {
+            // Version 2: room setup is a page of the ward panel (Settings → Room setup)
+            if (ShiroMR.UI.ShiroWardPanel.Instance != null)
+            {
+                ShiroMR.UI.ShiroWardPanel.Instance.OpenRoomSetup();
+                if (_uiPanelRoot != null) _uiPanelRoot.SetActive(false);
+                return;
+            }
             if (ShiroHandSlate.Instance != null)
             {
                 ShiroHandSlate.Instance.ToggleSlateVisibility();

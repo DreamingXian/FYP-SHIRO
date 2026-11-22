@@ -293,7 +293,7 @@ namespace ShiroMR
                     ? new Color(0.10f, 0.95f, 0.45f, glowAlpha)  // Emerald Green: Physical Human Locked
                     : new Color(0.06f, 0.71f, 0.83f, 0.35f);    // Translucent Cyan: Searching/BLE Area
 
-                _floorRingRenderer.material.color = baseCol;
+                SetRingColour(baseCol);
             }
 
             // 4. Banner Status Timeout
@@ -391,7 +391,7 @@ namespace ShiroMR
                 _floorRingObj.transform.position = new Vector3(transform.position.x, floorY + 0.005f, transform.position.z);
                 float s = 0.9f + 0.35f * Mathf.Abs(Mathf.Sin(_alarmTimer * 3.5f));
                 _floorRingObj.transform.localScale = new Vector3(s, 0.005f, s);
-                if (_floorRingRenderer != null) _floorRingRenderer.material.color = new Color(0.95f, 0.08f, 0.10f, on ? 0.85f : 0.45f);
+                SetRingColour(new Color(0.95f, 0.08f, 0.10f, on ? 0.85f : 0.45f));
             }
             // The tag's main line names the alert (after RefreshUiText, which runs first each frame)
             if (_heartStateText != null)
@@ -399,6 +399,16 @@ namespace ShiroMR
                 _heartStateText.text = $"{SentenceCase(_alarmLabel)}: waiting for a response";
                 _heartStateText.color = on ? Color.white : ShiroTheme.AlertText;
             }
+        }
+
+        /// <summary>
+        /// The floor circle's colour, on this tag's own material (made in BuildHologramVisuals).
+        /// Never renderer.material: outside Play mode (the preview tool) that copies the material
+        /// into the scene each time.
+        /// </summary>
+        private void SetRingColour(Color colour)
+        {
+            if (_floorRingMaterial != null) _floorRingMaterial.color = colour;
         }
 
         /// <summary>"AT THE DOOR" → "At the door".</summary>
@@ -1393,7 +1403,9 @@ namespace ShiroMR
             _floorRingObj.transform.SetParent(this.transform);
             _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
             _floorRingObj.transform.localScale = new Vector3(0.65f, 0.005f, 0.65f);
-            Destroy(_floorRingObj.GetComponent<Collider>()); // No physics blocking
+            // No physics blocking (DestroyImmediate in the editor's preview tool, outside Play mode)
+            var ringCollider = _floorRingObj.GetComponent<Collider>();
+            if (Application.isPlaying) Destroy(ringCollider); else DestroyImmediate(ringCollider);
 
             _floorRingRenderer = _floorRingObj.GetComponent<Renderer>();
             if (_floorRingRenderer != null)
@@ -1401,7 +1413,7 @@ namespace ShiroMR
                 Shader unlit = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
                 _floorRingMaterial = new Material(unlit);
                 _floorRingMaterial.color = new Color(0.06f, 0.71f, 0.83f, 0.35f);
-                _floorRingRenderer.material = _floorRingMaterial;
+                _floorRingRenderer.sharedMaterial = _floorRingMaterial;
             }
 
             // 2. The tag: its bottom edge at the anchor point, so the details open upward

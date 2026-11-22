@@ -41,6 +41,37 @@ namespace ShiroMR.UI
         /// <summary>A white triangle pointing up (arrows).</summary>
         public static Sprite TriangleSprite => _triangle != null ? _triangle : (_triangle = MakeTriangle());
 
+        private static Sprite _arrow;
+
+        /// <summary>A white arrow pointing up: a wide head on a shaft, so its direction is plain.</summary>
+        public static Sprite ArrowSprite => _arrow != null ? _arrow : (_arrow = MakeArrow());
+
+        private static Sprite MakeArrow()
+        {
+            const int n = 64;
+            const float mid = 32f, top = 62f, headBase = 30f, headHalf = 29f, shaftHalf = 9f, bottom = 2f;
+            var tex = NewTexture(n);
+            var px = new Color32[n * n];
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float cx = x + 0.5f, cy = y + 0.5f;   // texture row 0 is the bottom
+                    float dx = Mathf.Abs(cx - mid);
+                    // Head: from its base (headBase) up to the point (top)
+                    float halfW = headHalf * (top - cy) / (top - headBase);
+                    float head = cy > headBase - 0.5f && cy < top + 0.5f
+                        ? Mathf.Clamp01(halfW - dx + 0.5f) * Mathf.Clamp01(cy - headBase + 0.5f) : 0f;
+                    // Shaft: from the bottom up into the head
+                    float shaft = cy < headBase + 1f
+                        ? Mathf.Clamp01(shaftHalf - dx + 0.5f) * Mathf.Clamp01(cy - bottom + 0.5f) : 0f;
+                    float a = Mathf.Max(head, shaft);
+                    px[y * n + x] = new Color32(255, 255, 255, (byte)(a * 255));
+                }
+            tex.SetPixels32(px);
+            tex.Apply(false, true);
+            return Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), 100f);
+        }
+
         private static Sprite MakeRounded()
         {
             var tex = NewTexture(RoundSize);
