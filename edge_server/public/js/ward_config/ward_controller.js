@@ -136,6 +136,11 @@
         return;
       }
 
+      // Each wall sensor sends several signal messages a second: the page changes only
+      // when its status does (ON to OFF or back), not on every message
+      const wardAnchors = currentWard && Array.isArray(currentWard.anchors) ? currentWard.anchors : [];
+      if (dev.status === cleanStatus && !wardAnchors.some(a => a.device_id === targetId && a.status !== cleanStatus)) return;
+
       // Update cached device status
       dev.status = cleanStatus;
 
@@ -185,6 +190,11 @@
     function startAnchorStatusPolling() {
       if (anchorStatusPollTimer) return;
       anchorStatusPollTimer = setInterval(async () => {
+        // Only while the ward editor is open (Setup, Wards & layout): every 3 s on every
+        // page would ask the server for the device list for nothing
+        const editorView = document.getElementById('ward-editor-view');
+        const pane = document.getElementById('tab-ward-config');
+        if (document.hidden || !editorView || editorView.style.display === 'none' || !pane || !pane.classList.contains('active')) return;
         try {
           const res = await fetch('/api/devices/list?type=ANCHOR');
           const data = await res.json();

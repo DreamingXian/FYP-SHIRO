@@ -42,6 +42,42 @@
   let ripplePhase = 0;
   let clockTimer = null;
   let lastRenderTime = 0;
+  // The map is drawn about 30 times a second while it is on screen, never off it
+  const FRAME_MS = 32;
+  // The bed under the mouse (a bed given to a patient can be clicked)
+  let hoveredBedId = null;
+  let listRenderQueued = false;
+
+  /**
+   * The overview is on screen: open, its page (tab-ward) shown and the browser tab
+   * visible. Off screen nothing is drawn and the list is not rebuilt; the data keeps
+   * coming in, and resumeLiveMap shows it when the page comes back.
+   */
+  function isOnScreen() {
+    if (!isLiveMapActive || document.hidden) return false;
+    const pane = document.getElementById('tab-ward');
+    return !pane || pane.classList.contains('active');
+  }
+
+  /** The patient list again at most every 250 ms, however many messages arrive. */
+  function requestListRender() {
+    if (listRenderQueued || !isOnScreen()) return;
+    listRenderQueued = true;
+    setTimeout(() => { listRenderQueued = false; if (isOnScreen()) renderSubjectsList(); }, 250);
+  }
+
+  /** The Ward page is shown again (or the browser tab): fresh list and card, drawing again. */
+  function resumeLiveMap() {
+    if (!isOnScreen()) return;
+    resizeCanvas();
+    renderSubjectsList();
+    updateTelemetryCard();
+    if (!animationFrameId) {
+      lastRenderTime = 0;
+      animationFrameId = requestAnimationFrame(renderLoop);
+    }
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resumeLiveMap(); });
 
   // Layer Visibility
   const layers = {
@@ -175,7 +211,6 @@
   const PASSIVE_CYCLE_S = 180;    // when not live, a measurement every 3 minutes
   const RING_COLOUR = { 'st-alert': '#DC2626', 'st-warn': '#D97706', 'st-ok': '#2563EB', 'st-off': '#94A3B8' };
   let hoveredTagId = null;
-  let lastListHtml = '';
   // Patients of other wards: 5 a page; the pager is redrawn only when its page or count changes
   const OTHERS_PER_PAGE = 5;
   let othersPage = 1;
@@ -388,14 +423,16 @@
         </button>`;
     };
 
-    let html = here.length
-      ? here.map(tile).join('')
-      : '<div class="empty-state"><strong>Nobody with a wristband in this ward.</strong>Patients with a bed here appear when they get a wristband (Patients page).</div>';
+    // Each tile keeps its element (ShiroUI.patchList): rebuilt several times a second,
+    // the list would otherwise lose a click made while it changed
+    const entries = here.length
+      ? here.map(s => ({ key: `here:${s.device_id}`, html: tile(s) }))
+      : [{ key: 'empty', html: '<div class="empty-state"><strong>Nobody with a wristband in this ward.</strong>Patients with a bed here appear when they get a wristband (Patients page).</div>' }];
     const othersData = window.ShiroUI.paginate(elsewhere, othersPage, OTHERS_PER_PAGE);
     othersPage = othersData.page;
     if (elsewhere.length) {
-      const otherTilesHtml = othersData.items.map(otherTile).join('');   // built from escaped parts
-      html += `<div class="wo-list-divider">Other wards (${Number(elsewhere.length)})</div>${otherTilesHtml}`;
+      entries.push({ key: 'divider', html: `<div class="wo-list-divider">Other wards (${Number(elsewhere.length)})</div>` });
+      othersData.items.forEach(s => entries.push({ key: `other:${s.device_id}`, html: otherTile(s) }));
     }
     const othersPager = document.getElementById('live-map-others-pager');
     const pagerKey = elsewhere.length > OTHERS_PER_PAGE ? `${othersData.total}|${othersData.page}` : '';
@@ -406,10 +443,7 @@
         onPage: (n) => { othersPage = n; renderSubjectsList(); }
       });
     }
-    if (html !== lastListHtml) {
-      container.innerHTML = html;
-      lastListHtml = html;
-    }
+    window.ShiroUI.patchList(container, entries);
 
     // People the LiDAR sees without a wristband
     const note = document.getElementById('live-map-people-note');
@@ -426,7 +460,6 @@
    */
   function selectSubject(tagId, userChose = false) {
     selectedTagId = tagId;
-    lastListHtml = '';
     renderSubjectsList();
 
     const subject = trackedSubjects.find(s => s.device_id === tagId);
@@ -667,6 +700,7 @@
     // Click handler to select wristband dots on canvas
     canvas.addEventListener('click', onCanvasClick);
     canvas.addEventListener('mousemove', onCanvasHover);
+    canvas.addEventListener('mouseleave', onCanvasLeave);
 
     // Manual 1 Hz Active Monitoring button
     const btnActiveStream = document.getElementById('live-map-btn-activate-stream');
@@ -773,13 +807,20 @@
    * Uses velocity-clamped easing: dots smoothly walk at realistic speeds rather than flashing!
    */
   function renderLoop(frameTimestamp) {
-    if (!isLiveMapActive) return;
+    if (!isLiveMapActive) { animationFrameId = null; return; }
+    // Another page or a hidden browser tab: stop (resumeLiveMap starts it again)
+    if (!isOnScreen()) { animationFrameId = null; return; }
 
     const now = frameTimestamp || performance.now();
+    if (lastRenderTime > 0 && now - lastRenderTime < FRAME_MS) {
+      animationFrameId = requestAnimationFrame(renderLoop);
+      return;
+    }
     const dt = lastRenderTime > 0 ? Math.min(0.06, Math.max(0.005, (now - lastRenderTime) / 1000.0)) : 0.016;
     lastRenderTime = now;
 
-    ripplePhase = (ripplePhase + 0.04) % (Math.PI * 2);
+    // The pulse runs at the same speed whatever the frame rate
+    ripplePhase = (ripplePhase + 2.4 * dt) % (Math.PI * 2);
 
     // Smooth tag positions toward targets (physics-constrained visual gliding)
     for (const pos of liveTagPositions.values()) {
@@ -1109,11 +1150,12 @@
     const bw = spanX * t.scale;
     const bl = spanY * t.scale;
 
-    // Bed frame
-    ctx.fillStyle = '#F1F5F9';
+    // Bed frame; under the mouse (a bed given to a patient, which can be clicked) in blue
+    const isHovered = bed.bed_id === hoveredBedId;
+    ctx.fillStyle = isHovered ? '#DBEAFE' : '#F1F5F9';
     ctx.fillRect(p.x, p.y, bw, bl);
-    ctx.strokeStyle = '#94A3B8';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = isHovered ? '#2563EB' : '#94A3B8';
+    ctx.lineWidth = isHovered ? 3 : 2;
     ctx.strokeRect(p.x, p.y, bw, bl);
 
     // Bed Pillow (Headboard according to rotation)
@@ -1358,11 +1400,19 @@
         ctx.fill();
       }
 
-      // Chosen: a dark outer ring
+      // Chosen: a dark outer ring. Under the mouse: a soft blue halo (it can be clicked)
       if (isSelected) {
         ctx.beginPath();
         ctx.arc(p.x, p.y, r + 6, 0, Math.PI * 2);
         ctx.strokeStyle = '#0F172A';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (tagId === hoveredTagId) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r + 7, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(37, 99, 235, 0.16)';
+        ctx.fill();
+        ctx.strokeStyle = '#2563EB';
         ctx.lineWidth = 2;
         ctx.stroke();
       }
@@ -1389,16 +1439,17 @@
       else if (inRect(door, pos.x, pos.y)) badge = '🚪';
       else if (pos.source === 'HEADSET') badge = '👁';
       if (badge && !off) {
-        const bx = p.x + r * 0.85;
-        const by = p.y - r * 0.85;
+        // Big enough to read at a glance (Phase 11 review 3): a 15 px disc, a 19 px icon
+        const bx = p.x + r * 0.95;
+        const by = p.y - r * 0.95;
         ctx.beginPath();
-        ctx.arc(bx, by, 11, 0, Math.PI * 2);
+        ctx.arc(bx, by, 15, 0, Math.PI * 2);
         ctx.fillStyle = '#FFFFFF';
         ctx.fill();
-        ctx.lineWidth = 1.5;
-        ctx.strokeStyle = '#CBD5E1';
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#94A3B8';
         ctx.stroke();
-        ctx.font = '13px "Segoe UI Emoji", sans-serif';
+        ctx.font = '19px "Segoe UI Emoji", sans-serif';
         ctx.fillStyle = '#0F172A';
         ctx.fillText(badge, bx, by + 1);
       }
@@ -1437,15 +1488,27 @@
       if (Math.hypot(x - p.x, y - p.y) <= hit) { found = tagId; break; }
     }
     hoveredTagId = found;
-    // A bed given to a patient can be clicked too
+    // A bed given to a patient can be clicked too: it lights up under the mouse
     let bedTitle = '';
+    let bedId = null;
     if (!found) {
       const bed = bedAt((x - t.offsetX) / t.scale, (t.cHeight - y - t.offsetY) / t.scale);
       const occupant = bed ? bedOccupants.get(bed.bed_id) : null;
-      if (occupant) bedTitle = `${bedName(bed)}: ${occupant.full_name} (${occupant.patient_id}). Click for their details.`;
+      if (occupant) {
+        bedTitle = `${bedName(bed)}: ${occupant.full_name} (${occupant.patient_id}). Click for their details.`;
+        bedId = bed.bed_id;
+      }
     }
+    hoveredBedId = bedId;
     canvas.style.cursor = found || bedTitle ? 'pointer' : 'default';
     if (canvas.title !== bedTitle) canvas.title = bedTitle;
+  }
+
+  /** The mouse left the map: nothing is pointed at any more. */
+  function onCanvasLeave() {
+    hoveredTagId = null;
+    hoveredBedId = null;
+    if (canvas) canvas.style.cursor = 'default';
   }
 
   /**
@@ -1526,7 +1589,8 @@
     if (el) el.innerText = new Date().toLocaleTimeString();
     // Every second: "no signal", the measuring countdown and the live countdown change
     // even when no message arrives. One timer only, however often the map is opened.
-    if (isLiveMapActive) {
+    // Not while another page is shown: resumeLiveMap brings both up to date.
+    if (isOnScreen()) {
       updateTelemetryCard();
       renderSubjectsList();
     }
@@ -2274,8 +2338,8 @@
       if (liveTagPositions.delete(tagId) || (msg.tag_mac && liveTagPositions.delete(msg.tag_mac))) {
         if (hoveredTagId === tagId) hoveredTagId = null;
       }
-      renderSubjectsList();
-      if (tagId === selectedTagId) updateTelemetryCard();
+      requestListRender();
+      if (tagId === selectedTagId && isOnScreen()) updateTelemetryCard();
       return;
     }
 
@@ -2323,13 +2387,16 @@
       Object.assign(existing, seen);
     }
 
+    // Several messages a second per wristband: the page is touched only when it shows
+    if (!isOnScreen()) return;
     const tagsBadge = document.getElementById('live-map-tags-badge');
     if (tagsBadge) {
       const onlineCount = Array.from(liveTagPositions.values()).filter(p => p.status !== 'OFFLINE').length;
-      tagsBadge.innerText = `● ${onlineCount} of ${liveTagPositions.size} wristband${liveTagPositions.size === 1 ? '' : 's'} online`;
+      const text = `● ${onlineCount} of ${liveTagPositions.size} wristband${liveTagPositions.size === 1 ? '' : 's'} online`;
+      if (tagsBadge.textContent !== text) tagsBadge.textContent = text;
     }
 
-    renderSubjectsList();
+    requestListRender();
 
     if (tagId === selectedTagId) {
       updateTelemetryCard();
@@ -2431,7 +2498,7 @@
       current.lastSeen = Date.now();
       liveVitals.set(tagId, current);
 
-      if (tagId === selectedTagId) {
+      if (tagId === selectedTagId && isOnScreen()) {
         updateTelemetryCard();
       }
     });
@@ -2508,7 +2575,8 @@
   // Global exposure
   window.openWardLiveMap = openWardLiveMap;
   window.isLiveMapOpen = () => isLiveMapActive;
-  window.resizeLiveMap = () => { if (typeof resizeCanvas === 'function') resizeCanvas(); };
+  // The Ward page is shown again (app.js switchTab): new size, fresh list, drawing again
+  window.resizeLiveMap = resumeLiveMap;
   window.closeWardLiveMap = closeWardLiveMap;
 
   // Read-only view of the live map for the position test panel (position_test_panel.js)

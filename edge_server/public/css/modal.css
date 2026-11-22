@@ -17,13 +17,18 @@
   box-sizing: border-box;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  /* Closed: not drawn at all (its blur over the whole page, under a map that moves
+     30 times a second, would cost the browser for nothing); hidden after the fade */
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
   overflow-y: auto;
 }
 
 .modal-backdrop.active {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition: opacity 0.2s ease, visibility 0s linear 0s;
 }
 
 .modal-box {

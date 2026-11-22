@@ -166,17 +166,32 @@ function setupDeviceWsListeners() {
 /**
  * Dynamically marks a device as ONLINE/OFFLINE and updates its row in the UI in real time.
  */
+// With an On/Off filter, a status change redraws the table: at most once a second
+let liveFilterTimer = null;
+function scheduleFilteredRedraw() {
+  if (liveFilterTimer) return;
+  liveFilterTimer = setTimeout(() => {
+    liveFilterTimer = null;
+    filterDevicesTable();
+    updateFleetCounts();
+  }, 1000);
+}
+
 function markDeviceLiveStatus(deviceId, deviceType, extra = {}) {
   const dev = cachedFleet.find(d => d.device_id === deviceId);
   if (dev) {
-    dev.status = extra.status || 'ONLINE';
+    const status = extra.status || 'ONLINE';
+    const battery = (extra.battery !== null && extra.battery !== undefined) ? extra.battery : dev.battery_level;
+    // A wall sensor sends several messages a second: the page changes only when what
+    // it shows does (status or battery), never on each message
+    const changed = dev.status !== status || String(battery) !== String(dev.battery_level);
+    dev.status = status;
     dev.last_seen = extra.status === 'OFFLINE' ? 'Signal Lost' : 'Just now (Live)';
-    if (extra.battery !== null && extra.battery !== undefined) {
-      dev.battery_level = extra.battery;
-    }
+    dev.battery_level = battery;
+    if (!changed) return;
 
     if (currentStatusFilter !== null) {
-      filterDevicesTable();
+      scheduleFilteredRedraw();
     } else {
       // Update status badge directly in DOM if visible
       const row = document.querySelector(`tr[data-device-id="${CSS.escape(String(deviceId))}"]`);

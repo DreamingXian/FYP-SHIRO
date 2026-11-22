@@ -13,6 +13,12 @@ const rssiHistoryRaw = [];
 const rssiHistoryFilt = [];
 const maxRssiPoints = 80;
 
+/** The Live Lab page is shown (and the browser tab visible). */
+function isLiveLabOpen() {
+  const pane = document.getElementById('tab-live-lab');
+  return Boolean(pane && pane.classList.contains('active') && !document.hidden);
+}
+
 function resizeCanvases() {
   const rssiCanvas = document.getElementById('rssiCanvas');
   if (rssiCanvas && rssiCanvas.parentElement) {
@@ -113,6 +119,14 @@ function initLiveLabListeners() {
     });
 
     window.wsClient.on('ANCHOR_RSSI', (msg) => {
+      // Many times a second (every wall sensor, every wristband): the history is kept
+      // always, the page (numbers, chart, log) is touched only while the Live Lab is open
+      rssiHistoryRaw.push(msg.raw_rssi);
+      rssiHistoryFilt.push(msg.filtered_rssi);
+      if (rssiHistoryRaw.length > maxRssiPoints) rssiHistoryRaw.shift();
+      if (rssiHistoryFilt.length > maxRssiPoints) rssiHistoryFilt.shift();
+      if (!isLiveLabOpen()) return;
+
       const valDistA = document.getElementById('val-dist-a');
       const valRawA = document.getElementById('val-raw-a');
       const valFiltA = document.getElementById('val-filt-a');
@@ -156,10 +170,6 @@ function initLiveLabListeners() {
         }
       }
 
-      rssiHistoryRaw.push(msg.raw_rssi);
-      rssiHistoryFilt.push(msg.filtered_rssi);
-      if (rssiHistoryRaw.length > maxRssiPoints) rssiHistoryRaw.shift();
-      if (rssiHistoryFilt.length > maxRssiPoints) rssiHistoryFilt.shift();
       drawRSSI();
 
       if (logBody) {
@@ -180,6 +190,7 @@ function initLiveLabListeners() {
       lastPacketTime = now;
 
       totalPackets++;
+      if (!isLiveLabOpen()) return;   // counted; shown while the Live Lab is open
       const packetCounter = document.getElementById('packet-counter');
       const latencyDisplay = document.getElementById('latency-display');
       if (packetCounter) packetCounter.innerText = `Packets Received: ${totalPackets}`;

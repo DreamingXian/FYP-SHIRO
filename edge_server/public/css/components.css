@@ -627,6 +627,8 @@ table.data-table th {
 }
 .pager-btn:hover:not(:disabled) { border-color: var(--primary-border); color: var(--primary); }
 .pager-btn.current { background: var(--primary); border-color: var(--primary); color: #FFFFFF; cursor: default; }
+/* The current page stays white on blue under the mouse (it was blue on blue) */
+.pager-btn.current:hover { color: #FFFFFF; border-color: var(--primary); }
 .pager-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .pager-gap { min-width: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
@@ -799,3 +801,21 @@ table.data-table th {
 .profile-history > summary::-webkit-details-marker { display: none; }
 .profile-history > summary::before { content: '▸'; color: var(--text-muted); width: 12px; }
 .profile-history[open] > summary::before { content: '▾'; }
+
+/* Phase 11 (review 3): everything that can be clicked reacts to the mouse.
+   A pointer, a tinted background or border, and a small press. */
+button:not(:disabled), summary, [data-click-action], [onclick], [role="button"] { cursor: pointer; }
+.btn:not(:disabled):hover { box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12); }
+.btn:not(:disabled):active { transform: translateY(1px); box-shadow: none; }
+.btn-outline:not(:disabled):hover { background: var(--primary-subtle); border-color: var(--primary-border); color: var(--primary); }
+.btn-danger-outline:not(:disabled):hover { background: var(--status-danger-bg); border-color: var(--status-danger-text); color: var(--status-danger-text); }
+.btn:focus-visible, .pager-btn:focus-visible, summary:focus-visible, .wo-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+/* "Technician details", the wristband history and every other part that opens on a click */
+summary { border-radius: 6px; transition: background-color 0.15s ease, color 0.15s ease; }
+summary:hover { background: var(--primary-subtle); color: var(--primary) !important; }
+summary:hover::before, summary:hover::marker { color: var(--primary); }
+.profile-history:has(> summary:hover) { border-color: var(--primary-border); }
+
+/* Links */
+a[href]:not(.nav-tab-btn):not(.btn):hover { text-decoration: underline; }

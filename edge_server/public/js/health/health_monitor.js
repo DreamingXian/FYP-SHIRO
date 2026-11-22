@@ -68,14 +68,17 @@
     setBadge('health-server-badge', '● Running', 'badge-live');
     setText('health-uptime', `Running for ${formatUptime(stats.uptime_s)}`);
     setText('health-memory', `Memory: ${stats.memory_mb.rss} MB`);
-    const p99 = stats.event_loop_delay_ms.p99;
-    setText('health-loop', `Response time: ${p99 <= 50 ? 'fast' : p99 <= 200 ? 'normal' : 'slow'} (${p99} ms at worst)`);
-    if (p99 > 200) setBadge('health-server-badge', '● Busy', 'badge-warning');
+    // The longest the server could not answer since the last refresh (the true worst:
+    // a 99th percentile would hide a single long pause)
+    const loop = stats.event_loop_delay_ms;
+    const worst = Number.isFinite(loop.max) ? loop.max : loop.p99;
+    setText('health-loop', `Response time: ${worst <= 50 ? 'fast' : worst <= 200 ? 'normal' : 'slow'} (${worst} ms at worst)`);
+    if (worst > 200) setBadge('health-server-badge', '● Busy', 'badge-warning');
 
     if (previous) {
       const seconds = (now - previous.at) / 1000;
       const rate = seconds > 0 ? (stats.db_queries_total - previous.queries) / seconds : 0;
-      setText('health-db-rate', `${rate.toFixed(1)} a second`);
+      setText('health-db-rate', `${rate.toFixed(1)} / second`);
       setBadge('health-db-badge', '● Working', 'badge-live');
     } else {
       setText('health-db-rate', 'Measuring…');
@@ -145,20 +148,29 @@
         </tr>`, 'No headsets added. A headset that connects appears under Setup → Devices.');
   }
 
-  async function getJson(url) {
-    const res = await fetch(url);
+  async function getJson(url, signal) {
+    const res = await fetch(url, { signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   }
 
+  // One refresh at a time: a slow answer is waited for (up to 8 s), never stacked
+  // with the next one, so the page updates once per beat and not in bursts
+  const REQUEST_TIMEOUT_MS = 8000;
+  let inFlight = false;
+
   async function refresh() {
+    if (inFlight) return;
+    inFlight = true;
+    const ctrl = new AbortController();
+    const abortTimer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
     try {
       const [statsResp, anchorsResp, headsetsResp, lidarResp, lidarLive] = await Promise.all([
-        getJson('/api/system/stats'),
-        getJson('/api/devices/list?type=ANCHOR'),
-        getJson('/api/devices/list?type=HEADSET'),
-        getJson('/api/devices/list?type=ROOM_SENSOR'),
-        getJson('/api/room-sensors/status').catch(() => ({ success: false }))
+        getJson('/api/system/stats', ctrl.signal),
+        getJson('/api/devices/list?type=ANCHOR', ctrl.signal),
+        getJson('/api/devices/list?type=HEADSET', ctrl.signal),
+        getJson('/api/devices/list?type=ROOM_SENSOR', ctrl.signal),
+        getJson('/api/room-sensors/status', ctrl.signal).catch(() => ({ success: false }))
       ]);
       if (statsResp.success) renderStats(statsResp.stats);
       if (anchorsResp.success) renderAnchors(anchorsResp.devices || []);
@@ -166,27 +178,49 @@
       if (lidarResp.success) renderLidars(lidarResp.devices || [], lidarLive.success ? lidarLive.sensors : []);
       setText('health-updated', `Updated ${new Date().toLocaleTimeString()} · every 5 s while open`);
     } catch (err) {
+      const why = err && err.name === 'AbortError' ? `no answer within ${REQUEST_TIMEOUT_MS / 1000} s` : err.message;
       setBadge('health-server-badge', '● Not answering', 'badge-warning');
-      setText('health-updated', `The server does not answer (${err.message}), ${new Date().toLocaleTimeString()}`);
+      setText('health-updated', `The server does not answer (${why}), ${new Date().toLocaleTimeString()}`);
       previous = null;
+    } finally {
+      clearTimeout(abortTimer);
+      inFlight = false;
     }
   }
 
   function isHealthTabOpen() {
     const pane = $('tab-health');
-    return Boolean(pane && pane.classList.contains('active'));
+    return Boolean(pane && pane.classList.contains('active') && !document.hidden);
+  }
+
+  // A steady beat of 5 s from when the page was opened: each refresh starts on the
+  // beat; one that is still waiting makes the next beat skip (no catching up)
+  let beatStart = Date.now();
+  function schedule() {
+    if (timer) clearTimeout(timer);
+    const wait = REFRESH_MS - ((Date.now() - beatStart) % REFRESH_MS);
+    timer = setTimeout(async () => {
+      if (isHealthTabOpen()) await refresh();
+      schedule();
+    }, wait);
   }
 
   function start() {
     if (timer) return;
+    beatStart = Date.now();
     refresh();
-    timer = setInterval(() => { if (isHealthTabOpen()) refresh(); }, REFRESH_MS);
+    schedule();
   }
 
-  // Refresh at once when the tab is opened, then on the timer
+  // Refresh at once when the tab is opened; the beat starts again from then
   document.addEventListener('click', (event) => {
     const btn = event.target.closest && event.target.closest('[data-tab="tab-health"]');
-    if (btn) setTimeout(refresh, 0);
+    if (!btn) return;
+    setTimeout(() => {
+      beatStart = Date.now();
+      refresh();
+      if (timer) schedule();
+    }, 0);
   });
 
   window.initHealthMonitor = start;
