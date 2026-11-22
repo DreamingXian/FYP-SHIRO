@@ -126,6 +126,9 @@ The anchors publish both over Wi-Fi to the MQTT broker built into the edge serve
 * **Door Alerts (ward with a LiDAR):** a patient whom the LiDAR follows raises **At the door** after 10 s in the doorway, and **Left the ward** when it loses them at the door and does not see them again (about 11.5 s). Both are geofence incidents with their kind, on the dashboard and the headset, in the incident log, CSV and shift report ([docs/protocol.md](docs/protocol.md), section 5). Not in a ward without a LiDAR; a wristband taken off is not followed.
 
 ### Tier 3: Meta Quest 3 Mixed Reality Spatial Client (`quest3_client/`)
+
+> **Two versions (Phase 12, from 22 Nov 2026):** `quest3_client/` is version 1, the working headset app, kept as it is. `quest3_client_v2/` is version 2: a copy of version 1 with the same logic (connection, pairing, room alignment, positions, person linking, alerts) that receives the new interface. Each is its own Unity project; open either in Unity Hub with the same editor version.
+
 * **Color Passthrough Digital Twin:** Real-time 3D ward generation (`WardVisualizer.cs`) matching real-world architectural dimensions, walls, doors, obstacles, and hospital beds.
 * **Dual-Mode Patient In-Situ Hologram (`PatientHologram.cs`):**
   * **In-Transit Walking Mode:** 0.65 m floor occupancy ring and an eye-level vitals panel that turns to face the clinician.
@@ -281,7 +284,8 @@ Code/
 │       ├── css/                    # Modular stylesheet components & theme
 │       ├── js/                     # Client controllers & canvas rendering
 │       └── views/                  # HTML module templates
-└── quest3_client/                  # Unity 6 Meta Quest 3 Mixed Reality Client (open this folder in Unity Hub)
+├── quest3_client_v2/               # Version 2 of the headset app: same logic, new interface (Phase 12, in progress)
+└── quest3_client/                  # Unity 6 Meta Quest 3 Mixed Reality Client, version 1 (open this folder in Unity Hub)
     ├── Assets/
     │   ├── Scenes/                 # SampleScene.unity
     │   ├── Scripts/ShiroMR/        # C# Spatial MR architecture

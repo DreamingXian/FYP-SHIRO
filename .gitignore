@@ -66,43 +66,43 @@ edge_server/public/uploads/patients/*.webp
 !edge_server/public/uploads/patients/preset_*.svg
 
 # =============================================================================
-# Unity (Meta Quest 3 MR Client)
+# Unity (Meta Quest 3 MR Client): quest3_client (version 1) and quest3_client_v2 (version 2, new UI)
 # =============================================================================
-quest3_client/[Ll]ibrary/
-quest3_client/[Tt]emp/
-quest3_client/[Oo]bj/
-quest3_client/[Bb]uild/
-quest3_client/[Bb]uilds/
+quest3_client*/[Ll]ibrary/
+quest3_client*/[Tt]emp/
+quest3_client*/[Oo]bj/
+quest3_client*/[Bb]uild/
+quest3_client*/[Bb]uilds/
 # Android build tools' working folder (IL2CPP symbols, created by every APK build)
-quest3_client/.utmp/
+quest3_client*/.utmp/
 # Headset app packages, wherever they are saved
 *.apk
 *.aab
 *.apk.idsig
-quest3_client/[Ll]ogs/
-quest3_client/[Uu]ser[Ss]ettings/
-quest3_client/[Mm]emoryCaptures/
-quest3_client/*.csproj
-quest3_client/*.unityproj
-quest3_client/*.sln
-quest3_client/*.slnx
-quest3_client/*.suo
-quest3_client/*.user
-quest3_client/*.userprefs
-quest3_client/*.pidb
-quest3_client/*.booproj
-quest3_client/*.svd
-quest3_client/*.pdb
-quest3_client/*.opendb
-quest3_client/*.VC.db
-quest3_client/.vsconfig
-quest3_client/Assets/_Recovery/
-quest3_client/Assets/_Recovery.meta
+quest3_client*/[Ll]ogs/
+quest3_client*/[Uu]ser[Ss]ettings/
+quest3_client*/[Mm]emoryCaptures/
+quest3_client*/*.csproj
+quest3_client*/*.unityproj
+quest3_client*/*.sln
+quest3_client*/*.slnx
+quest3_client*/*.suo
+quest3_client*/*.user
+quest3_client*/*.userprefs
+quest3_client*/*.pidb
+quest3_client*/*.booproj
+quest3_client*/*.svd
+quest3_client*/*.pdb
+quest3_client*/*.opendb
+quest3_client*/*.VC.db
+quest3_client*/.vsconfig
+quest3_client*/Assets/_Recovery/
+quest3_client*/Assets/_Recovery.meta
 
 # Meta XR Immersive Debugger dev-agent settings (contains a generated access token)
-quest3_client/Assets/Resources/DevAgentSettings.asset
-quest3_client/Assets/Resources/DevAgentSettings.asset.meta
+quest3_client*/Assets/Resources/DevAgentSettings.asset
+quest3_client*/Assets/Resources/DevAgentSettings.asset.meta
 
 # Build output of the headset logic tests (plain .NET, outside Unity)
-quest3_client/Tests~/**/bin/
-quest3_client/Tests~/**/obj/
+quest3_client*/Tests~/**/bin/
+quest3_client*/Tests~/**/obj/

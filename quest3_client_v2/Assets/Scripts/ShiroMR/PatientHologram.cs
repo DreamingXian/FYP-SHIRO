@@ -1,0 +1,1327 @@
+// =============================================================================
+// Project SHIRO - Meta Quest 3 Mixed Reality Client
+// Dynamic In-Situ Patient Hologram & Floating Billboard Vitals Card
+// Phase A: Bed Headboard Center Poster + In-Transit Glowing Human Silhouette
+// =============================================================================
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+namespace ShiroMR
+{
+    public enum PatientDockMode
+    {
+        Headboard,
+        Bedside
+    }
+
+    public enum PatientTrackingState
+    {
+        BedDocked,
+        InTransit,
+        ManualAim
+    }
+
+    public class PatientHologram : MonoBehaviour
+    {
+        [Header("Identity & Association")]
+        public string tagId = "TAG-001";
+        public string patientId = "--";
+        public string fullName = "Unassigned Patient";
+        public string assignedBed = "--";
+
+        [Header("Current Telemetry State")]
+        public int heartRateBpm = 0;
+        public int spo2Percent = 0;
+        public int batteryPercent = -1; // -1: not reported yet
+        public string motionState = "STATIONARY";
+        public bool isOnline = true;
+
+        [Header("Clinical Docking & Tracking Modes")]
+        public PatientDockMode dockMode = PatientDockMode.Headboard;
+        public PatientTrackingState trackingState = PatientTrackingState.BedDocked;
+        public bool isPersonDetected = false;
+        public Vector3 detectedPersonPosition;
+        public Vector3 lockedManualPosition;
+
+        [Header("Spatial HUD Offsets")]
+        [Tooltip("Horizontal offset from patient center/shoulder to float beside them (~1.25m elevation in transit)")]
+        public Vector3 hudOffset = new Vector3(0.40f, 1.25f, 0f);
+
+        [Header("Kinematic Movement Tuning")]
+        public float smoothTime = 0.35f;
+        public float maxSpeed = 1.30f; // Max realistic walking speed in ward (m/s)
+
+        // Internal Kinematics & Tracking
+        private Vector3 _targetPosition;
+        private Vector3 _currentVelocity;
+        private Transform _cameraTransform;
+        private WardConfig _cachedWardConfig;
+        private WardBed _assignedWardBed;
+        private Vector3 _rawIpsWorldPos;
+        private Vector3 _lastStationaryWorldPos;
+        private bool _hasStationaryLock = false;
+        private float _bedSettleTimer = 0f;
+        private float _pulseTimer = 0f;
+        private float _ringPulseTimer = 0f;
+        private float _bannerStatusTimer = 0f;
+
+        // Visual Components
+        private GameObject _hudContainer;
+        private Canvas _hudCanvas;
+        private Image _cardBackground;
+        private Text _nameText;
+        private Text _subText;
+        private Text _trackingBadgeText;
+        private Text _bpmText;
+        private Text _spo2Text;
+        private Text _batteryText;
+        private Text _motionBadgeText;
+        private Text _statusBannerText;
+
+        // Interactive HUD Buttons
+        private Button _reattachBtn;
+        private Text _reattachBtnText;
+        private Button _dockToggleBtn;
+        private Text _dockToggleBtnText;
+        private Button _cancelAimBtn;
+        private Text _cancelAimBtnText;
+        private Button _autoBtn;            // ends a choice made by hand (pinned spot or chosen person)
+
+        // Floor Uncertainty Footprint Circle
+        private GameObject _floorRingObj;
+        private Renderer _floorRingRenderer;
+        private Material _floorRingMaterial;
+
+        // Manual Move / Adjust Handle (Top-Left of Card)
+        private Button _moveHandleBtn;
+        private Text _moveHandleBtnText;
+        private bool _isPanelDragging = false;
+        private float _dragDistance = 2.0f;
+        private Vector3 _customBedOffset = Vector3.zero;
+        private bool _isManuallyLocked = false;
+
+        // Person linking (8D): the panel follows a person seen by the depth sensor
+        private bool _linkingActive;
+        private bool _depthLinked;
+        private Vector3 _depthLinkPos;
+        private float _depthLinkHeight;
+        private bool _sideLayout;           // the card is beside the person (restored when the link ends)
+        private TextMesh _nameTag;          // the patient's name above the linked person's head
+        public ShiroMR.Linking.LinkState depthLinkState { get; private set; } = ShiroMR.Linking.LinkState.BleOnly;
+        public string depthLinkReason { get; private set; } = "";
+        /// <summary>A Bluetooth position has arrived for this panel.</summary>
+        public bool HasIpsPosition { get; private set; }
+        /// <summary>The Bluetooth position on the floor (world).</summary>
+        public Vector3 IpsWorldPosition => _rawIpsWorldPos;
+        public bool IsManuallyLocked => _isManuallyLocked;
+
+        private void Start()
+        {
+            if (Camera.main != null)
+            {
+                _cameraTransform = Camera.main.transform;
+            }
+
+            BuildHologramVisuals();
+
+            // Try to resolve bed from active ward config if available
+            if (WardSpatialManager.Instance != null && _cachedWardConfig == null)
+            {
+                _cachedWardConfig = WardSpatialManager.Instance.GetCachedWardConfig();
+                ResolveAssignedBed();
+            }
+
+            if (trackingState == PatientTrackingState.BedDocked && _hudContainer != null)
+            {
+                _hudContainer.transform.localPosition = Vector3.zero;
+            }
+        }
+
+        private void Update()
+        {
+            // 0. Top-Left Handle Dragging: Pinch/Hold to Move Panel
+            if (_isPanelDragging)
+            {
+                if (ShiroVRPointer.Instance != null && ShiroVRPointer.Instance.isTriggerDown)
+                {
+                    // Distance is adjusted by left-hand extension or thumbstick
+                    _dragDistance = ShiroVRPointer.Instance.manualLaserDistance;
+                    Vector3 newPos = ShiroVRPointer.Instance.PointerOrigin + ShiroVRPointer.Instance.PointerForward * _dragDistance;
+
+                    if (trackingState == PatientTrackingState.BedDocked)
+                    {
+                        if (WardSpatialManager.Instance != null && _assignedWardBed != null)
+                        {
+                            Vector3 bedBase = (dockMode == PatientDockMode.Headboard)
+                                ? WardSpatialManager.Instance.GetBedHeadboardWorldPosition(_assignedWardBed)
+                                : WardSpatialManager.Instance.GetBedSideWorldPosition(_assignedWardBed);
+                            _customBedOffset = newPos - bedBase;
+                        }
+                        _targetPosition = newPos;
+                        transform.position = newPos;
+                    }
+                    else
+                    {
+                        _targetPosition = newPos;
+                        transform.position = newPos;
+                        hudOffset = newPos - detectedPersonPosition;
+                    }
+
+                    // Face user smoothly while dragging
+                    if (_cameraTransform != null)
+                    {
+                        Vector3 toCam = _cameraTransform.position - _hudContainer.transform.position;
+                        toCam.y = 0;
+                        if (toCam.sqrMagnitude > 0.01f)
+                        {
+                            _hudContainer.transform.rotation = Quaternion.LookRotation(toCam) * Quaternion.Euler(0, 180f, 0);
+                        }
+                    }
+                }
+                else
+                {
+                    // Drag released!
+                    _isPanelDragging = false;
+                    SetStatusBanner("✅ PANEL POSITION ADJUSTED", 3.0f, new Color(0.2f, 0.95f, 0.5f));
+                }
+            }
+            else
+            {
+                // Check if user just pinched the Move Handle
+                if (ShiroVRPointer.Instance != null && ShiroVRPointer.Instance.wasTriggerPressedThisFrame &&
+                    ShiroVRPointer.Instance.currentHoveredButton == _moveHandleBtn)
+                {
+                    StartPanelDrag();
+                }
+
+                // 1. Smooth Kinematic Position Interpolation towards target
+                if (trackingState == PatientTrackingState.BedDocked)
+                {
+                    if (WardSpatialManager.Instance != null && _assignedWardBed != null)
+                    {
+                        Vector3 bedBase = (dockMode == PatientDockMode.Headboard)
+                            ? WardSpatialManager.Instance.GetBedHeadboardWorldPosition(_assignedWardBed)
+                            : WardSpatialManager.Instance.GetBedSideWorldPosition(_assignedWardBed);
+                        _targetPosition = bedBase + _customBedOffset;
+                    }
+                    transform.position = _targetPosition;
+                }
+                else
+                {
+                    if (_depthLinked && trackingState == PatientTrackingState.InTransit)
+                    {
+                        _targetPosition = _depthLinkPos;
+                        transform.position = Vector3.SmoothDamp(transform.position, _targetPosition, ref _currentVelocity, smoothTime, maxSpeed);
+                    }
+                    else if (motionState == "STATIONARY" || motionState == "SETTLING")
+                    {
+                        transform.position = Vector3.MoveTowards(transform.position, _targetPosition, 0.50f * Time.deltaTime);
+                    }
+                    else
+                    {
+                        transform.position = Vector3.SmoothDamp(transform.position, _targetPosition, ref _currentVelocity, smoothTime, maxSpeed);
+                    }
+                }
+            }
+
+            // 2. Pulse Heart Rate
+            if (heartRateBpm > 0)
+            {
+                float beatsPerSecond = Mathf.Max(0.5f, heartRateBpm / 60.0f);
+                _pulseTimer += Time.deltaTime * beatsPerSecond * Mathf.PI * 2f;
+            }
+
+            // 3. Pulse Floor Uncertainty Ring
+            _ringPulseTimer += Time.deltaTime * 2.5f;
+            float glowAlpha = 0.45f + 0.20f * Mathf.Sin(_ringPulseTimer);
+
+            if (_floorRingObj != null && _floorRingObj.activeInHierarchy && _floorRingRenderer != null)
+            {
+                Color baseCol = isPersonDetected
+                    ? new Color(0.10f, 0.95f, 0.45f, glowAlpha)  // Emerald Green: Physical Human Locked
+                    : new Color(0.06f, 0.71f, 0.83f, 0.35f);    // Translucent Cyan: Searching/BLE Area
+
+                _floorRingRenderer.material.color = baseCol;
+            }
+
+            // 4. Banner Status Timeout
+            if (_bannerStatusTimer > 0f)
+            {
+                _bannerStatusTimer -= Time.deltaTime;
+                if (_bannerStatusTimer <= 0f && _statusBannerText != null)
+                {
+                    RefreshStatusBanner();
+                }
+            }
+
+            // 5. Refresh UI Badges & Text
+            RefreshUiText();
+
+            // 6. Emergency alarm: flashing red card and floor ring until it is handled
+            if (isAlarmActive) UpdateAlarmVisuals();
+        }
+
+        // ----- Emergency alarm (set by ShiroAlertManager) -----
+        public bool isAlarmActive { get; private set; }
+        private string _alarmLabel = "";
+        private float _alarmTimer;
+        private static readonly Color CardNormalColor = new Color(0.06f, 0.10f, 0.18f, 0.92f);
+
+        /// <summary>
+        /// Shows or clears the emergency state of this patient's panel: the card and
+        /// the floor ring flash red and the status line names the alert.
+        /// </summary>
+        public void SetAlarm(bool active, string label = "")
+        {
+            isAlarmActive = active;
+            _alarmLabel = label ?? "";
+            _alarmTimer = 0f;
+            if (active)
+            {
+                if (_floorRingObj != null) _floorRingObj.SetActive(true);
+                return;
+            }
+            // Back to the normal look of the current tracking state
+            if (_cardBackground != null) _cardBackground.color = CardNormalColor;
+            if (_floorRingObj != null)
+            {
+                _floorRingObj.transform.localScale = new Vector3(0.65f, 0.005f, 0.65f);
+                _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+                _floorRingObj.SetActive(trackingState != PatientTrackingState.BedDocked);
+            }
+            RefreshStatusBanner();
+        }
+
+        private void UpdateAlarmVisuals()
+        {
+            _alarmTimer += Time.deltaTime;
+            bool on = Mathf.Repeat(_alarmTimer, 0.6f) < 0.3f; // ~1.7 flashes per second
+            if (_cardBackground != null)
+            {
+                _cardBackground.color = on ? new Color(0.78f, 0.05f, 0.08f, 0.96f) : new Color(0.30f, 0.03f, 0.05f, 0.94f);
+            }
+            if (_floorRingObj != null)
+            {
+                if (!_floorRingObj.activeSelf) _floorRingObj.SetActive(true);
+                // On the floor below the panel (a bed-docked panel hangs at the headboard)
+                float floorY = (WardSpatialManager.Instance != null && WardSpatialManager.Instance.wardOrigin != null)
+                    ? WardSpatialManager.Instance.wardOrigin.position.y : 0f;
+                _floorRingObj.transform.position = new Vector3(transform.position.x, floorY + 0.005f, transform.position.z);
+                float s = 0.9f + 0.35f * Mathf.Abs(Mathf.Sin(_alarmTimer * 3.5f));
+                _floorRingObj.transform.localScale = new Vector3(s, 0.005f, s);
+                if (_floorRingRenderer != null) _floorRingRenderer.material.color = new Color(0.95f, 0.08f, 0.10f, on ? 0.85f : 0.45f);
+            }
+            if (_statusBannerText != null)
+            {
+                _statusBannerText.text = $"🚨 {_alarmLabel} • WAITING FOR RESPONSE";
+                _statusBannerText.color = on ? new Color(1f, 0.85f, 0.85f) : new Color(1f, 0.35f, 0.35f);
+            }
+        }
+
+        private void LateUpdate()
+        {
+            UpdateLinkedLayout();
+            if (_hudContainer == null || _isPanelDragging) return;
+
+            // =========================================================================
+            // User Clinical Rule:
+            // When in Bed-Docked mode, DO NOT billboard/rotate when headset moves!
+            // It sticks statically on the head of the bed like a wall-mounted poster.
+            // When in In-Transit mode, it smoothly faces the doctor so it can be read.
+            // =========================================================================
+            if (trackingState == PatientTrackingState.BedDocked)
+            {
+                if (WardSpatialManager.Instance != null && _assignedWardBed != null)
+                {
+                    _hudContainer.transform.rotation = WardSpatialManager.Instance.GetBedHeadboardRotation(_assignedWardBed);
+                }
+            }
+            else
+            {
+                // In-Transit or ManualAim: Smoothly billboard towards doctor's headset
+                if (_cameraTransform != null)
+                {
+                    Vector3 toCam = _cameraTransform.position - _hudContainer.transform.position;
+                    toCam.y = 0; // Maintain vertical horizon
+                    if (toCam.sqrMagnitude > 0.01f)
+                    {
+                        _hudContainer.transform.rotation = Quaternion.LookRotation(toCam) * Quaternion.Euler(0, 180f, 0);
+                    }
+                }
+            }
+        }
+
+        // ----- Layout while linked to a detected person (8D) -----
+        // The name floats above the person's head; the card stands beside the person
+        // (on the right as the clinician sees it), so it never covers the person.
+        private const float SideDistance = 0.65f;   // m from the person's centre
+        private const float CardHeight = 1.15f;     // m above the floor
+
+        private void UpdateLinkedLayout()
+        {
+            bool linkedLayout = _depthLinked && trackingState == PatientTrackingState.InTransit && _cameraTransform != null;
+            if (linkedLayout)
+            {
+                Vector3 toCam = _cameraTransform.position - transform.position;
+                toCam.y = 0f;
+                if (toCam.sqrMagnitude < 0.01f) toCam = Vector3.forward;
+                Vector3 right = Vector3.Cross(toCam.normalized, Vector3.up); // the clinician's right
+
+                if (_hudContainer != null && !_isPanelDragging)
+                {
+                    Vector3 cardPos = transform.position + right * SideDistance + Vector3.up * CardHeight;
+                    _hudContainer.transform.position = _sideLayout
+                        ? Vector3.Lerp(_hudContainer.transform.position, cardPos, 8f * Time.deltaTime)
+                        : cardPos;
+                }
+                _sideLayout = true;
+
+                EnsureNameTag();
+                _nameTag.gameObject.SetActive(true);
+                _nameTag.text = fullName;
+                float top = _depthLinkHeight > 0.3f ? _depthLinkHeight : 1.7f;
+                _nameTag.transform.position = transform.position + Vector3.up * (top + 0.15f);
+                _nameTag.transform.rotation = Quaternion.LookRotation(-toCam.normalized);
+                _nameTag.color = isAlarmActive ? new Color(1f, 0.3f, 0.3f) : Color.white;
+            }
+            else
+            {
+                if (_nameTag != null) _nameTag.gameObject.SetActive(false);
+                if (_sideLayout && _hudContainer != null && !_isPanelDragging && trackingState == PatientTrackingState.InTransit)
+                {
+                    _hudContainer.transform.localPosition = hudOffset;
+                }
+                _sideLayout = false;
+            }
+        }
+
+        private void EnsureNameTag()
+        {
+            if (_nameTag != null) return;
+            var obj = new GameObject("LinkedNameTag");
+            obj.transform.SetParent(transform, false);
+            _nameTag = obj.AddComponent<TextMesh>();
+            _nameTag.fontSize = 60;
+            _nameTag.characterSize = 0.005f;
+            _nameTag.fontStyle = FontStyle.Bold;
+            _nameTag.anchor = TextAnchor.LowerCenter;
+            _nameTag.alignment = TextAlignment.Center;
+        }
+
+        /// <summary>
+        /// Supplies active Ward Configuration to resolve bed positions
+        /// </summary>
+        public void SetWardConfig(WardConfig ward)
+        {
+            _cachedWardConfig = ward;
+            ResolveAssignedBed();
+        }
+
+        /// <summary>
+        /// Resolves the specific WardBed instance matching the assigned bed string
+        /// </summary>
+        private void ResolveAssignedBed()
+        {
+            if (_cachedWardConfig == null || _cachedWardConfig.beds == null || _cachedWardConfig.beds.Count == 0)
+            {
+                _assignedWardBed = null;
+                return;
+            }
+
+            string cleanAssigned = assignedBed?.Trim() ?? "";
+
+            // 1. Direct match by bed_id
+            foreach (var b in _cachedWardConfig.beds)
+            {
+                if (b != null && !string.IsNullOrEmpty(b.bed_id) && b.bed_id.Equals(cleanAssigned, StringComparison.OrdinalIgnoreCase))
+                {
+                    _assignedWardBed = b;
+                    return;
+                }
+            }
+
+            // 2. Match by bed_code (e.g. "Bed 1")
+            foreach (var b in _cachedWardConfig.beds)
+            {
+                if (b != null && !string.IsNullOrEmpty(b.bed_code) && b.bed_code.Equals(cleanAssigned, StringComparison.OrdinalIgnoreCase))
+                {
+                    _assignedWardBed = b;
+                    return;
+                }
+            }
+
+            // No bed of this ward matches: the patient has no bed here. Guessing one
+            // (first bed, or any bed with a "1" in it) would dock the panel at
+            // another patient's bed.
+            _assignedWardBed = null;
+        }
+
+        /// <summary>
+        /// Updates patient demographic metadata
+        /// </summary>
+        public void SetPatientInfo(string pId, string name, string bed)
+        {
+            patientId = pId;
+            fullName = string.IsNullOrEmpty(name) ? "Unassigned Patient" : name;
+            assignedBed = string.IsNullOrEmpty(bed) ? "--" : bed;
+            ResolveAssignedBed();
+            RefreshUiText();
+        }
+
+        /// <summary>
+        /// Updates Vitals from Edge Server Telemetry
+        /// </summary>
+        public void UpdateTelemetry(int bpm, int spo2, int battery)
+        {
+            // 0 from the server means "no valid reading now": show "--" instead of
+            // keeping the previous value on screen as if it were current.
+            heartRateBpm = bpm > 0 ? bpm : 0;
+            spo2Percent = spo2 > 0 ? spo2 : 0;
+            if (battery >= 0) batteryPercent = battery;
+            isOnline = true;
+            EvaluatePersonDetection();
+            RefreshUiText();
+        }
+
+        /// <summary>
+        /// Updates IPS Coordinates from Network Event and executes the Bed vs Transit State Machine
+        /// with tight geometric margins and hysteresis.
+        /// </summary>
+        public void UpdatePosition(float wardX, float wardY, string motion)
+        {
+            motionState = motion ?? "STATIONARY";
+            isOnline = true;
+            HasIpsPosition = true;
+
+            // Calculate Nominal Ground World Position from Ward Coordinates
+            if (WardSpatialManager.Instance != null)
+            {
+                _rawIpsWorldPos = WardSpatialManager.Instance.WardToWorldPosition(wardX, wardY, 0f);
+            }
+            else
+            {
+                _rawIpsWorldPos = new Vector3(wardX, 0f, wardY);
+            }
+
+            // Ensure bed is resolved if not already cached
+            if (_assignedWardBed == null && WardSpatialManager.Instance != null)
+            {
+                if (_cachedWardConfig == null) _cachedWardConfig = WardSpatialManager.Instance.GetCachedWardConfig();
+                ResolveAssignedBed();
+            }
+
+            // If manual aim is actively being targeted, keep target position as-is
+            if (trackingState == PatientTrackingState.ManualAim)
+            {
+                return;
+            }
+
+            // Calculate distance to bed center (with tight margin)
+            float distToBed = 999f;
+            if (WardSpatialManager.Instance != null && _assignedWardBed != null)
+            {
+                distToBed = WardSpatialManager.Instance.GetDistanceToBedCenter(wardX, wardY, _assignedWardBed);
+            }
+
+            // =========================================================================
+            // Bed-Docking State Machine with Hysteresis:
+            // 1) If BedDocked: Detach IMMEDIATELY if distToBed > 1.15m OR motion is WALKING!
+            // 2) If InTransit: Only re-dock if distToBed <= 0.85m AND stationary for >= 1.5s!
+            // =========================================================================
+            if (trackingState == PatientTrackingState.BedDocked)
+            {
+                if (distToBed > 1.15f || motionState == "WALKING")
+                {
+                    // Detach from bed immediately!
+                    trackingState = PatientTrackingState.InTransit;
+                    _bedSettleTimer = 0f;
+                    _hasStationaryLock = false;
+                    _isManuallyLocked = false;
+                }
+            }
+            else if (trackingState == PatientTrackingState.InTransit)
+            {
+                // A person chosen by hand is kept (the clinician sees the patient elsewhere)
+                // until that person is lost from view; then the bed rule applies again.
+                bool chosenByHand = depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
+                if (distToBed <= 0.85f && motionState != "WALKING" && !chosenByHand)
+                {
+                    _bedSettleTimer += 0.20f; // Settle accumulation
+                    if (_bedSettleTimer >= 1.5f)
+                    {
+                        // Succeeded docking back to bed
+                        trackingState = PatientTrackingState.BedDocked;
+                        _isManuallyLocked = false;
+                    }
+                }
+                else
+                {
+                    _bedSettleTimer = 0f;
+                }
+            }
+
+            // Evaluate whether living human is detected via PPG optical pulse or clinician lock
+            EvaluatePersonDetection();
+
+            // Execute Mode Behaviors
+            if (trackingState == PatientTrackingState.BedDocked)
+            {
+                Vector3 bedBase;
+                if (WardSpatialManager.Instance != null && _assignedWardBed != null)
+                {
+                    bedBase = (dockMode == PatientDockMode.Headboard)
+                        ? WardSpatialManager.Instance.GetBedHeadboardWorldPosition(_assignedWardBed)
+                        : WardSpatialManager.Instance.GetBedSideWorldPosition(_assignedWardBed);
+                }
+                else
+                {
+                    bedBase = _rawIpsWorldPos + new Vector3(0, 1.28f, 0);
+                }
+
+                _targetPosition = bedBase + _customBedOffset;
+
+                // Center alignment on headboard
+                if (_hudContainer != null && !_isPanelDragging)
+                {
+                    _hudContainer.transform.localPosition = Vector3.zero;
+                }
+
+                // Hide Floor Uncertainty Ring when docked to bed
+                if (_floorRingObj != null) _floorRingObj.SetActive(false);
+                _hasStationaryLock = false;
+            }
+            else
+            {
+                // In-Transit Mode: Attach floating HUD next to the real human
+                // (while linked to a detected person, UpdateLinkedLayout places it beside them)
+                if (_hudContainer != null && !_isPanelDragging && !_sideLayout)
+                {
+                    _hudContainer.transform.localPosition = hudOffset;
+                }
+
+                if (_floorRingObj != null)
+                {
+                    _floorRingObj.SetActive(true);
+                    _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+                }
+
+                if (motionState == "WALKING")
+                {
+                    _isManuallyLocked = false;
+                    _hasStationaryLock = false;
+                    detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0, _rawIpsWorldPos.z);
+                }
+                else // STATIONARY, HAND_MOVEMENT, SETTLING
+                {
+                    if (!_hasStationaryLock)
+                    {
+                        _lastStationaryWorldPos = _rawIpsWorldPos;
+                        _hasStationaryLock = true;
+                    }
+                    else if (Vector3.Distance(_rawIpsWorldPos, _lastStationaryWorldPos) > 0.85f && !_isManuallyLocked)
+                    {
+                        _lastStationaryWorldPos = _rawIpsWorldPos;
+                    }
+
+                    detectedPersonPosition = new Vector3(_lastStationaryWorldPos.x, 0, _lastStationaryWorldPos.z);
+                }
+
+                if (_depthLinked) detectedPersonPosition = _depthLinkPos;
+                _targetPosition = detectedPersonPosition;
+            }
+
+            // Snap immediately on first initialization
+            if (transform.position == Vector3.zero)
+            {
+                transform.position = _targetPosition;
+            }
+        }
+
+        /// <summary>
+        /// "Person detected" means only: a valid pulse is being read right now (40 to 220 BPM),
+        /// or the clinician locked the hologram onto the patient by hand. No reading (0) does not
+        /// prove the wristband is off: at the wrist the pulse is often not measurable for a while.
+        /// </summary>
+        public void EvaluatePersonDetection()
+        {
+            bool hasLivingPulse = (heartRateBpm >= 40 && heartRateBpm <= 220);
+            isPersonDetected = (hasLivingPulse || _isManuallyLocked || _depthLinked);
+        }
+
+        /// <summary>
+        /// Person linking result (8D). Linked / LinkedManual: the panel follows that person
+        /// (floor position, world). Otherwise it uses the Bluetooth position as before.
+        /// </summary>
+        public void SetDepthLink(ShiroMR.Linking.LinkState state, Vector3 personFloorPos, string reason, float personHeight = 0f)
+        {
+            _depthLinkHeight = personHeight;
+            _linkingActive = true;
+            depthLinkState = state;
+            depthLinkReason = reason ?? "";
+            _depthLinked = state == ShiroMR.Linking.LinkState.Linked || state == ShiroMR.Linking.LinkState.LinkedManual;
+            if (_depthLinked)
+            {
+                _depthLinkPos = new Vector3(personFloorPos.x, 0f, personFloorPos.z);
+                if (trackingState == PatientTrackingState.InTransit && !_isPanelDragging)
+                {
+                    detectedPersonPosition = _depthLinkPos;
+                    _targetPosition = _depthLinkPos;
+                }
+            }
+            else if (trackingState == PatientTrackingState.InTransit && HasIpsPosition && !_isManuallyLocked)
+            {
+                // Back to the Bluetooth position
+                detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0f, _rawIpsWorldPos.z);
+                _targetPosition = detectedPersonPosition;
+            }
+            EvaluatePersonDetection();
+        }
+
+        /// <summary>Person linking switched off: the panel uses the Bluetooth position as before.</summary>
+        public void ClearDepthLink()
+        {
+            if (!_linkingActive) return;
+            SetDepthLink(ShiroMR.Linking.LinkState.BleOnly, Vector3.zero, "");
+            _linkingActive = false;
+        }
+
+        /// <summary>
+        /// Begins manual aim mode: Clinician can point at the physical patient across the room to re-attach
+        /// </summary>
+        public void BeginManualAim()
+        {
+            trackingState = PatientTrackingState.ManualAim;
+            if (ShiroVRPointer.Instance != null)
+            {
+                ShiroVRPointer.Instance.SetReattachTargeting(true);
+            }
+
+            SetStatusBanner(LinkingOn
+                ? "🎯 AIM AT THE PATIENT & PINCH: LINKS TO THE PERSON SEEN THERE"
+                : "🎯 AIM AT PATIENT & PINCH / CLICK TO LOCK POSITION", 15.0f, new Color(1.0f, 0.85f, 0.2f));
+            RefreshUiText();
+        }
+
+        private static bool LinkingOn => ShiroPatientLinking.Instance != null && ShiroPatientLinking.Instance.LinkingEnabled;
+
+        /// <summary>
+        /// Choosing a person by hand (8D-5): the clinician aimed at a detected person and pinched.
+        /// The panel follows that person until the person is lost from view (or "Auto").
+        /// </summary>
+        public void ChoosePerson(Vector3 personFloorPos, float personHeight, string reason)
+        {
+            trackingState = PatientTrackingState.InTransit;
+            _isManuallyLocked = false;
+            _bedSettleTimer = 0f;
+            if (ShiroVRPointer.Instance != null) ShiroVRPointer.Instance.SetReattachTargeting(false);
+            if (_floorRingObj != null)
+            {
+                _floorRingObj.SetActive(true);
+                _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+            }
+            SetDepthLink(ShiroMR.Linking.LinkState.LinkedManual, personFloorPos, reason, personHeight);
+            SetStatusBanner("✅ LINKED TO THE PERSON YOU CHOSE • 🔄 Auto to undo", 4.0f, new Color(0.2f, 0.95f, 0.5f));
+            RefreshUiText();
+        }
+
+        /// <summary>"🔄 Auto": ends a pinned spot or a person chosen by hand; automatic linking resumes.</summary>
+        public void ReturnToAuto()
+        {
+            _isManuallyLocked = false;
+            _hasStationaryLock = false;
+            ShiroPatientLinking.Instance?.ReleaseChoice(tagId);
+            if (depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
+                SetDepthLink(ShiroMR.Linking.LinkState.BleOnly, Vector3.zero, "back to automatic: waiting for the next update");
+            else if (trackingState == PatientTrackingState.InTransit && HasIpsPosition)
+            {
+                detectedPersonPosition = new Vector3(_rawIpsWorldPos.x, 0f, _rawIpsWorldPos.z);
+                _targetPosition = detectedPersonPosition;
+            }
+            EvaluatePersonDetection();
+            SetStatusBanner("🔄 AUTOMATIC AGAIN", 2.5f, Color.white);
+            RefreshUiText();
+        }
+
+        /// <summary>
+        /// Snaps the patient hologram directly to a clinician-selected world space position
+        /// </summary>
+        public void LockManualPosition(Vector3 worldPoint)
+        {
+            lockedManualPosition = worldPoint;
+            detectedPersonPosition = new Vector3(worldPoint.x, 0, worldPoint.z);
+            _targetPosition = detectedPersonPosition;
+            _lastStationaryWorldPos = detectedPersonPosition;
+            _hasStationaryLock = true;
+            _isManuallyLocked = true;
+            isPersonDetected = true;
+
+            transform.position = _targetPosition;
+
+            if (_hudContainer != null)
+            {
+                _hudContainer.transform.localPosition = hudOffset;
+            }
+
+            if (_floorRingObj != null)
+            {
+                _floorRingObj.SetActive(true);
+                _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+            }
+
+            trackingState = PatientTrackingState.InTransit;
+
+            if (ShiroVRPointer.Instance != null)
+            {
+                ShiroVRPointer.Instance.SetReattachTargeting(false);
+            }
+
+            SetStatusBanner("✅ POSITION RE-ATTACHED & LOCKED TO PATIENT", 4.0f, new Color(0.2f, 0.95f, 0.5f));
+            RefreshUiText();
+        }
+
+        /// <summary>
+        /// Cancels manual aim mode and returns to automatic tracking
+        /// </summary>
+        public void CancelManualAim()
+        {
+            trackingState = PatientTrackingState.InTransit;
+            _isManuallyLocked = false;
+            if (ShiroVRPointer.Instance != null)
+            {
+                ShiroVRPointer.Instance.SetReattachTargeting(false);
+            }
+            SetStatusBanner("Auto-Tracking Resumed", 2.0f, Color.white);
+            RefreshUiText();
+        }
+
+        /// <summary>
+        /// Toggles between Headboard and Bedside mounting in Bed-Docked mode
+        /// </summary>
+        public void ToggleDockMode()
+        {
+            dockMode = (dockMode == PatientDockMode.Headboard) ? PatientDockMode.Bedside : PatientDockMode.Headboard;
+
+            if (trackingState == PatientTrackingState.BedDocked && WardSpatialManager.Instance != null && _assignedWardBed != null)
+            {
+                _targetPosition = (dockMode == PatientDockMode.Headboard)
+                    ? WardSpatialManager.Instance.GetBedHeadboardWorldPosition(_assignedWardBed)
+                    : WardSpatialManager.Instance.GetBedSideWorldPosition(_assignedWardBed);
+            }
+
+            SetStatusBanner($"Dock Location: {dockMode}", 2.5f, new Color(0.2f, 0.85f, 1.0f));
+            RefreshUiText();
+        }
+
+        private void SetStatusBanner(string message, float duration, Color color)
+        {
+            if (_statusBannerText != null)
+            {
+                _statusBannerText.text = message;
+                _statusBannerText.color = color;
+                _bannerStatusTimer = duration;
+            }
+        }
+
+        private void RefreshStatusBanner()
+        {
+            if (_statusBannerText == null) return;
+
+            if (trackingState == PatientTrackingState.BedDocked)
+            {
+                string offsetNotice = (_customBedOffset != Vector3.zero) ? " [Adjusted]" : "";
+                _statusBannerText.text = $"🛏️ Bed Headboard Poster ({dockMode}){offsetNotice} • Pinch [✥ Move] to Adjust";
+                _statusBannerText.color = new Color(0.3f, 0.85f, 1.0f);
+            }
+            else if (_isPanelDragging)
+            {
+                _statusBannerText.text = "✋ DRAGGING PANEL • MOVE RAY (USE LEFT HAND FOR DISTANCE)";
+                _statusBannerText.color = new Color(0.2f, 0.95f, 0.5f);
+            }
+            else if (trackingState == PatientTrackingState.ManualAim)
+            {
+                _statusBannerText.text = LinkingOn
+                    ? "🎯 Aim at the patient & pinch (nobody seen there: pins the panel)"
+                    : "🎯 Aim at patient & pinch/click to lock position";
+                _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+            }
+            else if (_isManuallyLocked)
+            {
+                _statusBannerText.text = "📍 Pinned here by you • 🔄 Auto to undo";
+                _statusBannerText.color = new Color(1.0f, 0.85f, 0.2f);
+            }
+            else if (_linkingActive && !string.IsNullOrEmpty(depthLinkReason))
+            {
+                // Short reason of the person linking, e.g. "linked: person 1.62 m, 0.3 m from the wristband"
+                _statusBannerText.text = depthLinkReason;
+                _statusBannerText.color = _depthLinked ? new Color(0.2f, 0.95f, 0.5f)
+                    : depthLinkState == ShiroMR.Linking.LinkState.Unclear ? new Color(1.0f, 0.75f, 0.2f)
+                    : new Color(0.95f, 0.85f, 0.35f);
+            }
+            else
+            {
+                if (isPersonDetected)
+                {
+                    _statusBannerText.text = "🟢 Pulse detected • Following wristband position";
+                    _statusBannerText.color = new Color(0.2f, 0.95f, 0.5f);
+                }
+                else
+                {
+                    _statusBannerText.text = "🟡 No pulse reading now • Following wristband position";
+                    _statusBannerText.color = new Color(0.95f, 0.85f, 0.35f);
+                }
+            }
+        }
+
+        private void RefreshUiText()
+        {
+            if (_nameText != null) _nameText.text = fullName;
+            if (_subText != null) _subText.text = $"{tagId} • Bed: {assignedBed}";
+
+            // Tracking Mode Badge
+            if (_trackingBadgeText != null)
+            {
+                if (trackingState == PatientTrackingState.BedDocked)
+                {
+                    string offsetNotice = (_customBedOffset != Vector3.zero) ? " (ADJUSTED)" : "";
+                    _trackingBadgeText.text = $"🛏️ BED POSTER ({dockMode.ToString().ToUpper()}){offsetNotice}";
+                    _trackingBadgeText.color = new Color(0.2f, 0.85f, 1.0f); // Cyan
+                }
+                else if (trackingState == PatientTrackingState.ManualAim)
+                {
+                    _trackingBadgeText.text = "🎯 MANUAL AIM TARGETING";
+                    _trackingBadgeText.color = new Color(1.0f, 0.85f, 0.2f); // Amber
+                }
+                else
+                {
+                    if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Linked)
+                    {
+                        _trackingBadgeText.text = "🔗 FOLLOWING PERSON";
+                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                    }
+                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
+                    {
+                        _trackingBadgeText.text = "🔗 FOLLOWING CHOSEN PERSON";
+                        _trackingBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                    }
+                    else if (_linkingActive && depthLinkState == ShiroMR.Linking.LinkState.Unclear)
+                    {
+                        _trackingBadgeText.text = "❓ UNCLEAR: CHOOSE PERSON";
+                        _trackingBadgeText.color = new Color(1.0f, 0.75f, 0.2f);
+                    }
+                    else if (_linkingActive)
+                    {
+                        _trackingBadgeText.text = "📶 BLUETOOTH POSITION";
+                        _trackingBadgeText.color = new Color(0.95f, 0.85f, 0.35f);
+                    }
+                    else
+                    {
+                        _trackingBadgeText.text = isPersonDetected ? "🚶 IN-TRANSIT (PULSE DETECTED)" : "🚶 IN-TRANSIT (NO PULSE READING)";
+                        _trackingBadgeText.color = isPersonDetected ? new Color(0.2f, 0.95f, 0.5f) : new Color(0.95f, 0.85f, 0.35f);
+                    }
+                }
+            }
+
+            // Vitals BPM
+            if (_bpmText != null)
+            {
+                if (heartRateBpm > 0)
+                {
+                    _bpmText.text = $"❤️ {heartRateBpm} BPM";
+                    if (heartRateBpm < 50 || heartRateBpm > 120)
+                        _bpmText.color = new Color(0.95f, 0.2f, 0.2f); // Red Alert
+                    else if (heartRateBpm > 100)
+                        _bpmText.color = new Color(0.95f, 0.75f, 0.1f); // Yellow Warning
+                    else
+                        _bpmText.color = new Color(0.1f, 0.95f, 0.45f); // Normal Green
+                }
+                else
+                {
+                    _bpmText.text = "❤️ -- BPM";
+                    _bpmText.color = Color.gray;
+                }
+            }
+
+            // SpO2
+            if (_spo2Text != null)
+            {
+                if (spo2Percent > 0)
+                {
+                    // Indicative only: the SpO2 measurement is not calibrated and raises
+                    // no alarm, so it is never coloured as an alert.
+                    _spo2Text.text = $"🫁 ~{spo2Percent}%";
+                    _spo2Text.color = new Color(0.2f, 0.85f, 1.0f);
+                }
+                else
+                {
+                    _spo2Text.text = "🫁 --%";
+                    _spo2Text.color = Color.gray;
+                }
+            }
+
+            // Battery
+            if (_batteryText != null)
+            {
+                _batteryText.text = batteryPercent >= 0 ? $"🔋 {batteryPercent}%" : "🔋 --%";
+            }
+
+            // Motion State
+            if (_motionBadgeText != null)
+            {
+                string m = motionState?.ToUpper() ?? "STATIONARY";
+                if (m == "WALKING")
+                {
+                    _motionBadgeText.text = "🚶 WALKING";
+                    _motionBadgeText.color = new Color(0.2f, 0.95f, 0.5f);
+                }
+                else if (m == "HAND_MOVEMENT")
+                {
+                    _motionBadgeText.text = "✋ HAND MOVEMENT";
+                    _motionBadgeText.color = new Color(0.95f, 0.75f, 0.2f);
+                }
+                else if (m == "SETTLING")
+                {
+                    _motionBadgeText.text = "⏳ SETTLING";
+                    _motionBadgeText.color = new Color(0.3f, 0.85f, 1.0f);
+                }
+                else
+                {
+                    _motionBadgeText.text = "🔒 STATIONARY";
+                    _motionBadgeText.color = new Color(0.3f, 0.85f, 1.0f);
+                }
+            }
+
+            // Buttons state
+            if (_cancelAimBtn != null)
+            {
+                _cancelAimBtn.gameObject.SetActive(trackingState == PatientTrackingState.ManualAim);
+            }
+            if (_autoBtn != null)
+            {
+                bool chosenByHand = _isManuallyLocked || depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
+                _autoBtn.gameObject.SetActive(trackingState == PatientTrackingState.InTransit && chosenByHand);
+            }
+            if (_dockToggleBtn != null)
+            {
+                _dockToggleBtn.gameObject.SetActive(trackingState == PatientTrackingState.BedDocked);
+                if (_dockToggleBtnText != null)
+                {
+                    _dockToggleBtnText.text = (dockMode == PatientDockMode.Headboard) ? "📍 Headboard" : "🛏️ Bedside";
+                }
+            }
+
+            if (_bannerStatusTimer <= 0f)
+            {
+                RefreshStatusBanner();
+            }
+        }
+
+        /// <summary>
+        /// Begins manual panel repositioning triggered by pinching or clicking the top-left [✥ Move] button.
+        /// Clinician moves laser pointer horizontally/vertically to position panel, and uses left hand to adjust distance.
+        /// </summary>
+        public void StartPanelDrag()
+        {
+            _isPanelDragging = true;
+            if (ShiroVRPointer.Instance != null)
+            {
+                _dragDistance = ShiroVRPointer.Instance.manualLaserDistance;
+            }
+            SetStatusBanner("✋ DRAGGING PANEL • MOVE RAY (USE LEFT HAND FOR DISTANCE)", 10.0f, new Color(0.2f, 0.85f, 1.0f));
+            RefreshUiText();
+        }
+
+        /// <summary>
+        /// Programmatically builds the holographic billboard canvas and floor footprint circle
+        /// </summary>
+        private void BuildHologramVisuals()
+        {
+            // 1. Floor Uncertainty Footprint Ring (0.65m diameter, 0.005m height)
+            _floorRingObj = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            _floorRingObj.name = "FloorFootprintRing";
+            _floorRingObj.transform.SetParent(this.transform);
+            _floorRingObj.transform.localPosition = new Vector3(0, 0.005f, 0);
+            _floorRingObj.transform.localScale = new Vector3(0.65f, 0.005f, 0.65f);
+            Destroy(_floorRingObj.GetComponent<Collider>()); // No physics blocking
+
+            _floorRingRenderer = _floorRingObj.GetComponent<Renderer>();
+            if (_floorRingRenderer != null)
+            {
+                Shader unlit = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
+                _floorRingMaterial = new Material(unlit);
+                _floorRingMaterial.color = new Color(0.06f, 0.71f, 0.83f, 0.35f);
+                _floorRingRenderer.material = _floorRingMaterial;
+            }
+
+            // 2. Floating Billboard HUD Container
+            _hudContainer = new GameObject("FloatingVitalsHUD");
+            _hudContainer.transform.SetParent(this.transform);
+            _hudContainer.transform.localPosition = hudOffset;
+
+            // Canvas
+            _hudCanvas = _hudContainer.AddComponent<Canvas>();
+            _hudCanvas.renderMode = RenderMode.WorldSpace;
+            _hudContainer.AddComponent<CanvasScaler>();
+
+            RectTransform rect = _hudContainer.GetComponent<RectTransform>();
+            rect.sizeDelta = new Vector2(320, 200);
+            rect.localScale = new Vector3(0.0022f, 0.0022f, 0.0022f); // Physical eye size ~70cm wide
+
+            // Card Background Panel
+            GameObject bgObj = new GameObject("CardBackground");
+            bgObj.transform.SetParent(_hudContainer.transform, false);
+            _cardBackground = bgObj.AddComponent<Image>();
+            _cardBackground.color = new Color(0.06f, 0.10f, 0.18f, 0.92f); // Deep clinical slate glass
+            RectTransform bgRect = bgObj.GetComponent<RectTransform>();
+            bgRect.anchorMin = Vector2.zero;
+            bgRect.anchorMax = Vector2.one;
+            bgRect.sizeDelta = Vector2.zero;
+
+            Font defaultFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+            // Top-Left Corner: [✥ Move] Manual Drag / Reposition Handle
+            GameObject moveObj = new GameObject("Btn_MoveHandle");
+            moveObj.transform.SetParent(bgObj.transform, false);
+            Image moveImg = moveObj.AddComponent<Image>();
+            moveImg.color = new Color(0.12f, 0.40f, 0.60f, 0.95f); // Sleek clinical steel blue
+            _moveHandleBtn = moveObj.AddComponent<Button>();
+            _moveHandleBtn.onClick.AddListener(StartPanelDrag);
+            BoxCollider moveCol = moveObj.AddComponent<BoxCollider>();
+            moveCol.size = new Vector3(56, 24, 35); // 35 units thick for laser & fingertip
+            RectTransform moveRect = moveObj.GetComponent<RectTransform>();
+            moveRect.anchoredPosition = new Vector2(-124, 70);
+            moveRect.sizeDelta = new Vector2(54, 22);
+
+            GameObject moveTxtObj = new GameObject("Txt");
+            moveTxtObj.transform.SetParent(moveObj.transform, false);
+            _moveHandleBtnText = moveTxtObj.AddComponent<Text>();
+            _moveHandleBtnText.font = defaultFont;
+            _moveHandleBtnText.fontSize = 11;
+            _moveHandleBtnText.fontStyle = FontStyle.Bold;
+            _moveHandleBtnText.alignment = TextAnchor.MiddleCenter;
+            _moveHandleBtnText.color = Color.white;
+            _moveHandleBtnText.text = "✥ Move";
+            RectTransform mTxtRect = moveTxtObj.GetComponent<RectTransform>();
+            mTxtRect.anchorMin = Vector2.zero;
+            mTxtRect.anchorMax = Vector2.one;
+            mTxtRect.sizeDelta = Vector2.zero;
+
+            // Row 1: Patient Name (shifted slightly to accommodate [✥ Move])
+            GameObject nameObj = new GameObject("NameText");
+            nameObj.transform.SetParent(bgObj.transform, false);
+            _nameText = nameObj.AddComponent<Text>();
+            _nameText.font = defaultFont;
+            _nameText.fontSize = 18;
+            _nameText.fontStyle = FontStyle.Bold;
+            _nameText.color = Color.white;
+            _nameText.text = fullName;
+            RectTransform nameRect = nameObj.GetComponent<RectTransform>();
+            nameRect.anchoredPosition = new Vector2(25, 70);
+            nameRect.sizeDelta = new Vector2(230, 24);
+
+            // Row 2: Subtext (Tag & Bed)
+            GameObject subObj = new GameObject("SubText");
+            subObj.transform.SetParent(bgObj.transform, false);
+            _subText = subObj.AddComponent<Text>();
+            _subText.font = defaultFont;
+            _subText.fontSize = 11;
+            _subText.color = new Color(0.70f, 0.80f, 0.92f);
+            _subText.text = $"{tagId} • Bed: {assignedBed}";
+            RectTransform subRect = subObj.GetComponent<RectTransform>();
+            subRect.anchoredPosition = new Vector2(12, 48);
+            subRect.sizeDelta = new Vector2(295, 18);
+
+            // Row 3: Tracking Mode Badge
+            GameObject badgeObj = new GameObject("TrackingBadge");
+            badgeObj.transform.SetParent(bgObj.transform, false);
+            _trackingBadgeText = badgeObj.AddComponent<Text>();
+            _trackingBadgeText.font = defaultFont;
+            _trackingBadgeText.fontSize = 11;
+            _trackingBadgeText.fontStyle = FontStyle.Bold;
+            _trackingBadgeText.color = new Color(0.2f, 0.85f, 1.0f);
+            _trackingBadgeText.text = "🛏️ BED HEADBOARD POSTER";
+            RectTransform badgeRect = badgeObj.GetComponent<RectTransform>();
+            badgeRect.anchoredPosition = new Vector2(12, 26);
+            badgeRect.sizeDelta = new Vector2(295, 18);
+
+            // Row 4: Heart Rate
+            GameObject bpmObj = new GameObject("BpmText");
+            bpmObj.transform.SetParent(bgObj.transform, false);
+            _bpmText = bpmObj.AddComponent<Text>();
+            _bpmText.font = defaultFont;
+            _bpmText.fontSize = 20;
+            _bpmText.fontStyle = FontStyle.Bold;
+            _bpmText.color = new Color(0.1f, 0.95f, 0.45f);
+            _bpmText.text = "❤️ -- BPM";
+            RectTransform bpmRect = bpmObj.GetComponent<RectTransform>();
+            bpmRect.anchoredPosition = new Vector2(12, -4);
+            bpmRect.sizeDelta = new Vector2(145, 26);
+
+            // Row 4: SpO2
+            GameObject spo2Obj = new GameObject("SpO2Text");
+            spo2Obj.transform.SetParent(bgObj.transform, false);
+            _spo2Text = spo2Obj.AddComponent<Text>();
+            _spo2Text.font = defaultFont;
+            _spo2Text.fontSize = 18;
+            _spo2Text.fontStyle = FontStyle.Bold;
+            _spo2Text.color = new Color(0.2f, 0.85f, 1.0f);
+            _spo2Text.text = "🫁 --%";
+            RectTransform spo2Rect = spo2Obj.GetComponent<RectTransform>();
+            spo2Rect.anchoredPosition = new Vector2(165, -4);
+            spo2Rect.sizeDelta = new Vector2(145, 26);
+
+            // Row 5: Motion State
+            GameObject motionObj = new GameObject("MotionText");
+            motionObj.transform.SetParent(bgObj.transform, false);
+            _motionBadgeText = motionObj.AddComponent<Text>();
+            _motionBadgeText.font = defaultFont;
+            _motionBadgeText.fontSize = 11;
+            _motionBadgeText.fontStyle = FontStyle.Bold;
+            _motionBadgeText.color = new Color(0.3f, 0.85f, 1.0f);
+            _motionBadgeText.text = "🔒 STATIONARY";
+            RectTransform motionRect = motionObj.GetComponent<RectTransform>();
+            motionRect.anchoredPosition = new Vector2(12, -32);
+            motionRect.sizeDelta = new Vector2(145, 20);
+
+            // Row 5: Battery
+            GameObject batObj = new GameObject("BatteryText");
+            batObj.transform.SetParent(bgObj.transform, false);
+            _batteryText = batObj.AddComponent<Text>();
+            _batteryText.font = defaultFont;
+            _batteryText.fontSize = 11;
+            _batteryText.color = new Color(0.80f, 0.88f, 0.95f);
+            _batteryText.text = "🔋 --%";
+            RectTransform batRect = batObj.GetComponent<RectTransform>();
+            batRect.anchoredPosition = new Vector2(165, -32);
+            batRect.sizeDelta = new Vector2(145, 20);
+
+            // Row 6: Interactive Buttons Row (with Thick BoxColliders for distant laser clicks)
+            // Button 1: [🎯 Re-Attach]
+            GameObject reattachObj = new GameObject("Btn_Reattach");
+            reattachObj.transform.SetParent(bgObj.transform, false);
+            Image reattachImg = reattachObj.AddComponent<Image>();
+            reattachImg.color = new Color(0.12f, 0.45f, 0.65f, 0.90f);
+            _reattachBtn = reattachObj.AddComponent<Button>();
+            _reattachBtn.onClick.AddListener(BeginManualAim);
+            BoxCollider colA = reattachObj.AddComponent<BoxCollider>();
+            colA.size = new Vector3(135, 32, 35); // 35 units thick so rays easily catch it
+            RectTransform reattachRect = reattachObj.GetComponent<RectTransform>();
+            reattachRect.anchoredPosition = new Vector2(-75, -64);
+            reattachRect.sizeDelta = new Vector2(135, 30);
+
+            GameObject reattachTxtObj = new GameObject("Txt");
+            reattachTxtObj.transform.SetParent(reattachObj.transform, false);
+            _reattachBtnText = reattachTxtObj.AddComponent<Text>();
+            _reattachBtnText.font = defaultFont;
+            _reattachBtnText.fontSize = 12;
+            _reattachBtnText.fontStyle = FontStyle.Bold;
+            _reattachBtnText.alignment = TextAnchor.MiddleCenter;
+            _reattachBtnText.color = Color.white;
+            _reattachBtnText.text = "🎯 Re-Attach";
+            RectTransform rTxtRect = reattachTxtObj.GetComponent<RectTransform>();
+            rTxtRect.anchorMin = Vector2.zero;
+            rTxtRect.anchorMax = Vector2.one;
+            rTxtRect.sizeDelta = Vector2.zero;
+
+            // Button 2: [📍 Headboard / 🛏️ Bedside]
+            GameObject dockObj = new GameObject("Btn_DockToggle");
+            dockObj.transform.SetParent(bgObj.transform, false);
+            Image dockImg = dockObj.AddComponent<Image>();
+            dockImg.color = new Color(0.12f, 0.35f, 0.45f, 0.90f);
+            _dockToggleBtn = dockObj.AddComponent<Button>();
+            _dockToggleBtn.onClick.AddListener(ToggleDockMode);
+            BoxCollider colB = dockObj.AddComponent<BoxCollider>();
+            colB.size = new Vector3(135, 32, 35);
+            RectTransform dockRect = dockObj.GetComponent<RectTransform>();
+            dockRect.anchoredPosition = new Vector2(75, -64);
+            dockRect.sizeDelta = new Vector2(135, 30);
+
+            GameObject dockTxtObj = new GameObject("Txt");
+            dockTxtObj.transform.SetParent(dockObj.transform, false);
+            _dockToggleBtnText = dockTxtObj.AddComponent<Text>();
+            _dockToggleBtnText.font = defaultFont;
+            _dockToggleBtnText.fontSize = 12;
+            _dockToggleBtnText.fontStyle = FontStyle.Bold;
+            _dockToggleBtnText.alignment = TextAnchor.MiddleCenter;
+            _dockToggleBtnText.color = Color.white;
+            _dockToggleBtnText.text = "📍 Headboard";
+            RectTransform dTxtRect = dockTxtObj.GetComponent<RectTransform>();
+            dTxtRect.anchorMin = Vector2.zero;
+            dTxtRect.anchorMax = Vector2.one;
+            dTxtRect.sizeDelta = Vector2.zero;
+
+            // Button 3: [✖ Cancel Aim]
+            GameObject cancelObj = new GameObject("Btn_CancelAim");
+            cancelObj.transform.SetParent(bgObj.transform, false);
+            Image cancelImg = cancelObj.AddComponent<Image>();
+            cancelImg.color = new Color(0.65f, 0.20f, 0.20f, 0.90f);
+            _cancelAimBtn = cancelObj.AddComponent<Button>();
+            _cancelAimBtn.onClick.AddListener(CancelManualAim);
+            BoxCollider colC = cancelObj.AddComponent<BoxCollider>();
+            colC.size = new Vector3(135, 32, 35);
+            RectTransform cancelRect = cancelObj.GetComponent<RectTransform>();
+            cancelRect.anchoredPosition = new Vector2(75, -64);
+            cancelRect.sizeDelta = new Vector2(135, 30);
+            cancelObj.SetActive(false); // Initially hidden
+
+            GameObject cancelTxtObj = new GameObject("Txt");
+            cancelTxtObj.transform.SetParent(cancelObj.transform, false);
+            _cancelAimBtnText = cancelTxtObj.AddComponent<Text>();
+            _cancelAimBtnText.font = defaultFont;
+            _cancelAimBtnText.fontSize = 12;
+            _cancelAimBtnText.fontStyle = FontStyle.Bold;
+            _cancelAimBtnText.alignment = TextAnchor.MiddleCenter;
+            _cancelAimBtnText.color = Color.white;
+            _cancelAimBtnText.text = "✖ Cancel Aim";
+            RectTransform cTxtRect = cancelTxtObj.GetComponent<RectTransform>();
+            cTxtRect.anchorMin = Vector2.zero;
+            cTxtRect.anchorMax = Vector2.one;
+            cTxtRect.sizeDelta = Vector2.zero;
+
+            // Button 4: [🔄 Auto] (same place; shown while a choice made by hand is in force)
+            GameObject autoObj = new GameObject("Btn_Auto");
+            autoObj.transform.SetParent(bgObj.transform, false);
+            Image autoImg = autoObj.AddComponent<Image>();
+            autoImg.color = new Color(0.20f, 0.45f, 0.30f, 0.90f);
+            _autoBtn = autoObj.AddComponent<Button>();
+            _autoBtn.onClick.AddListener(ReturnToAuto);
+            BoxCollider colD = autoObj.AddComponent<BoxCollider>();
+            colD.size = new Vector3(135, 32, 35);
+            RectTransform autoRect = autoObj.GetComponent<RectTransform>();
+            autoRect.anchoredPosition = new Vector2(75, -64);
+            autoRect.sizeDelta = new Vector2(135, 30);
+            autoObj.SetActive(false);
+
+            GameObject autoTxtObj = new GameObject("Txt");
+            autoTxtObj.transform.SetParent(autoObj.transform, false);
+            Text autoTxt = autoTxtObj.AddComponent<Text>();
+            autoTxt.font = defaultFont;
+            autoTxt.fontSize = 12;
+            autoTxt.fontStyle = FontStyle.Bold;
+            autoTxt.alignment = TextAnchor.MiddleCenter;
+            autoTxt.color = Color.white;
+            autoTxt.text = "🔄 Auto";
+            RectTransform aTxtRect = autoTxtObj.GetComponent<RectTransform>();
+            aTxtRect.anchorMin = Vector2.zero;
+            aTxtRect.anchorMax = Vector2.one;
+            aTxtRect.sizeDelta = Vector2.zero;
+
+            // Row 7: Status Banner Text
+            GameObject statusObj = new GameObject("StatusBanner");
+            statusObj.transform.SetParent(bgObj.transform, false);
+            _statusBannerText = statusObj.AddComponent<Text>();
+            _statusBannerText.font = defaultFont;
+            _statusBannerText.fontSize = 10;
+            _statusBannerText.resizeTextForBestFit = true; // a long linking reason shrinks instead of being cut
+            _statusBannerText.resizeTextMinSize = 7;
+            _statusBannerText.resizeTextMaxSize = 10;
+            _statusBannerText.alignment = TextAnchor.MiddleCenter;
+            _statusBannerText.color = new Color(0.3f, 0.85f, 1.0f);
+            _statusBannerText.text = "🛏️ Bed Headboard Poster • Center Wall Mount (Zero Jitter)";
+            RectTransform statusRect = statusObj.GetComponent<RectTransform>();
+            statusRect.anchoredPosition = new Vector2(0, -88);
+            statusRect.sizeDelta = new Vector2(300, 16);
+        }
+    }
+}
