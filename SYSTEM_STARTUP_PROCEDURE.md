@@ -216,6 +216,11 @@ Double-click `edge_server\tools\start_influxdb.bat` and keep its window open. In
      * **Accounts & headsets:** sign-in accounts, headset pairing and the activity log.
      * **Test tools:** live values of the wristband and two wall sensors, raw and smoothed signal strength, the messages from the wall sensors, and test alarms.
    * Every table shows 8 rows a page: Previous, the first two and last two pages, the current page with its neighbours, and Next (for example `1 2 … 4 5 6 … 9 10`).
+   * Anything that stops something elsewhere (deleting a device or a ward, discharging, taking off a wristband, revoking a headset, leaving unsaved changes) asks first, with a coloured box listing what it will do: red with a red button when it cannot be undone, amber otherwise. Fields marked with a red * must be filled in.
+   * **Deleting a ward:** not while patients are in it. The dialog lists them, each with **Move…** (a bed in another ward); after the last one it asks to delete. The server refuses too.
+   * **Patient profile:** ⌚ Wristband history is closed until clicked; it is a table of 8 a page.
+
+**Repairing data left by older versions** (beds marked taken with nobody in them, a worn wristband marked free, an admitted patient with a discharge date): in `edge_server`, `node database/repair_data.js` lists what is wrong and changes nothing; `node database/repair_data.js --apply` repairs it in one transaction, after writing an undo file (SQL) to `edge_server/data/repairs/`. Restart the edge server afterwards. It prints IDs only.
 
 ### 3.6 Clinician Accounts and Sign-in
 
@@ -598,7 +603,7 @@ Ward editor → open the ward → Panel 3 → **📐 Plan Anchors & LiDAR**. The
 1. **Apply to Ward:** the spots fill Panels 3 and 3b.
 2. Print the installation sheet and mount the devices as listed.
 3. Bind each new board in Panel 3 and the LiDAR node in Panel 3b, then **Save Changes**.
-4. Live Map → **🎯 Calibrate Anchors** (new and moved anchors need it).
+4. Live Map → **🎯 Calibrate Anchors** (new and moved anchors need it). The reference point is a bed, the room centre, or **your own point**: type x and y (must be inside the ward, 0.15 m from the walls; outside, it says the allowed range and does not start) or click the map.
 5. The LiDAR: learn the empty room and align it to the walls (4.6).
 
 **WARD-005, 21 Nov 2026** (6 anchors, A, B and C kept):
@@ -650,7 +655,7 @@ Ward editor → the ward → Panel 3b. Under each LiDAR with a node assigned are
 Once a LiDAR is placed, aligned and has its empty room, the server finds the people it sees and links each to a wristband nearby (by position; `docs/protocol.md`, section 5). Nothing has to be switched on.
 
 On the **Ward overview** (Phase 11; the first page after sign-in):
-* **Left, the patients:** one tile each for the patients in this ward (their wristband is heard here, or their bed is here and the wristband is not heard elsewhere), with where they are in words ("🛏 In bed (Bed 1)", "🚪 At the door", "By Bed 3", "In the room", "Wristband not heard"), the heart rate, and why the tile is coloured. Below, **Other wards**: the patients with a wristband elsewhere, one line each. Click a tile (or a patient on the map) to see them below **and** to start their live vitals for 2 minutes; a patient of another ward opens the ward their wristband is heard in, or, when it is not heard, the ward of their bed. Opening the page alone never starts live vitals.
+* **Left, at the top: the chosen patient** (see "The patient card" below); under it **the patients:** one tile each for the patients in this ward (their wristband is heard here, or their bed is here and the wristband is not heard elsewhere), with where they are in words ("🛏 In bed (Bed 1)", "🚪 At the door", "By Bed 3", "In the room", "Wristband not heard"), the heart rate, and why the tile is coloured. Below, **Other wards**: the patients with a wristband elsewhere, one line each, 5 a page. Click a tile (or a patient on the map) to see them below **and** to start their live vitals for 2 minutes; a patient of another ward opens the ward their wristband is heard in, or, when it is not heard, the ward of their bed. Opening the page alone never starts live vitals.
 * **The patient card** is empty until a patient is chosen; when the ward opens, it shows the first patient whose wristband is heard in the ward, if any.
 * **The patient card:** an alert nobody has answered yet (red), where they are and how that was found ("Seen by the LiDAR (about ±0.1 m)", "Seen by a headset", "Estimated from Bluetooth (about ±1 m)"), the heart rate and SpO2 in large figures, battery, wristband, and the last message. The heart rate says what the wristband is doing:
   * a number with "Live, every second" or "Just measured";
@@ -659,7 +664,7 @@ On the **Ward overview** (Phase 11; the first page after sign-in):
   * "Next automatic reading within 3 min" (or "in about N min") between the automatic measurements, with the last value in grey and its age;
   * "No signal for N s" when the wristband has sent nothing for 5 s.
 * **▶ Live vitals for 2 min** starts them again; while they run, the button counts down ("● Live: 1:45 left").
-* **On the map:** each patient is a white disc with their initials and a coloured ring: **red, pulsing** = needs help now (an alert nobody has answered), **amber** = check (no signal, no skin contact, low battery, sensor fault), **blue** = OK, **grey dashed** = wristband off. A small badge: 🛏 in bed (the LiDAR lost them at the bed: lying down, below its scan), 🚪 at the door, ⏸ not seen just now (the position is held 10 s), 👁 seen by a headset. The name shows for the chosen patient and for the one under the mouse. Grey dots are people the LiDAR sees without a wristband (staff, visitors, or a patient not matched yet). Wall sensors are small grey squares, hollow and dashed when off. Each bed shows its name and, when a patient has it, their name and ID (FREE, TAKEN or OUT OF USE otherwise). A patient whose wristband is heard in another ward leaves this map.
+* **On the map:** each patient is a white disc with their initials and a coloured ring: **red, pulsing** = needs help now (an alert nobody has answered), **amber** = check (no signal, no skin contact, low battery, sensor fault), **blue** = OK, **grey dashed** = wristband off. A small badge: 🛏 in bed (the LiDAR lost them at the bed: lying down, below its scan), 🚪 at the door, ⏸ not seen just now (the position is held 10 s), 👁 seen by a headset. The name shows for the chosen patient and for the one under the mouse. Grey dots are people the LiDAR sees without a wristband (staff, visitors, or a patient not matched yet). Wall sensors are small grey squares, hollow and dashed when off. Each bed shows its name and, when a patient has it, their name and ID (FREE, TAKEN or OUT OF USE otherwise); click such a bed for the patient: their card when they wear a wristband, else their profile. A patient whose wristband is heard in another ward leaves this map.
 * **The alarm pop-up** says who, where in words ("By Bed 3", "At the door") and when. Heart rate and SpO2 are shown only for a vitals alarm: a fall or a door alert comes suddenly, without a measurement of that moment.
 * **Technician details** (admins, at the bottom of the card): position and source, the motion state, the MAC address, which wall sensors hear the wristband, and switches for the distance circles, all names and the 0.5 m grid.
 

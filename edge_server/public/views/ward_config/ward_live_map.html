@@ -34,23 +34,13 @@
   <div class="wo-layout">
     <aside class="wo-side" id="live-map-control-panel">
 
-      <!-- The patients of the ward -->
-      <section class="card wo-card">
-        <div class="wo-card-head">
-          <span class="wo-title">Patients</span>
-          <span class="badge badge-neutral" id="live-map-subject-count">0</span>
-        </div>
-        <div id="live-map-subjects-container" class="wo-patient-list"></div>
-        <div id="live-map-people-note" class="wo-note"></div>
-      </section>
-
       <!-- The chosen patient -->
       <section class="card wo-card" id="live-map-patient-card">
         <div class="wo-patient-head">
           <div id="live-map-patient-avatar" class="wo-avatar">?</div>
           <div style="flex: 1; min-width: 0;">
             <div id="live-map-patient-name" class="wo-name">Choose a patient</div>
-            <div id="live-map-patient-subtext" class="wo-sub">Click a patient in the list or on the map.</div>
+            <div id="live-map-patient-subtext" class="wo-sub">Click a patient in the list below or on the map.</div>
           </div>
         </div>
         <div id="live-map-alert-chip"></div>
@@ -112,6 +102,18 @@
             <span id="live-map-cal-a">A = --</span> · <span id="live-map-cal-n">n = --</span>
           </div>
         </details>
+      </section>
+
+      <!-- The patients of the ward: below the chosen one (Phase 11 review) -->
+      <section class="card wo-card">
+        <div class="wo-card-head">
+          <span class="wo-title">Patients</span>
+          <span class="badge badge-neutral" id="live-map-subject-count">0</span>
+        </div>
+        <div id="live-map-subjects-container" class="wo-patient-list"></div>
+        <!-- Other wards, 5 a page (shown when there are more than 5) -->
+        <div id="live-map-others-pager" class="wo-others-pager"></div>
+        <div id="live-map-people-note" class="wo-note"></div>
       </section>
     </aside>
 
@@ -280,6 +282,15 @@
                   <!-- Populated dynamically with active tags -->
                 </select>
               </div>
+            </div>
+
+            <!-- Your own point (Phase 11 review): type x, y inside the ward, or click the map -->
+            <div id="cal-custom-xy" class="cal-custom-xy" style="display: none;">
+              <div class="cal-custom-row">
+                <label>x (m)<input type="number" id="cal-custom-x" class="form-control" step="0.01" oninput="onCalibrationTypedPoint()"></label>
+                <label>y (m)<input type="number" id="cal-custom-y" class="form-control" step="0.01" oninput="onCalibrationTypedPoint()"></label>
+              </div>
+              <div id="cal-custom-hint" class="cal-custom-hint"></div>
             </div>
 
             <!-- Target Metric Coordinates Badge -->

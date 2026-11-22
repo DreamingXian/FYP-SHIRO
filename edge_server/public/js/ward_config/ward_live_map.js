@@ -176,6 +176,10 @@
   const RING_COLOUR = { 'st-alert': '#DC2626', 'st-warn': '#D97706', 'st-ok': '#2563EB', 'st-off': '#94A3B8' };
   let hoveredTagId = null;
   let lastListHtml = '';
+  // Patients of other wards: 5 a page; the pager is redrawn only when its page or count changes
+  const OTHERS_PER_PAGE = 5;
+  let othersPage = 1;
+  let lastOthersPagerKey = '';
 
   function isPosOffline(pos, now = Date.now()) {
     return !pos || pos.status === 'OFFLINE' || (now - (pos.lastSeen || 0) > OFFLINE_AFTER_MS);
@@ -387,9 +391,20 @@
     let html = here.length
       ? here.map(tile).join('')
       : '<div class="empty-state"><strong>Nobody with a wristband in this ward.</strong>Patients with a bed here appear when they get a wristband (Patients page).</div>';
+    const othersData = window.ShiroUI.paginate(elsewhere, othersPage, OTHERS_PER_PAGE);
+    othersPage = othersData.page;
     if (elsewhere.length) {
-      const otherTilesHtml = elsewhere.map(otherTile).join('');   // built from escaped parts
+      const otherTilesHtml = othersData.items.map(otherTile).join('');   // built from escaped parts
       html += `<div class="wo-list-divider">Other wards (${Number(elsewhere.length)})</div>${otherTilesHtml}`;
+    }
+    const othersPager = document.getElementById('live-map-others-pager');
+    const pagerKey = elsewhere.length > OTHERS_PER_PAGE ? `${othersData.total}|${othersData.page}` : '';
+    if (othersPager && pagerKey !== lastOthersPagerKey) {
+      lastOthersPagerKey = pagerKey;
+      window.ShiroUI.renderPager(othersPager, {
+        total: pagerKey ? othersData.total : 0, page: othersData.page, size: OTHERS_PER_PAGE, noun: 'in other wards',
+        onPage: (n) => { othersPage = n; renderSubjectsList(); }
+      });
     }
     if (html !== lastListHtml) {
       container.innerHTML = html;
@@ -426,7 +441,7 @@
 
     if (!tagId) {
       if (nameEl) nameEl.innerText = 'No patient chosen';
-      if (subtextEl) subtextEl.innerText = 'Click a patient in the list or on the map to see where they are and their heart rate.';
+      if (subtextEl) subtextEl.innerText = 'Click a patient in the list below, a patient or a bed on the map, to see where they are and their heart rate.';
       if (avatarEl) avatarEl.innerText = '?';
       updateTelemetryCard();
       return;
@@ -732,6 +747,25 @@
         return;
       }
     }
+
+    // A bed given to a patient: their card (wristband) or their profile (no wristband)
+    const bed = bedAt((clickX - t.offsetX) / t.scale, (t.cHeight - clickY - t.offsetY) / t.scale);
+    const occupant = bed ? bedOccupants.get(bed.bed_id) : null;
+    if (occupant) {
+      const subject = trackedSubjects.find(s => s.patient_id === occupant.patient_id);
+      if (subject) {
+        selectSubject(subject.device_id, false);
+        const card = document.getElementById('live-map-patient-card');
+        if (card && card.scrollIntoView) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      } else if (typeof window.viewPatientProfileReadOnly === 'function') {
+        window.viewPatientProfileReadOnly(occupant.patient_id);
+      }
+    }
+  }
+
+  /** The bed under a point of the map (metres), or null. */
+  function bedAt(mx, my) {
+    return ((activeWard && activeWard.beds) || []).find(b => inRect(bedRect(b), mx, my)) || null;
   }
 
   /**
@@ -1403,7 +1437,15 @@
       if (Math.hypot(x - p.x, y - p.y) <= hit) { found = tagId; break; }
     }
     hoveredTagId = found;
-    canvas.style.cursor = found ? 'pointer' : 'default';
+    // A bed given to a patient can be clicked too
+    let bedTitle = '';
+    if (!found) {
+      const bed = bedAt((x - t.offsetX) / t.scale, (t.cHeight - y - t.offsetY) / t.scale);
+      const occupant = bed ? bedOccupants.get(bed.bed_id) : null;
+      if (occupant) bedTitle = `${bedName(bed)}: ${occupant.full_name} (${occupant.patient_id}). Click for their details.`;
+    }
+    canvas.style.cursor = found || bedTitle ? 'pointer' : 'default';
+    if (canvas.title !== bedTitle) canvas.title = bedTitle;
   }
 
   /**
@@ -1537,11 +1579,11 @@
 
     if (typeof window.showModal === 'function') {
       window.showModal({
-        title: 'Remove Offline Beacon',
-        message: `Are you sure you want to remove offline beacon "${displayName}" from this ward map? This clears its last known spatial coordinates.`,
-        type: 'danger',
-        confirmText: 'Remove Beacon',
-        cancelText: 'Keep on Map',
+        title: `Take ${displayName} off the map?`,
+        message: 'Its last known position is cleared. It comes back on the map as soon as a wall sensor hears it again.',
+        type: 'warning',
+        confirmText: 'Take off the map',
+        cancelText: 'Keep it',
         onConfirm: executeRemoval
       });
     } else {
@@ -1625,7 +1667,7 @@
       optCustom.dataset.y = ry;
       optCustom.dataset.z = 0.85;
       optCustom.dataset.label = 'Custom Map Point';
-      optCustom.innerText = '🎯 Custom Point (Click anywhere on 2D map)';
+      optCustom.innerText = '🎯 Your own point: type x, y or click the map';
       lSelect.appendChild(optCustom);
     }
 
@@ -1704,8 +1746,59 @@
     updateCalibrationTargetDisplay();
   };
 
+  /** The range a typed calibration point must be in: inside the ward, 0.15 m from the walls. */
+  function customPointRange() {
+    const m = 0.15;
+    return { m, maxX: Number(activeWard.length_x) - m, maxY: Number(activeWard.width_y) - m };
+  }
+
+  /** The x, y boxes of "your own point": shown only for it; filled from the target (not while typed in). */
+  function syncCustomPointBox() {
+    const box = document.getElementById('cal-custom-xy');
+    if (box) box.style.display = isCustomLandmarkSelected ? '' : 'none';
+    const start = document.getElementById('cal-btn-start');
+    if (!isCustomLandmarkSelected || !calibrationTarget) {
+      if (start) start.disabled = false;
+      return;
+    }
+    for (const k of ['x', 'y']) {
+      const el = document.getElementById(`cal-custom-${k}`);
+      if (el && document.activeElement !== el) el.value = calibrationTarget[k].toFixed(2);
+    }
+    const r = customPointRange();
+    const hint = document.getElementById('cal-custom-hint');
+    if (hint) {
+      hint.classList.remove('is-error');
+      hint.textContent = `x from the west wall, y from the south wall. Inside this ward: x ${r.m.toFixed(2)}–${r.maxX.toFixed(2)} m, y ${r.m.toFixed(2)}–${r.maxY.toFixed(2)} m.`;
+    }
+    if (start) start.disabled = false;
+  }
+
+  /** A point typed in: used when inside the ward; otherwise says the range and holds the start. */
+  window.onCalibrationTypedPoint = function () {
+    if (!activeWard) return;
+    const r = customPointRange();
+    const x = parseFloat(document.getElementById('cal-custom-x').value);
+    const y = parseFloat(document.getElementById('cal-custom-y').value);
+    const ok = Number.isFinite(x) && Number.isFinite(y) && x >= r.m && x <= r.maxX + 1e-9 && y >= r.m && y <= r.maxY + 1e-9;
+    const hint = document.getElementById('cal-custom-hint');
+    const start = document.getElementById('cal-btn-start');
+    if (!ok) {
+      if (hint) {
+        hint.classList.add('is-error');
+        hint.textContent = `Outside the ward. Use x ${r.m.toFixed(2)}–${r.maxX.toFixed(2)} m and y ${r.m.toFixed(2)}–${r.maxY.toFixed(2)} m.`;
+      }
+      if (start) start.disabled = true;
+      return;
+    }
+    isCustomLandmarkSelected = true;
+    calibrationTarget = { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100, z: 0.85, label: 'Custom Map Point' };
+    updateCalibrationTargetDisplay();
+  };
+
   function updateCalibrationTargetDisplay() {
     if (!calibrationTarget || !activeWard) return;
+    syncCustomPointBox();
 
     const coordsEl = document.getElementById('cal-coords-preview');
     if (coordsEl) {

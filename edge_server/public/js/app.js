@@ -176,11 +176,12 @@ async function initializeApp() {
       // Check if user is currently inside the Ward Editor with unsaved changes
       if (typeof window.hasUnsavedWardChanges === 'function' && window.hasUnsavedWardChanges()) {
         showModal({
-          title: 'Unsaved Changes',
-          message: `You have changed the layout of "${window.currentWard?.ward_id || 'this ward'}" without saving.\n\nIf you leave now, the changes are lost.`,
+          title: 'Leave without saving?',
+          message: `The layout of ${window.currentWard?.ward_id || 'this ward'} has changes that are not saved.`,
+          impact: { level: 'warning', title: 'If you leave now:', points: ['Every change since the last save is lost.'] },
           type: 'warning',
-          confirmText: 'Discard & Leave',
-          cancelText: 'Continue Editing',
+          confirmText: 'Leave without saving',
+          cancelText: 'Keep editing',
           onConfirm: () => {
             if (typeof window.forceReturnToWardDirectory === 'function') {
               window.forceReturnToWardDirectory();

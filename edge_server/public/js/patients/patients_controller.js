@@ -756,11 +756,21 @@ async function handlePatientAdmission(event) {
  */
 function confirmDischargePatient(patientId, patientName, bedInfo) {
   if (window.showModal) {
+    const worn = bindingByPatient.get(patientId);
     window.showModal({
-      title: 'Discharge Inpatient',
-      message: `Are you sure you want to discharge "${patientName}" (${patientId})?\n\nThis will update the patient status to DISCHARGED and automatically release ${bedInfo} back to AVAILABLE for new admissions.`,
-      type: 'danger',
-      confirmText: 'Discharge Patient',
+      title: `Discharge ${patientName}?`,
+      message: `${patientName} (${patientId}) leaves the ward. The record and its history stay; "Admit again" brings them back.`,
+      impact: {
+        level: 'warning',
+        title: 'Discharging will:',
+        points: [
+          `Free their bed (${bedInfo}) for another patient.`,
+          worn ? `Take off their wristband ${worn.device_id}: heart rate, fall alarms, door alerts and position stop.` : 'They wear no wristband: nothing else stops.',
+          'Remove them from the ward map and the patient list (they stay under Discharged).'
+        ]
+      },
+      type: 'warning',
+      confirmText: 'Discharge',
       cancelText: 'Cancel',
       onConfirm: async () => {
         try {
@@ -796,8 +806,17 @@ function confirmDischargePatient(patientId, patientName, bedInfo) {
 function confirmDeletePatient(patientId, patientName) {
   if (window.showModal) {
     window.showModal({
-      title: 'Delete this patient\'s record?',
-      message: `${patientName} (${patientId}) and their record will be deleted for good. Their bed becomes free.\n\nThis cannot be undone. To end a stay normally, use "Discharge" instead.`,
+      title: `Delete the record of ${patientName}?`,
+      message: `To end a stay normally, use "Discharge" instead: it keeps the record.`,
+      impact: {
+        level: 'danger',
+        title: 'Deleting the record will:',
+        points: [
+          `Delete ${patientName} (${patientId}) and their wristband history for good.`,
+          'Free their bed and their wristband; heart rate, fall alarms and position stop.',
+          'This cannot be undone.'
+        ]
+      },
       type: 'danger',
       confirmText: 'Delete for good',
       cancelText: 'Cancel',
@@ -895,7 +914,12 @@ function highlightChosenBed() {
 }
 window.highlightChosenBed = highlightChosenBed;
 
-async function openAssignBedModal(patientId) {
+/**
+ * The bed dialog. leavingWardId: the patient moves out of that ward (it is being
+ * deleted): its beds are not offered, and the ward's delete dialog opens again
+ * after the move.
+ */
+async function openAssignBedModal(patientId, leavingWardId = null) {
   try {
     const res = await fetch(`/api/patients/get?id=${encodeURIComponent(patientId)}`);
     const data = await res.json();
@@ -908,14 +932,16 @@ async function openAssignBedModal(patientId) {
     // Refresh available beds list
     const bedsRes = await fetch('/api/patients/available-beds');
     const bedsData = await bedsRes.json();
-    const wards = bedsData.wards || [];
-    const availableBeds = bedsData.availableBeds || [];
+    const wards = (bedsData.wards || []).filter(w => w.ward_id !== leavingWardId);
+    const availableBeds = (bedsData.availableBeds || []).filter(b => b.ward_id !== leavingWardId);
 
     if (availableBeds.length === 0) {
       if (window.showModal) {
         window.showModal({
           title: 'No free bed',
-          message: 'Every bed in every ward is taken or out of use.\n\nDischarge a patient, or add beds under Setup → Wards & layout.',
+          message: leavingWardId
+            ? `No other ward has a free bed for ${p.full_name}.\n\nDischarge the patient (Patients page), or add beds to another ward under Setup → Wards & layout.`
+            : 'Every bed in every ward is taken or out of use.\n\nDischarge a patient, or add beds under Setup → Wards & layout.',
           type: 'warning',
           confirmText: 'OK',
           cancelText: null
@@ -929,9 +955,10 @@ async function openAssignBedModal(patientId) {
     const wardOptions = wards.map(w => `<option value="${escapeHtml(w.ward_id)}"${w.ward_id === firstFree ? ' selected' : ''}>${escapeHtml(w.ward_id)} - ${escapeHtml(w.room_title)}${escapeHtml(availableBeds.some(b => b.ward_id === w.ward_id) ? '' : ' (no free bed)')}</option>`).join('');
 
     const readmit = p.status === 'DISCHARGED';
+    const moving = Boolean(leavingWardId);
     const modalContent = `
       <div style="font-size:14px; color:var(--text-secondary); margin-bottom:12px;">
-        ${readmit ? 'Admit' : 'A bed for'} <strong>${escapeHtml(p.full_name)}</strong> (${escapeHtml(p.patient_id)})${readmit ? ' again: a new stay starts now, with the same record and history' : ''}. Click a green bed on the map, or choose it in the list.
+        ${readmit ? 'Admit' : moving ? 'Move' : 'A bed for'} <strong>${escapeHtml(p.full_name)}</strong> (${escapeHtml(p.patient_id)})${readmit ? ' again: a new stay starts now, with the same record and history' : ''}${escapeHtml(moving ? ` out of ${leavingWardId}, to a bed in another ward` : '')}. Click a green bed on the map, or choose it in the list.
       </div>
       <div class="form-group">
         <label class="form-label">Ward</label>
@@ -965,11 +992,11 @@ async function openAssignBedModal(patientId) {
 
     if (window.showModal) {
       window.showModal({
-        title: readmit ? `Admit ${p.full_name} again` : `Give ${p.full_name} a bed`,
+        title: readmit ? `Admit ${p.full_name} again` : moving ? `Move ${p.full_name} out of ${leavingWardId}` : `Give ${p.full_name} a bed`,
         customHtml: modalContent,
         isWide: true,
         type: 'info',
-        confirmText: readmit ? 'Admit with this bed' : 'Give this bed',
+        confirmText: readmit ? 'Admit with this bed' : moving ? 'Move to this bed' : 'Give this bed',
         cancelText: 'Cancel',
         onConfirm: async () => {
           const wardId = document.getElementById('modal-assign-ward')?.value;
@@ -995,6 +1022,8 @@ async function openAssignBedModal(patientId) {
               if (window.showToast) window.showToast(readmit ? `${p.full_name} is admitted again.` : `${p.full_name} now has a bed.`, 'success');
               // Back on the Admitted list, where they are now
               if (readmit && typeof window.setPatientFilter === 'function') window.setPatientFilter('ADMITTED');
+              // Moved out of a ward being deleted: back to its delete dialog (the next patient, or the delete)
+              if (moving && typeof window.deleteWardRecord === 'function') setTimeout(() => window.deleteWardRecord(leavingWardId), 400);
               await Promise.all([
                 fetchAvailableBedsAndWards(),
                 loadPatientsDirectory()
@@ -1079,10 +1108,12 @@ async function viewPatientProfileReadOnly(patientId) {
         🚨 <span>Incidents (falls, critical vitals, door alerts)</span>
       </button>
 
-      <div style="font-size:12px; background:#FFFFFF; border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:12px;">
-        <div style="font-weight:600; color:var(--text-primary); margin-bottom:6px;">🔗 Wristband History</div>
-        <div id="profile-binding-history" style="color:var(--text-muted);">Loading…</div>
-      </div>
+      <!-- Wristband history: closed until clicked, 8 a page (Phase 11 review) -->
+      <details class="profile-history">
+        <summary>⌚ Wristband history <span class="badge badge-neutral" id="profile-binding-count">…</span></summary>
+        <div id="profile-binding-history" style="color:var(--text-muted); margin-top:8px;">Loading…</div>
+        <div id="profile-binding-pager"></div>
+      </details>
     `;
 
     if (window.showModal) {
@@ -1101,39 +1132,58 @@ async function viewPatientProfileReadOnly(patientId) {
 }
 
 /**
- * Fills the profile's "Wristband History": every wristband this patient wore, newest first.
+ * Fills the profile's wristband history: every wristband this patient wore,
+ * newest first, as a table of 8 a page (the same pager as the other tables).
  */
+let profileHistory = [];
+
+function renderProfileBindingHistory(page = 1) {
+  const box = document.getElementById('profile-binding-history');
+  const pagerEl = document.getElementById('profile-binding-pager');
+  if (!box) return;
+  const pageData = window.ShiroUI.paginate(profileHistory, page);
+  const duration = window.formatBindingDuration || ((m) => `${m} min`);
+  const historyItems = pageData.items.map(b => `<tr>
+      <td><span class="mono" style="font-weight:600; color:var(--text-primary);">${escapeHtml(b.device_id || 'deleted wristband')}</span></td>
+      <td>${escapeHtml(b.bound_at || 'not recorded')}<div class="profile-history-who">${escapeHtml(b.bound_by || '')}</div></td>
+      <td>${escapeHtml(b.status === 'ACTIVE' ? 'now' : (b.unbound_at || 'not recorded'))}<div class="profile-history-who">${escapeHtml(b.status === 'ACTIVE' ? '' : (b.unbound_by || ''))}</div></td>
+      <td><span class="badge ${b.status === 'ACTIVE' ? 'badge-live' : 'badge-neutral'}">${escapeHtml(b.status === 'ACTIVE' ? 'Worn now' : b.status === 'DISCHARGED' ? 'Discharged' : 'Taken off')}</span></td>
+      <td>${escapeHtml(duration(b.duration_minutes))}${escapeHtml(b.status === 'ACTIVE' ? ' so far' : '')}</td>
+    </tr>`).join('');
+  box.innerHTML = `<table class="data-table profile-history-table">
+      <thead><tr><th>Wristband</th><th>From</th><th>Until</th><th>Ended</th><th>For</th></tr></thead>
+      <tbody>${historyItems}</tbody>
+    </table>`;
+  if (pagerEl) {
+    window.ShiroUI.renderPager(pagerEl, {
+      total: pageData.total, page: pageData.page, noun: 'wristbands',
+      onPage: (n) => renderProfileBindingHistory(n)
+    });
+  }
+}
+
 async function loadProfileBindingHistory(patientId) {
+  const box = document.getElementById('profile-binding-history');
+  const countEl = document.getElementById('profile-binding-count');
+  profileHistory = [];
   let text = null;
-  let historyItems = '';
   try {
-    const res = await fetch(`/api/bindings/history?patient_id=${encodeURIComponent(patientId)}&limit=50`);
+    const res = await fetch(`/api/bindings/history?patient_id=${encodeURIComponent(patientId)}&limit=500`);
     const data = await res.json();
     if (!data.success || !Array.isArray(data.history)) {
       text = 'Wristband history could not be loaded.';
     } else if (data.history.length === 0) {
-      text = 'No wristband has been bound to this patient.';
+      text = 'No wristband has been given to this patient yet.';
     } else {
-      const duration = window.formatBindingDuration || ((m) => `${m} min`);
-      historyItems = data.history.map(b => `
-        <div style="padding:6px 0; border-top:1px solid var(--border);">
-          <span class="mono" style="color:var(--text-primary); font-weight:600;">${escapeHtml(b.device_id || 'deleted wristband')}</span>
-          <span class="mono" style="color:var(--text-muted);">(${escapeHtml(b.mac_address || 'MAC not recorded')})</span>
-          · ${escapeHtml(b.status === 'ACTIVE' ? 'worn now' : b.status === 'DISCHARGED' ? 'ended at discharge' : 'unbound')}
-          <div style="color:var(--text-secondary); margin-top:2px;">
-            ${escapeHtml(b.bound_at || 'not recorded')} (${escapeHtml(b.bound_by || 'not recorded')})
-            → ${escapeHtml(b.status === 'ACTIVE' ? 'now' : `${b.unbound_at || 'not recorded'} (${b.unbound_by || 'not recorded'})`)}
-            · ${escapeHtml(duration(b.duration_minutes))}
-          </div>
-        </div>`).join('');
+      profileHistory = data.history;
     }
   } catch (err) {
     text = 'Wristband history could not be loaded.';
   }
-  const box = document.getElementById('profile-binding-history');
+  if (countEl) countEl.innerText = text === null ? String(profileHistory.length) : '0';
   if (!box) return;
   if (text !== null) box.textContent = text;
-  else box.innerHTML = historyItems;
+  else renderProfileBindingHistory(1);
 }
 
 /**
@@ -1234,7 +1284,7 @@ async function editPatientInfo(patientId) {
 
       <div style="border-top:1px solid var(--border); padding-top:12px;">
         <div class="form-group">
-          <label class="form-label" style="font-weight:600;">Emergency Contact Phone *</label>
+          <label class="form-label" style="font-weight:600;">Emergency Contact Phone <span class="req" aria-hidden="true">*</span></label>
           <input type="text" class="form-control" id="edit-patient-phone" value="${escapeHtml(p.phone_number || '')}" placeholder="+6012-3456789">
         </div>
 

@@ -775,3 +775,27 @@ table.data-table th {
 .layout-problems ul { margin: 0; padding-left: 18px; line-height: 1.5; }
 .layout-problems li.is-error { color: #B91C1C; }
 .layout-problems li.is-warning { color: #92400E; }
+
+/* A solid red button: the confirm of an action that cannot be undone */
+.btn-danger { background: #DC2626; border-color: #DC2626; color: #FFFFFF; font-weight: 700; }
+.btn-danger:hover { background: #B91C1C; border-color: #B91C1C; color: #FFFFFF; }
+
+/* A field that must be filled in: the star in red */
+.req { color: #DC2626; font-weight: 700; margin-left: 2px; }
+
+/* The chosen bed of the "give a bed" map stays blue under the mouse (darker), never green */
+.bed-map .bed-pick.chosen rect,
+.bed-map .bed-pick.free.chosen:hover rect { fill: #2563EB; stroke: #1E3A8A; stroke-width: 3; }
+.bed-map .bed-pick.free.chosen:hover rect { fill: #1D4ED8; }
+.bed-map .bed-pick.chosen { cursor: default; }
+
+/* Patient profile: the wristband history, closed until clicked, as a small paged table */
+.profile-history { font-size: 13px; background: #FFFFFF; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
+.profile-history > summary { cursor: pointer; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+.profile-history-table { font-size: 13px; }
+.profile-history-table td { vertical-align: top; }
+.profile-history-who { font-size: 12px; color: var(--text-muted); }
+.profile-history > summary { list-style: none; }
+.profile-history > summary::-webkit-details-marker { display: none; }
+.profile-history > summary::before { content: '▸'; color: var(--text-muted); width: 12px; }
+.profile-history[open] > summary::before { content: '▾'; }

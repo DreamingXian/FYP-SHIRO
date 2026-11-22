@@ -286,7 +286,12 @@
   window.adminRevokeHeadset = function (deviceId) {
     showModal({
       title: `Revoke ${deviceId}?`,
-      message: `${deviceId} is disconnected at once and can only connect again after a new pairing.`,
+      message: `${deviceId} can connect again only after a new pairing.`,
+      impact: {
+        level: 'danger',
+        title: 'Revoking it will:',
+        points: ['Disconnect the headset at once: whoever wears it stops seeing alarms and patients.', 'Need a new pairing code before it can be used again.']
+      },
       type: 'danger',
       confirmText: 'Revoke',
       cancelText: 'Cancel',

@@ -19,11 +19,11 @@
 
     <form id="admin-create-account" style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: end; margin-bottom: 16px;" autocomplete="off">
       <div class="form-group" style="margin: 0;">
-        <label class="form-label" for="admin-new-fullname">Full name</label>
+        <label class="form-label" for="admin-new-fullname">Full name <span class="req" aria-hidden="true">*</span></label>
         <input class="form-control" id="admin-new-fullname" required maxlength="120">
       </div>
       <div class="form-group" style="margin: 0;">
-        <label class="form-label" for="admin-new-username">Username</label>
+        <label class="form-label" for="admin-new-username">Username <span class="req" aria-hidden="true">*</span></label>
         <input class="form-control" id="admin-new-username" required maxlength="32" placeholder="lowercase">
       </div>
       <div class="form-group" style="margin: 0;">
@@ -34,7 +34,7 @@
         </select>
       </div>
       <div class="form-group" style="margin: 0;">
-        <label class="form-label" for="admin-new-password">Initial password (10+)</label>
+        <label class="form-label" for="admin-new-password">Initial password (10+ characters) <span class="req" aria-hidden="true">*</span></label>
         <input class="form-control" id="admin-new-password" type="password" required minlength="10" maxlength="128" autocomplete="new-password">
       </div>
       <button class="btn btn-primary" type="submit">➕ Create account</button>

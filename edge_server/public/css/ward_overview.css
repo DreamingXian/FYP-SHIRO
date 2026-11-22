@@ -205,3 +205,10 @@
 #live-map-patient-card.is-empty #live-map-offline-actions,
 #live-map-patient-card.is-empty .wo-tech { display: none !important; }
 #live-map-patient-card.is-empty .wo-avatar { background: #F1F5F9; color: #94A3B8; }
+
+/* Calibration: your own point, typed (x, y) or clicked */
+.cal-custom-xy { margin: -4px 0 14px; padding: 10px 12px; background: #F8FAFC; border: 1px solid var(--border); border-radius: 8px; }
+.cal-custom-row { display: flex; gap: 10px; }
+.cal-custom-row label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--text-primary); }
+.cal-custom-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+.cal-custom-hint.is-error { color: #B91C1C; font-weight: 600; }

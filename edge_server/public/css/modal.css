@@ -199,3 +199,14 @@
 .em-details summary { cursor: pointer; font-weight: 600; }
 .em-detail-row { margin-top: 6px; line-height: 1.5; }
 @media (max-width: 640px) { .em-facts { grid-template-columns: 1fr; } }
+
+/* Phase 11 review: what a risky action breaks or stops, impossible to miss */
+.modal-impact { margin-top: 14px; border-radius: 10px; padding: 12px 14px 12px 16px; border: 1.5px solid; border-left-width: 6px; font-size: 14px; line-height: 1.5; text-align: left; }
+.modal-impact.impact-danger { background: #FEF2F2; border-color: #FCA5A5; border-left-color: #DC2626; color: #7F1D1D; }
+.modal-impact.impact-warning { background: #FFFBEB; border-color: #FCD34D; border-left-color: #D97706; color: #78350F; }
+.modal-impact-title { font-weight: 800; font-size: 15px; margin-bottom: 4px; }
+.modal-impact ul { margin: 6px 0 0; padding-left: 20px; }
+.modal-impact li { margin: 3px 0; }
+.modal-impact li::marker { font-weight: 800; }
+.modal-impact-people { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.modal-impact-person { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #FFFFFF; border: 1px solid #FECACA; border-radius: 8px; padding: 6px 10px; color: #0F172A; }

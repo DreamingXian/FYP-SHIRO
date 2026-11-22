@@ -156,4 +156,28 @@ describe('Phase 11 review fixes', () => {
     assert.equal(room.room_title, 'Renamed in review');
     assert.equal(room.spatial_anchor_uuid, 'anchor-set-by-headset');
   });
+
+  test('saving a layout leaves a worn wristband IN USE, even one carrying the ward', async () => {
+    // A wristband enrolled with a ward (older dashboards did that), worn by a patient
+    await pool.query("UPDATE devices SET assigned_ward_id = ?, availability_status = 'IN_USE' WHERE device_id = ?", [BED_WARD, TAG]);
+    const ward2 = (await json(await call(`/api/ward/config?ward_id=${BED_WARD}`))).ward;
+    const res = await call('/api/ward/config', { method: 'POST', body: ward2 });
+    assert.equal(res.status, 200, await res.clone().text());
+    const [[tag]] = await pool.query('SELECT availability_status FROM devices WHERE device_id = ?', [TAG]);
+    assert.equal(tag.availability_status, 'IN_USE', 'the patient still wears it');
+  });
+
+  test('a ward with patients is not deleted; an empty one is', async () => {
+    let res = await call(`/api/ward/config?ward_id=${BED_WARD}`, { method: 'DELETE' });
+    assert.equal(res.status, 409);
+    const body = await json(res);
+    assert.match(body.error, /WARD-002 still has 2 patients: .*Review Patient \(ITEST-P11\)/);
+    const [[stillThere]] = await pool.query('SELECT assigned_ward_id, assigned_bed_id FROM patients WHERE patient_id = ?', [PATIENT]);
+    assert.equal(stillThere.assigned_bed_id, 'BED-002-03', 'nothing changed');
+
+    const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM patients WHERE status = 'ADMITTED' AND assigned_ward_id = 'WARD-003'");
+    assert.equal(Number(n), 0, 'the sample WARD-003 has no patient');
+    res = await call('/api/ward/config?ward_id=WARD-003', { method: 'DELETE' });
+    assert.equal(res.status, 200, await res.clone().text());
+  });
 });

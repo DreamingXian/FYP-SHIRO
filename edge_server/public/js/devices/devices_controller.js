@@ -469,8 +469,8 @@ function getEffectiveAvailability(d) {
  */
 function deviceUseText(d) {
   if (d.bound_patient_name) return `worn by ${d.bound_patient_name} (${d.bound_patient_id})`;
-  if (d.anchor_slot) return `wall sensor ${d.anchor_slot}`;
-  if (d.sensor_slot) return `LiDAR ${d.sensor_slot}`;
+  if (d.anchor_slot) return `the wall sensor ${d.anchor_slot}`;
+  if (d.sensor_slot) return `the LiDAR ${d.sensor_slot}`;
   if (d.assigned_ward_id) return `assigned to ${d.assigned_ward_id}`;
   if (d.availability_status === 'IN_USE') return 'marked as in use';
   return '';
@@ -877,7 +877,7 @@ async function openManualEnrollModal() {
 
     <div class="form-grid-2">
       <div class="form-group">
-        <label class="form-label" style="font-weight:600;">Device Category *</label>
+        <label class="form-label" style="font-weight:600;">Device Category <span class="req" aria-hidden="true">*</span></label>
         <select class="form-control" id="manual-dev-type" onchange="updateSuggestedManualId()">
           <option value="WRISTBAND" selected>🛏️ Wearable Wristband Tag</option>
           <option value="ANCHOR">📡 Stationary Wall Anchor</option>
@@ -893,7 +893,7 @@ async function openManualEnrollModal() {
 
     <div class="form-grid-2">
       <div class="form-group">
-        <label class="form-label" style="font-weight:600;">Physical MAC Address *</label>
+        <label class="form-label" style="font-weight:600;">Physical MAC Address <span class="req" aria-hidden="true">*</span></label>
         <input type="text" class="form-control mono" id="manual-dev-mac" placeholder="e.g. A4:CF:12:01:F8:32" required>
       </div>
       <div class="form-group">
@@ -1029,7 +1029,7 @@ function openEditDeviceModal(deviceId) {
 
     <div class="form-grid-2">
       <div class="form-group">
-        <label class="form-label" style="font-weight:600;">Service Availability *</label>
+        <label class="form-label" style="font-weight:600;">Service Availability <span class="req" aria-hidden="true">*</span></label>
         <select class="form-control" id="edit-dev-availability" ${isBound || isAssignedWard ? 'disabled' : ''}>
           <option value="AVAILABLE" ${d.availability_status === 'AVAILABLE' ? 'selected' : ''}>Available (Ready for Use)</option>
           <option value="UNAVAILABLE" ${d.availability_status === 'UNAVAILABLE' ? 'selected' : ''}>Unavailable (Damaged / Maintenance)</option>
@@ -1100,22 +1100,25 @@ function openEditDeviceModal(deviceId) {
 function confirmDeleteDevice(deviceId) {
   const d = cachedFleet.find(x => x.device_id === deviceId) || { device_id: deviceId };
   const use = deviceUseText(d);
-  let effect = '';
+  // What stops when it goes, one line each, in the red box of the dialog
+  const effects = [];
   if (d.bound_patient_name) {
-    effect = `It is taken off ${d.bound_patient_name}: their heart rate, fall alarms and position stop until they get another wristband.`;
+    effects.push(`It is taken off ${d.bound_patient_name} (${d.bound_patient_id}).`);
+    effects.push('Their heart rate, fall alarms, door alerts and position stop until they get another wristband.');
   } else if (d.anchor_slot) {
-    effect = `Its place (${d.anchor_slot}) stays empty: positions in that ward get less accurate, and with fewer than 3 working wall sensors its live map stops.`;
+    effects.push(`Its place (${d.anchor_slot}) stays empty.`);
+    effects.push('Positions in that ward get less accurate; with fewer than 3 working wall sensors its live map stops.');
   } else if (d.sensor_slot) {
-    effect = `Its place (${d.sensor_slot}) stays empty: that ward goes back to Bluetooth positions, and its door alerts (at the door, left the ward) stop.`;
+    effects.push(`Its place (${d.sensor_slot}) stays empty.`);
+    effects.push('That ward goes back to Bluetooth positions (about ±1 m), and its door alerts (at the door, left the ward) stop.');
   } else if (use) {
-    effect = 'Whatever uses it stops getting its data.';
+    effects.push('Whatever uses it stops getting its data.');
   }
-  const message = use
-    ? `⚠ ${deviceId} is in use: ${use}.\n\n${effect}\n\nDelete it anyway? Its history is kept. This cannot be undone.`
-    : `Delete ${deviceId}? It is not in use. Its history is kept. This cannot be undone.`;
+  effects.push('This cannot be undone. Its history is kept.');
   safeShowModal({
-    title: use ? `${deviceId} is in use` : `Delete ${deviceId}?`,
-    message,
+    title: use ? `Delete ${deviceId}? It is in use` : `Delete ${deviceId}?`,
+    message: use ? `${deviceId} is ${use}.` : `${deviceId} is not in use.`,
+    impact: { level: 'danger', title: use ? 'Deleting it now will:' : 'Before you delete it', points: effects },
     type: 'danger',
     confirmText: use ? 'Delete anyway' : 'Delete',
     cancelText: 'Cancel',

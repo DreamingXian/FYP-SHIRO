@@ -363,11 +363,12 @@
     function returnToWardDirectory(force = false) {
       if (!force && hasUnsavedWardChanges()) {
         showModal({
-          title: 'Unsaved Changes',
-          message: `You have unsaved changes to ward "${currentWard.ward_id}".\n\nIf you leave now, your changes will not be saved to MySQL.`,
+          title: 'Leave without saving?',
+          message: `The layout of ${currentWard.ward_id} has changes that are not saved.`,
+          impact: { level: 'warning', title: 'If you leave now:', points: ['Every change since the last save is lost.'] },
           type: 'warning',
-          confirmText: 'Discard & Leave',
-          cancelText: 'Continue Editing',
+          confirmText: 'Leave without saving',
+          cancelText: 'Keep editing',
           onConfirm: () => {
             forceReturnToWardDirectory();
           }
@@ -653,12 +654,63 @@
       if (window.requestAnimationFrame) window.requestAnimationFrame(redrawWardMap);
     }
 
-    function deleteWardRecord(wardId) {
+    /**
+     * Deleting a ward (Phase 11 review). While admitted patients are in it, the
+     * ward is not deleted: the dialog lists them, each with "Move…" (a bed in
+     * another ward); after each move it opens again. Once the ward is empty it
+     * asks to confirm, saying what goes (the server refuses too while patients remain).
+     */
+    async function deleteWardRecord(wardId) {
+      let inWard = [];
+      try {
+        const res = await fetch('/api/patients/list?status=ADMITTED');
+        const data = await res.json();
+        inWard = (data.patients || []).filter(p => p.assigned_ward_id === wardId);
+      } catch (err) {
+        showToast('The server does not answer. Nothing was deleted.', 'danger');
+        return;
+      }
+      const ward = (wardsList || []).find(w => w.ward_id === wardId) || { ward_id: wardId };
+
+      if (inWard.length) {
+        const peopleHtml = inWard.map(p => `<div class="modal-impact-person">
+            <span><b>${escapeHtml(p.full_name)}</b> <span class="mono" style="color: var(--text-muted);">${escapeHtml(p.patient_id)}</span> · ${escapeHtml(p.bed_code || p.assigned_bed_id || 'no bed')}</span>
+            <button type="button" class="btn btn-outline btn-sm"${actionAttrs('openAssignBedModal', [p.patient_id, wardId])}>Move…</button>
+          </div>`).join('');
+        showModal({
+          title: `${wardId} still has ${inWard.length} patient${inWard.length === 1 ? '' : 's'}`,
+          customHtml: `<div style="font-size: 14px; color: var(--text-secondary);">Move ${inWard.length === 1 ? 'this patient' : 'each patient'} to a bed in another ward first. After the last one, the ward can be deleted.</div>
+            <div class="modal-impact-people">${peopleHtml}</div>`,
+          impact: {
+            level: 'warning',
+            title: `${wardId} cannot be deleted yet`,
+            points: [
+              'Deleting a ward with patients in it would take away their ward and bed: they would disappear from every map and the shift report.',
+              'Move each one (Move…), or discharge them on the Patients page.'
+            ]
+          },
+          type: 'warning',
+          confirmText: 'Close'
+        });
+        return;
+      }
+
+      const sensors = Number(ward.assigned_anchor_count) || 0;
       showModal({
-        title: 'Delete Hospital Ward',
-        message: `Are you sure you want to permanently delete ward "${wardId}"?\n\nThis will remove the room geometry, beds fleet, BLE wall anchors, and obstacle cutouts from MySQL.`,
+        title: `Delete ${wardId}${ward.room_title ? ` – ${ward.room_title}` : ''}?`,
+        message: 'No patient is in this ward.',
+        impact: {
+          level: 'danger',
+          title: 'Deleting it will:',
+          points: [
+            `Remove the room, its ${Number(ward.bed_count) || 0} bed${Number(ward.bed_count) === 1 ? '' : 's'} and its furniture.`,
+            sensors ? `Free its ${sensors} wall sensor${sensors === 1 ? '' : 's'} and its LiDAR for another ward; this ward's live map and door alerts stop.` : 'Remove the places of its wall sensors and LiDAR.',
+            'Keep past incidents and shift reports (they show the ward ID).',
+            'This cannot be undone.'
+          ]
+        },
         type: 'danger',
-        confirmText: 'Delete Ward',
+        confirmText: 'Delete ward',
         cancelText: 'Cancel',
         onConfirm: async () => {
           try {
@@ -667,13 +719,13 @@
             });
             const data = await res.json();
             if (data.success) {
-              showToast(`Ward ${wardId} deleted successfully.`, 'success');
+              showToast(`Ward ${wardId} deleted.`, 'success');
               loadWardDirectory();
             } else {
-              showModal({ title: 'Delete Error', message: data.error, type: 'danger', confirmText: 'Dismiss' });
+              showModal({ title: 'Not deleted', message: data.error, type: 'warning', confirmText: 'OK' });
             }
           } catch (err) {
-            showModal({ title: 'Server Error', message: err.message, type: 'danger', confirmText: 'Dismiss' });
+            showModal({ title: 'Not deleted', message: `The server does not answer (${err.message}).`, type: 'danger', confirmText: 'OK' });
           }
         }
       });
@@ -1438,10 +1490,15 @@
 
     function resetWardDefault() {
       showModal({
-        title: 'Reset Ward Layout',
-        message: `Reset configuration for "${currentWard.ward_id}" back to default?\n\nAny unsaved changes made in this session will be reverted.`,
+        title: isCreatingNew ? 'Start this ward again?' : `Undo your changes to ${currentWard.ward_id}?`,
+        message: isCreatingNew ? 'The new ward goes back to the standard layout.' : 'The layout goes back to the last saved one.',
+        impact: {
+          level: 'warning',
+          title: 'Every change since the last save is lost:',
+          points: ['Room, door, furniture, wall sensors, LiDAR and beds.', 'Nothing saved is changed.']
+        },
         type: 'warning',
-        confirmText: 'Reset Layout',
+        confirmText: isCreatingNew ? 'Start again' : 'Undo changes',
         cancelText: 'Cancel',
         onConfirm: async () => {
           if (isCreatingNew) {

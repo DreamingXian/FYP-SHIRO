@@ -140,7 +140,12 @@
     if (!b) return;
     window.showModal({
       title: `Take off ${b.device_id}?`,
-      message: `${b.patient_name || patientId} will no longer be followed: no vitals, falls or position from this wristband.\n\nThe wristband becomes free for another patient. The history keeps who wore it and when.`,
+      message: `${b.device_id} becomes free for another patient. The history keeps who wore it and when.`,
+      impact: {
+        level: 'warning',
+        title: `${b.patient_name || patientId} will no longer be watched:`,
+        points: ['No heart rate, no fall alarms and no door alerts from this wristband.', 'They leave the ward map until they get another wristband.']
+      },
       type: 'warning',
       confirmText: 'Take it off',
       cancelText: 'Cancel',
@@ -167,8 +172,12 @@
     if (!Number.isFinite(m) || m < 0) return 'not recorded';
     if (m < 60) return `${m} min`;
     const h = Math.floor(m / 60);
-    return h < 24 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d ${h % 24} h`;
+    if (h < 24) return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+    const d = Math.floor(h / 24);
+    return h % 24 ? `${d} d ${h % 24} h` : `${d} day${d === 1 ? '' : 's'}`;
   };
+  // The patient profile uses the same wording (patients_controller.js)
+  window.formatBindingDuration = durationText;
   const endText = (b) => (b.status === 'ACTIVE' ? 'Wearing it now' : b.status === 'DISCHARGED' ? 'Discharged' : 'Taken off');
 
   window.openWristbandHistory = async function (patientId = null, patientName = null) {

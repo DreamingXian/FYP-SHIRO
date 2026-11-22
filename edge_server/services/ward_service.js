@@ -329,8 +329,10 @@ async function saveWardConfig(data) {
     }
 
     // 4. Replace Anchors
-    // First, unbind any existing devices previously assigned to this ward
-    await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ?", [wardId]);
+    // First, unbind the wall sensors and LiDARs of this ward (bound again below). Only
+    // those: a wristband never belongs to a ward, and releasing one here marked a
+    // wristband a patient wears as free (Phase 11 review).
+    await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ? AND device_type IN ('ANCHOR', 'ROOM_SENSOR')", [wardId]);
 
     // Fetch existing calibration so layout updates don't wipe calibration values
     const [existingAnchors] = await conn.query('SELECT anchor_id, calibrated_a, calibrated_n, last_calibrated_at FROM ward_anchors WHERE ward_id = ?', [wardId]);
@@ -443,7 +445,19 @@ async function deleteWard(wardId) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ?", [wardId]);
+    // Patients in the ward: the ward is not deleted until they are moved (the
+    // database would clear their ward and bed, and they would vanish from every map)
+    const [inWard] = await conn.query(
+      "SELECT patient_id, full_name FROM patients WHERE status = 'ADMITTED' AND assigned_ward_id = ? FOR UPDATE",
+      [wardId]
+    );
+    if (inWard.length) {
+      const names = inWard.map(p => `${p.full_name} (${p.patient_id})`).join(', ');
+      throw new HttpError(409, `${wardId} still has ${inWard.length} patient${inWard.length === 1 ? '' : 's'}: ${names}. Move them to another ward first.`);
+    }
+    await conn.query("UPDATE devices SET assigned_ward_id = NULL, availability_status = 'AVAILABLE' WHERE assigned_ward_id = ? AND device_type IN ('ANCHOR', 'ROOM_SENSOR')", [wardId]);
+    // Any other device that only carried this ward keeps its use; just no ward
+    await conn.query('UPDATE devices SET assigned_ward_id = NULL WHERE assigned_ward_id = ?', [wardId]);
     await conn.query('DELETE FROM ward_rooms WHERE ward_id = ?', [wardId]);
     await conn.commit();
     reloadRoomSensors();

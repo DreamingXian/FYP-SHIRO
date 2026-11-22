@@ -168,6 +168,8 @@ const SAFE_EXPRESSIONS = [
   /^bedShapes$/, /^free \? 'free' : 'taken'$/,
   // Phase 11 review: the ward editor's problem list, the overview's other-ward tiles (escaped parts)
   /^(problemItems|otherTilesHtml)$/,
+  // Phase 11 review 2: the patients still in a ward being deleted (escaped parts)
+  /^peopleHtml$/,
   /^getRadar(Signal|Battery)Html\(d\)$/,
   /^statusBadge\(d\.status\)$/, // health_monitor.js: fixed class name, escaped text
   /^isBound \|\| isAssignedWard \? `<option value="IN_USE" selected>In Use \(Currently Deployed\)<\/option>` : ''$/,
