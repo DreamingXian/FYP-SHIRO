@@ -313,14 +313,32 @@ namespace ShiroMR.EditorTools
             Shoot(canvas, Path.Combine(dir, "patient_now_alert.png"), true);
             Call(view, "SetAlert", (ShiroAlertManager.HeadsetAlert)null);
 
-            // 24 hours: a high heart rate (marked), two hours off the wrist (a gap), SpO2 dips
+            // Now, the battery's middle colour (orange, charging)
+            Call(view, "Note", "");
+            Call(view, "SetNow", new ShiroPatientView.NowState
+            {
+                HasTag = true, Heard = true, HeartValue = "68", HeartWords = "Measured 2 min ago", HeartDim = true, Spo2 = 96,
+                Battery = 35, Charging = true, Where = "At their bed (Bed 2)", How = "At their bed", HowColour = ShiroTheme.OkText, Colour = ShiroTheme.Ok
+            });
+            Get<UnityEngine.UI.Image>(view, "_dot").color = ShiroTheme.Ok;
+            Shoot(canvas, Path.Combine(dir, "patient_now_charging.png"), true);
+
+            // Vitals, the web's ranges. 1 hour: a reading every 3 min and 2 min of live vitals
+            // (sparse points, all joined); 24 hours: a high spell (red), 2 h off the wrist
+            // (a faint join), SpO2 dips; 7 and 30 days: day and night, a long time off the wrist
             Call(view, "SelectTab", 1, false);
             DateTime now = DateTime.UtcNow;
+            Call(view, "SetHistory", SampleOneHour(now), "-1h", "10s", now, null);
+            Shoot(canvas, Path.Combine(dir, "patient_vitals_1h.png"), true);
             Call(view, "SetHistory", SampleHistory(now), "-24h", "5m", now, null);
-            Shoot(canvas, Path.Combine(dir, "patient_24h.png"), true);
+            Shoot(canvas, Path.Combine(dir, "patient_vitals_24h.png"), true);
+            Call(view, "SetHistory", SampleDays(now, 7, 30, 50.0, 46.0, 3), "-7d", "30m", now, null);
+            Shoot(canvas, Path.Combine(dir, "patient_vitals_7d.png"), true);
+            Call(view, "SetHistory", SampleDays(now, 30, 120, 300.0, 280.0, 5), "-30d", "2h", now, null);
+            Shoot(canvas, Path.Combine(dir, "patient_vitals_30d.png"), true);
 
             Call(view, "SetHistory", null, "-6h", "1m", now, "the edge server cannot be reached");
-            Shoot(canvas, Path.Combine(dir, "patient_24h_error.png"), true);
+            Shoot(canvas, Path.Combine(dir, "patient_vitals_error.png"), true);
 
             // Alerts: six of the last 7 days (two pages), one waiting, answered on a headset and a dashboard
             Call(view, "SelectTab", 2, false);
@@ -356,6 +374,47 @@ namespace ShiroMR.EditorTools
                 float spo2 = (float)Math.Round(96.5 + rnd.NextDouble() * 2 - 1, 1);
                 if (k % 37 == 0) spo2 = 91f;
                 list.Add(new VitalsPoint { time = start.AddMinutes(k * 5).ToString("yyyy-MM-ddTHH:mm:ssZ"), heart_rate = hr, spo2 = spo2 });
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// One hour of 10-second medians (fictional), as the wristband measures: a reading of
+        /// about 15 s every 3 minutes, and 2 minutes of live vitals (one a second).
+        /// </summary>
+        private static List<VitalsPoint> SampleOneHour(DateTime nowUtc)
+        {
+            var rnd = new System.Random(11);
+            var list = new List<VitalsPoint>();
+            DateTime start = nowUtc.AddHours(-1);
+            for (int k = 0; k < 360; k++)
+            {
+                int s = k * 10;
+                bool live = s >= 2400 && s < 2520;
+                bool burst = s % 180 < 20;
+                if (!live && !burst) continue;
+                float spo2 = rnd.NextDouble() < 0.6 ? (float)Math.Round(96 + rnd.NextDouble() * 2, 1) : 0f;
+                list.Add(new VitalsPoint { time = start.AddSeconds(s).ToString("yyyy-MM-ddTHH:mm:ssZ"), heart_rate = 74 + rnd.Next(-4, 5), spo2 = spo2 });
+            }
+            return list;
+        }
+
+        /// <summary>Days of medians (fictional): higher by day, lower at night; none between gapFromH and gapToH hours ago.</summary>
+        private static List<VitalsPoint> SampleDays(DateTime nowUtc, int days, int windowMin, double gapFromH, double gapToH, int seed)
+        {
+            var rnd = new System.Random(seed);
+            var list = new List<VitalsPoint>();
+            DateTime start = nowUtc.AddDays(-days);
+            int n = days * 24 * 60 / windowMin;
+            for (int k = 0; k < n; k++)
+            {
+                double hoursAgo = days * 24.0 - k * windowMin / 60.0;
+                if (hoursAgo < gapFromH && hoursAgo > gapToH) continue;   // off the wrist
+                DateTime t = start.AddMinutes(k * windowMin);
+                double hourOfDay = t.ToLocalTime().TimeOfDay.TotalHours;
+                int hr = (int)Math.Round(70 + 9 * Math.Sin((hourOfDay - 9) / 24.0 * 2 * Math.PI) + rnd.NextDouble() * 6 - 3);
+                float spo2 = (float)Math.Round(96.5 + rnd.NextDouble() * 2 - 1, 1);
+                list.Add(new VitalsPoint { time = t.ToString("yyyy-MM-ddTHH:mm:ssZ"), heart_rate = hr, spo2 = spo2 });
             }
             return list;
         }

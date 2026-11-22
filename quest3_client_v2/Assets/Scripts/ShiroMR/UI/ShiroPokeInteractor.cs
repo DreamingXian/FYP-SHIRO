@@ -46,10 +46,11 @@ namespace ShiroMR.UI
             public readonly HashSet<ShiroButton> Armed = new HashSet<ShiroButton>();
             public float LastPress = -10f;
             public bool NearUi;
+            public bool IsLeft;
         }
 
         private readonly Finger _right = new Finger();
-        private readonly Finger _left = new Finger();
+        private readonly Finger _left = new Finger { IsLeft = true };
         private readonly List<ShiroButton> _scratch = new List<ShiroButton>();
         private Transform _rightController;
         private Transform _leftController;
@@ -122,6 +123,7 @@ namespace ShiroMR.UI
             if (!f.Valid)
             {
                 SetHover(f, null);
+                Feedback(f, 999f, false);
                 f.NearUi = false;
                 // A tracking blink keeps the finger's state (not armed after a press);
                 // lost for longer, it starts afresh: it must come from in front again
@@ -160,6 +162,8 @@ namespace ShiroMR.UI
             }
             f.NearUi = near;
             SetHover(f, best);
+            // The fingertip's dot lights up over a button and grows at the press (both hands)
+            Feedback(f, best != null ? Mathf.Max(0f, -bestDepth) : 999f, best != null && bestDepth >= PressAt);
 
             // Disarm the buttons the finger is no longer in front of (moved off the side,
             // pushed through, hidden). Pressing needs an arming from in front again.
@@ -200,6 +204,15 @@ namespace ShiroMR.UI
             depth = Vector3.Dot(tip - rt.position, rt.forward);
             area = r.width * r.height * scale * scale;
             return true;
+        }
+
+        /// <summary>Hover distance (m in front of the button) and touching, for the fingertip's dot.</summary>
+        private static void Feedback(Finger f, float distance, bool touching)
+        {
+            var hands = ShiroHandVisualizer.Instance;
+            if (hands == null) return;
+            if (f.IsLeft) { hands.PokeLeftHoverDistance = distance; hands.PokeLeftTouching = touching; }
+            else { hands.PokeRightHoverDistance = distance; hands.PokeRightTouching = touching; }
         }
 
         private static void SetHover(Finger f, ShiroButton b)

@@ -4,16 +4,19 @@
 // Shown in the ward panel in place of the list (same frame, same place), from a
 // row of the patient list, a dot on the map, or "Profile and history" on the
 // patient's tag. "Back" returns to the list. Four tabs:
-//   Now      - the heart rate in the same words as their tag, SpO2, the
-//              wristband's battery, where they are and how that is known; an
-//              alert waiting for them at the top with "I'm responding"; Show me
-//              (their tag pulses blue, an arrow points to it); live vitals (one
-//              reading a second for 2 minutes).
-//   24 hours - heart rate and SpO2 over the last 1, 6 or 24 hours (one median
-//              per window from the edge server's time-series database), low,
-//              average and high, the normal range shaded, a heart rate under 50
-//              or over 120 marked; a gap where no reading came. SpO2 is a rough
-//              guide only (not calibrated), so it is not marked.
+//   Now      - the heart rate (♥) in the same words as their tag, SpO2, the
+//              wristband's battery (green, orange from 40 %, red from 20 %, as
+//              on the web's Devices page, with a bar), where they are and how
+//              that is known; an alert waiting for them at the top with "I'm
+//              responding"; Show me (their tag pulses blue, an arrow points to
+//              it); live vitals (one reading a second for 2 minutes).
+//   Vitals   - heart rate and SpO2 over the last hour, 6 hours, 24 hours, 7 days
+//              or 30 days, the web's ranges (one median per window from the edge
+//              server's time-series database; kept 30 days): low, average and
+//              high, the web's normal range shaded (60-100 bpm, SpO2 95-100 %),
+//              a heart rate under 50 or over 120 marked red. One thin line joins
+//              the readings; a long time without readings is joined faintly.
+//              SpO2 is a rough guide only (not calibrated), so it is not marked.
 //   Alerts   - this patient's alerts of the last 7 days, newest first, and who
 //              answered them how fast; four per page with the web's pager.
 //   Profile  - ID, age and sex, ward and bed, admitted, height and weight,
@@ -42,15 +45,26 @@ namespace ShiroMR.UI
         private const float ButtonsY = PageH - 30f;
         private const int AlertsPerPage = 4;
         private const float AlertRowH = 40f, AlertRowGap = 5f;
-        private const float ChartH = 64f;
+        private const float ChartH = 58f;                  // a chart's box
+        private const float ChartPlotTop = 6f, ChartPlotH = ChartH - 12f;
         private const string AlertRange = "7d";
         private const int AlertLimit = 40;
 
-        private static readonly string[] TabNames = { "Now", "24 hours", "Alerts", "Profile" };
-        private static readonly string[] Ranges = { "-1h", "-6h", "-24h" };
-        private static readonly string[] RangeLabels = { "1 h", "6 h", "24 h" };
+        private static readonly string[] TabNames = { "Now", "Vitals", "Alerts", "Profile" };
+        // The web dashboard's ranges (the edge server answers exactly these)
+        private static readonly string[] Ranges = { "-1h", "-6h", "-24h", "-7d", "-30d" };
+        private static readonly string[] RangeLabels = { "1 h", "6 h", "24 h", "7 days", "30 days" };
         private static readonly Color HeartColour = new Color32(248, 113, 113, 255);
         private static readonly Color NormalBand = new Color(0.53f, 0.94f, 0.67f, 0.10f);
+        private const string Heart = "<color=#F87171>♥</color> ";
+        // Battery, as on the web's Devices page: green above 40 %, orange to 21 %, red at 20 % and below
+        private static readonly Color BatteryGood = new Color32(34, 197, 94, 255);
+        private static readonly Color BatteryMid = new Color32(249, 115, 22, 255);
+        private static readonly Color BatteryLowC = new Color32(239, 68, 68, 255);
+        private static readonly Color BatteryGoodText = new Color32(134, 239, 172, 255);
+        private static readonly Color BatteryMidText = new Color32(253, 186, 116, 255);
+        private static readonly Color BatteryLowText = new Color32(252, 165, 165, 255);
+        private const float BatteryBarW = 72f;
         private const string Unit = "<size=12><color=#A5ACB8>";
         private const string UnitEnd = "</color></size>";
 
@@ -68,8 +82,10 @@ namespace ShiroMR.UI
 
         private class ChartView
         {
-            public TextMeshProUGUI Title, Stats, Top, Bottom, Empty;
+            public TextMeshProUGUI Title, Stats, Empty;
+            public readonly TextMeshProUGUI[] Axis = new TextMeshProUGUI[4];
             public ShiroLineChart Chart;
+            public float AxisMin, AxisMax, BandLow, BandHigh;   // the web's axis and normal range
         }
 
         private class AlertRowView
@@ -98,6 +114,7 @@ namespace ShiroMR.UI
         private ShiroButton _respond;
         private RectTransform _nowBody;
         private TextMeshProUGUI _hrValue, _hrWords, _spo2Value, _spo2Words, _batValue, _batWords;
+        private Image _batTrack, _batFill;
         private TextMeshProUGUI _where, _how, _nowNote;
         private ShiroButton _showMe, _live;
         private bool _alertShown;
@@ -108,10 +125,10 @@ namespace ShiroMR.UI
         private float _liveAskedAt = -100f, _liveUntil;
         private string _liveText;
 
-        // 24 hours
-        private readonly ShiroButton[] _rangeBtns = new ShiroButton[3];
+        // Vitals
+        private readonly ShiroButton[] _rangeBtns = new ShiroButton[5];
         private string _range = "-24h";
-        private TextMeshProUGUI _windowText, _tStart, _tMid, _tEnd;
+        private TextMeshProUGUI _legend, _tStart, _tMid, _tEnd;
         private ChartView _hr, _spo;
         private List<VitalsPoint> _points;
         private string _window;
@@ -290,10 +307,26 @@ namespace ShiroMR.UI
             _spo2Value.text = s.Spo2 > 0 ? $"{s.Spo2}{Unit} %{UnitEnd}" : "--";
             _spo2Value.color = s.Spo2 > 0 && s.Heard ? ShiroTheme.Text : ShiroTheme.TextDim;
             _spo2Words.text = "rough guide";
-            _batValue.text = s.Battery >= 0 ? $"{s.Battery}{Unit} %{UnitEnd}" : "--";
-            _batValue.color = s.Battery >= 0 ? ShiroTheme.Text : ShiroTheme.TextDim;
-            _batWords.text = s.Charging ? "charging" : s.BatteryLow ? "low: charge it" : s.HasTag && !s.Heard ? "not heard" : "battery";
-            _batWords.color = s.BatteryLow ? ShiroTheme.WarnText : ShiroTheme.TextDim;
+            // Battery: green above 40 %, orange to 21 %, red at 20 % and below (the web's
+            // Devices page); dimmed when the wristband is not heard (the last known level)
+            bool known = s.Battery >= 0;
+            int pct = Mathf.Clamp(s.Battery, 0, 100);
+            bool stale = s.HasTag && !s.Heard;
+            Color barColour = pct > 40 ? BatteryGood : pct > 20 ? BatteryMid : BatteryLowC;
+            Color textColour = pct > 40 ? BatteryGoodText : pct > 20 ? BatteryMidText : BatteryLowText;
+            if (stale) { barColour.a = 0.45f; textColour = ShiroTheme.TextDim; }
+            _batValue.text = known ? $"{pct}{Unit} %{UnitEnd}" : "--";
+            _batValue.color = known ? textColour : ShiroTheme.TextDim;
+            _batFill.gameObject.SetActive(known && pct > 0);
+            if (known && pct > 0)
+            {
+                ShiroUIKit.Place(_batFill, 10, 53, Mathf.Max(6f, BatteryBarW * pct / 100f), 6);
+                _batFill.color = barColour;
+            }
+            _batWords.text = !known ? "not known yet" : stale ? "last known" : s.Charging ? "charging"
+                : pct <= 20 ? "low: charge it" : pct <= 40 ? "charge soon" : "good";
+            _batWords.color = !known || stale ? ShiroTheme.TextDim : s.Charging ? ShiroTheme.OkText
+                : pct <= 40 ? textColour : ShiroTheme.TextDim;
             _where.text = s.Where ?? "";
             _how.text = s.How ?? "";
             _how.color = s.HowColour;
@@ -431,14 +464,13 @@ namespace ShiroMR.UI
         {
             for (int i = 0; i < Ranges.Length; i++) _rangeBtns[i].SetKind(Ranges[i] == _range ? ButtonKind.Primary : ButtonKind.Secondary);
             string window = _window ?? DefaultWindow(_range);
-            _windowText.text = $"Each point: median of {WindowWords(window)}";
             string span = SpanWords(_range);
             double spanS = SpanSeconds(_range);
             DateTime nowUtc = _points != null ? _pointsNowUtc : DateTime.UtcNow;
-            DateTime startLocal = nowUtc.AddSeconds(-spanS).ToLocalTime();
-            _tStart.text = ClockWords(startLocal);
-            _tMid.text = ClockWords(nowUtc.AddSeconds(-spanS / 2).ToLocalTime());
+            _tStart.text = AxisTime(nowUtc.AddSeconds(-spanS).ToLocalTime(), _range);
+            _tMid.text = AxisTime(nowUtc.AddSeconds(-spanS / 2).ToLocalTime(), _range);
             _tEnd.text = "now";
+            string key = "Shaded: the normal range. Red dot: heart rate under 50 or over 120. SpO2 is a rough guide only.";
 
             if (_historyLoading || _historyError != null || _points == null || _points.Count == 0)
             {
@@ -447,74 +479,90 @@ namespace ShiroMR.UI
                     : _points == null ? "" : $"No readings in {span}.";
                 ClearChart(_hr, msg);
                 ClearChart(_spo, msg);
+                _legend.text = $"Each point is the median of {WindowWords(window)}. {key}";
                 return;
             }
 
+            // Every reading is joined to the next by a thin line; after a long time without
+            // readings (wristband off or out of range) the join is faint
             DateTime start = nowUtc.AddSeconds(-spanS);
             double winS = WindowSeconds(window);
-            var hr = new List<Vector2>();
-            var hrFlags = new List<bool>();
-            var sp = new List<Vector2>();
-            DateTime? prev = null;
+            double gapS = Math.Max(3 * winS, 1800);
+            var hr = new List<Vector2>(); var hrFlags = new List<bool>(); var hrGap = new List<bool>();
+            var sp = new List<Vector2>(); var spGap = new List<bool>();
+            DateTime? hrPrev = null, spPrev = null;
+            int count = 0;
             foreach (var p in _points)
             {
                 if (p == null || !TryUtc(p.time, out DateTime t)) continue;
-                if (prev.HasValue && (t - prev.Value).TotalSeconds > 2.5 * winS)
-                {
-                    // No reading for a while: a gap, not a line across it
-                    hr.Add(new Vector2(0f, float.NaN)); hrFlags.Add(false);
-                    sp.Add(new Vector2(0f, float.NaN));
-                }
-                prev = t;
                 float x = (float)(((t - start).TotalSeconds + winS / 2) / spanS);
-                float h = p.heart_rate > 0 ? p.heart_rate : float.NaN;
-                float s = p.spo2 > 0f ? p.spo2 : float.NaN;
-                hr.Add(new Vector2(x, h));
-                hrFlags.Add(!float.IsNaN(h) && (h > 120f || h < 50f));
-                sp.Add(new Vector2(x, s));
+                bool any = false;
+                if (p.heart_rate > 0)
+                {
+                    hr.Add(new Vector2(x, p.heart_rate));
+                    hrFlags.Add(p.heart_rate > 120 || p.heart_rate < 50);
+                    hrGap.Add(hrPrev.HasValue && (t - hrPrev.Value).TotalSeconds > gapS);
+                    hrPrev = t;
+                    any = true;
+                }
+                if (p.spo2 > 0f)
+                {
+                    sp.Add(new Vector2(x, p.spo2));
+                    spGap.Add(spPrev.HasValue && (t - spPrev.Value).TotalSeconds > gapS);
+                    spPrev = t;
+                    any = true;
+                }
+                if (any) count++;
             }
-            FillChart(_hr, hr, hrFlags, true, $"No heart rate in {span}.");
-            FillChart(_spo, sp, null, false, $"No SpO2 in {span}.");
+            FillChart(_hr, hr, hrFlags, hrGap, $"No heart rate in {span}.");
+            FillChart(_spo, sp, null, spGap, $"No SpO2 in {span}.");
+            _legend.text = $"{count} point{(count == 1 ? "" : "s")}, each the median of {WindowWords(window)}. {key}";
         }
 
-        private static void FillChart(ChartView v, List<Vector2> pts, List<bool> flags, bool heart, string emptyMsg)
+        /// <summary>
+        /// One chart: the web's axis (widened only when a reading falls outside it), labels at
+        /// the normal range's edges and the axis ends where there is room, the stats.
+        /// </summary>
+        private static void FillChart(ChartView v, List<Vector2> pts, List<bool> flags, List<bool> gaps, string emptyMsg)
         {
+            if (pts.Count == 0) { ClearChart(v, emptyMsg); return; }
             float min = float.MaxValue, max = float.MinValue, sum = 0f;
-            int n = 0;
-            foreach (var p in pts)
-            {
-                if (float.IsNaN(p.y)) continue;
-                min = Mathf.Min(min, p.y);
-                max = Mathf.Max(max, p.y);
-                sum += p.y;
-                n++;
-            }
-            if (n == 0) { ClearChart(v, emptyMsg); return; }
-            float lo, hi;
-            if (heart)
-            {
-                lo = Mathf.Max(30f, Mathf.Min(50f, Mathf.Floor((min - 5f) / 10f) * 10f));
-                hi = Mathf.Min(220f, Mathf.Max(110f, Mathf.Ceil((max + 5f) / 10f) * 10f));
-            }
-            else
-            {
-                lo = Mathf.Max(70f, Mathf.Min(90f, Mathf.Floor((min - 2f) / 2f) * 2f));
-                hi = 100f;
-            }
+            foreach (var p in pts) { min = Mathf.Min(min, p.y); max = Mathf.Max(max, p.y); sum += p.y; }
+            float lo = v.AxisMin, hi = v.AxisMax;
+            if (min < lo) lo = Mathf.Floor((min - 2f) / 5f) * 5f;
+            if (max > hi) hi = Mathf.Ceil((max + 2f) / 5f) * 5f;
             v.Chart.YMin = lo;
             v.Chart.YMax = hi;
-            v.Chart.SetPoints(pts, flags);
-            v.Top.text = hi.ToString("0", CultureInfo.InvariantCulture);
-            v.Bottom.text = lo.ToString("0", CultureInfo.InvariantCulture);
-            v.Stats.text = $"low {Mathf.RoundToInt(min)} · average {Mathf.RoundToInt(sum / n)} · high {Mathf.RoundToInt(max)}";
+            v.Chart.GridValues = new[] { lo, v.BandLow, v.BandHigh, hi };
+            v.Chart.SetPoints(pts, flags, gaps);
+            LabelAxis(v, lo, hi);
+            v.Stats.text = $"low {Mathf.RoundToInt(min)} · average {Mathf.RoundToInt(sum / pts.Count)} · high {Mathf.RoundToInt(max)}";
             v.Empty.text = "";
+        }
+
+        /// <summary>Axis labels as on the web (normal range edges, then the ends), none overlapping.</summary>
+        private static void LabelAxis(ChartView v, float lo, float hi)
+        {
+            float[] values = { v.BandLow, v.BandHigh, hi, lo };
+            var placed = new List<float>();
+            for (int i = 0; i < values.Length; i++)
+            {
+                var label = v.Axis[i];
+                float y = ChartPlotTop + (1f - (values[i] - lo) / (hi - lo)) * ChartPlotH;
+                bool free = values[i] >= lo && values[i] <= hi;
+                foreach (float other in placed) if (Mathf.Abs(other - y) < 9f) free = false;
+                label.gameObject.SetActive(free);
+                if (!free) continue;
+                placed.Add(y);
+                label.text = values[i].ToString("0", CultureInfo.InvariantCulture);
+                ShiroUIKit.Place(label, 2, y - 6f, 24, 12);
+            }
         }
 
         private static void ClearChart(ChartView v, string msg)
         {
-            v.Chart.SetPoints(null, null);
-            v.Top.text = "";
-            v.Bottom.text = "";
+            v.Chart.SetPoints(null, null, null);
+            foreach (var a in v.Axis) a.gameObject.SetActive(false);
             v.Stats.text = "";
             v.Empty.text = msg ?? "";
         }
@@ -797,12 +845,27 @@ namespace ShiroMR.UI
             return local.ToString("ddd d MMM HH:mm", CultureInfo.InvariantCulture);
         }
 
-        /// <summary>A time on the chart's axis: "14:05", or "yesterday 14:05".</summary>
-        private static string ClockWords(DateTime local) =>
-            local.Date == DateTime.Today ? local.ToString("HH:mm", CultureInfo.InvariantCulture)
-                                         : "yesterday " + local.ToString("HH:mm", CultureInfo.InvariantCulture);
+        /// <summary>A time on the chart's axis: "14:05", "yesterday 14:05", "Sat 15 Nov 14:05" (7 days), "23 Oct" (30 days).</summary>
+        private static string AxisTime(DateTime local, string range)
+        {
+            if (range == "-30d") return local.ToString("d MMM", CultureInfo.InvariantCulture);
+            if (range == "-7d") return local.ToString("ddd d MMM HH:mm", CultureInfo.InvariantCulture);
+            if (local.Date == DateTime.Today) return local.ToString("HH:mm", CultureInfo.InvariantCulture);
+            if (local.Date == DateTime.Today.AddDays(-1)) return "yesterday " + local.ToString("HH:mm", CultureInfo.InvariantCulture);
+            return local.ToString("d MMM HH:mm", CultureInfo.InvariantCulture);
+        }
 
-        private static string DefaultWindow(string range) => range == "-1h" ? "10s" : range == "-6h" ? "1m" : "5m";
+        private static string DefaultWindow(string range)
+        {
+            switch (range)
+            {
+                case "-1h": return "10s";
+                case "-6h": return "1m";
+                case "-7d": return "30m";
+                case "-30d": return "2h";
+                default: return "5m";
+            }
+        }
 
         private static string WindowWords(string window)
         {
@@ -829,9 +892,29 @@ namespace ShiroMR.UI
             }
         }
 
-        private static string SpanWords(string range) => range == "-1h" ? "the last hour" : range == "-6h" ? "the last 6 hours" : "the last 24 hours";
+        private static string SpanWords(string range)
+        {
+            switch (range)
+            {
+                case "-1h": return "the last hour";
+                case "-6h": return "the last 6 hours";
+                case "-7d": return "the last 7 days";
+                case "-30d": return "the last 30 days";
+                default: return "the last 24 hours";
+            }
+        }
 
-        private static double SpanSeconds(string range) => range == "-1h" ? 3600 : range == "-6h" ? 6 * 3600 : 24 * 3600;
+        private static double SpanSeconds(string range)
+        {
+            switch (range)
+            {
+                case "-1h": return 3600;
+                case "-6h": return 6 * 3600;
+                case "-7d": return 7 * 86400;
+                case "-30d": return 30 * 86400;
+                default: return 86400;
+            }
+        }
 
         // ----- Building -----
 
@@ -880,13 +963,16 @@ namespace ShiroMR.UI
             _alertBox = ShiroUIKit.Panel(page, "AlertBox", ShiroTheme.AlertDark, 10f);
             ShiroUIKit.Place(_alertBox, Pad, 0, CW, 48);
             Transform box = _alertBox.transform;
-            float textW = CW - 12f - 136f - 8f;
+            // The button on the right, a clear 12 mm gap between it and the text on its left
+            const float respondW = 120f;
+            float respondX = CW - 10f - respondW;
+            float textW = respondX - 12f - 12f;
             _alertTitle = ShiroUIKit.Label(box, "Title", "", 15f, ShiroTheme.AlertText, FontStyles.Bold).Fit(11f);
             ShiroUIKit.Place(_alertTitle, 12, 5, textW, 21);
             _alertLine = ShiroUIKit.Label(box, "Line", "", 12f, ShiroTheme.Text).Fit(9f);
             ShiroUIKit.Place(_alertLine, 12, 26, textW, 17);
             _respond = ShiroUIKit.Button(box, "Respond", "I'm responding", ButtonKind.Danger, Respond, 13f);
-            ShiroUIKit.Place(_respond, CW - 10 - 136, 9, 136, 30);
+            ShiroUIKit.Place(_respond, respondX, 9, respondW, 30);
             _alertBox.gameObject.SetActive(false);
 
             // The rest moves down while the alert is shown
@@ -896,9 +982,15 @@ namespace ShiroMR.UI
             Transform b = body.transform;
             const float hw = 160f;
             float sw = (CW - hw - 16f) / 2f;
-            Tile(b, "HeartTile", Pad, hw, "Heart rate", out _hrValue, out _hrWords);
+            Tile(b, "HeartTile", Pad, hw, Heart + "Heart rate", out _hrValue, out _hrWords);
             Tile(b, "Spo2Tile", Pad + hw + 8f, sw, "SpO2", out _spo2Value, out _spo2Words);
-            Tile(b, "WristbandTile", Pad + hw + 8f + sw + 8f, sw, "Wristband", out _batValue, out _batWords);
+            var battery = Tile(b, "BatteryTile", Pad + hw + 8f + sw + 8f, sw, "Battery", out _batValue, out _batWords);
+            // The wristband's battery as a bar (as on the web's Devices page)
+            _batTrack = ShiroUIKit.Panel(battery.transform, "BarTrack", new Color(1f, 1f, 1f, 0.12f), 3f);
+            ShiroUIKit.Place(_batTrack, 10, 53, BatteryBarW, 6);
+            _batFill = ShiroUIKit.Panel(battery.transform, "BarFill", BatteryGood, 3f);
+            ShiroUIKit.Place(_batFill, 10, 53, BatteryBarW, 6);
+            _batFill.gameObject.SetActive(false);
             _where = ShiroUIKit.Label(b, "Where", "", 14f, ShiroTheme.Text).Fit(10f);
             ShiroUIKit.Place(_where, Pad, 86, CW, 20);
             _how = ShiroUIKit.Label(b, "How", "", 12f, ShiroTheme.OkText).Fit(9f);
@@ -913,55 +1005,68 @@ namespace ShiroMR.UI
             LayoutNow();
         }
 
-        private static void Tile(Transform parent, string name, float x, float w, string label, out TextMeshProUGUI value, out TextMeshProUGUI words)
+        /// <summary>A tile: its name (rich text: the heart), the value, and a line of words at the bottom.</summary>
+        private static Image Tile(Transform parent, string name, float x, float w, string label, out TextMeshProUGUI value, out TextMeshProUGUI words)
         {
             var tile = ShiroUIKit.Panel(parent, name, ShiroTheme.GlassRaised, 10f);
             ShiroUIKit.Place(tile, x, 0, w, 78);
             var l = ShiroUIKit.Label(tile.transform, "Label", label, 12f, ShiroTheme.TextDim);
+            l.richText = true;
             ShiroUIKit.Place(l, 10, 6, w - 20, 16);
             value = ShiroUIKit.Label(tile.transform, "Value", "--", 28f, ShiroTheme.Text, FontStyles.Bold).Fit(18f);
             value.richText = true;
-            ShiroUIKit.Place(value, 10, 22, w - 20, 32);
+            ShiroUIKit.Place(value, 10, 21, w - 20, 30);
             words = ShiroUIKit.Label(tile.transform, "Words", "", 11f, ShiroTheme.TextDim).Fit(8f);
-            ShiroUIKit.Place(words, 10, 56, w - 20, 16);
+            ShiroUIKit.Place(words, 10, 61, w - 20, 14);
+            return tile;
         }
 
+        /// <summary>
+        /// Vitals, top to bottom: the web's five ranges, heart rate, SpO2, the time axis, and a
+        /// key (how many points, what a point is, what the shading and red dots mean).
+        /// </summary>
         private void BuildHistoryTab(Transform page)
         {
-            _windowText = ShiroUIKit.Label(page, "Window", "", 11f, ShiroTheme.TextDim).Fit(8f);
-            ShiroUIKit.Place(_windowText, Pad, 0, 184, 26);
+            const float gap = 6f;
+            float bw = (CW - (Ranges.Length - 1) * gap) / Ranges.Length;
             for (int i = 0; i < Ranges.Length; i++)
             {
                 int index = i;
                 _rangeBtns[i] = ShiroUIKit.Button(page, $"Range_{RangeLabels[i]}", RangeLabels[i], ButtonKind.Secondary, () => ChooseRange(index), 12f);
-                ShiroUIKit.Place(_rangeBtns[i], Pad + CW - (3 - i) * 52f - (2 - i) * 6f, 0, 52, 26);
+                ShiroUIKit.Place(_rangeBtns[i], Pad + i * (bw + gap), 0, bw, 26);
             }
-            _hr = BuildChart(page, "Heart", 32f, "Heart rate, bpm", HeartColour, 55f, 100f);
-            _spo = BuildChart(page, "Spo2", 120f, "SpO2, % (rough guide)", ShiroTheme.OkText, 94f, 100f);
+            // The web's axes and normal ranges (patients_controller.js generateVitalsSvg)
+            _hr = BuildChart(page, "Heart", 32f, Heart + "Heart rate (normal 60–100)", HeartColour, 40f, 160f, 60f, 100f);
+            _spo = BuildChart(page, "Spo2", 114f, "SpO2 (normal 95–100 %)", ShiroTheme.OkText, 75f, 100f, 95f, 100f);
 
             const float axisX = Pad + 30f;
             float chartW = CW - 36f;
             _tStart = ShiroUIKit.Label(page, "TimeStart", "", 10f, ShiroTheme.TextDim);
-            ShiroUIKit.Place(_tStart, axisX, 206, 100, 14);
+            ShiroUIKit.Place(_tStart, axisX, 193, 110, 14);
             _tMid = ShiroUIKit.Label(page, "TimeMiddle", "", 10f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Center);
-            ShiroUIKit.Place(_tMid, axisX + chartW / 2f - 50f, 206, 100, 14);
+            ShiroUIKit.Place(_tMid, axisX + chartW / 2f - 55f, 193, 110, 14);
             _tEnd = ShiroUIKit.Label(page, "TimeEnd", "", 10f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Right);
-            ShiroUIKit.Place(_tEnd, axisX + chartW - 100f, 206, 100, 14);
+            ShiroUIKit.Place(_tEnd, axisX + chartW - 110f, 193, 110, 14);
+            _legend = ShiroUIKit.Label(page, "Key", "", 9.5f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft, true).Fit(8f);
+            ShiroUIKit.Place(_legend, Pad, 209, CW, 23);
         }
 
-        private static ChartView BuildChart(Transform page, string name, float y, string title, Color line, float bandLow, float bandHigh)
+        private static ChartView BuildChart(Transform page, string name, float y, string title, Color line,
+            float axisMin, float axisMax, float bandLow, float bandHigh)
         {
-            var v = new ChartView();
+            var v = new ChartView { AxisMin = axisMin, AxisMax = axisMax, BandLow = bandLow, BandHigh = bandHigh };
             v.Title = ShiroUIKit.Label(page, name + "Title", title, 12f, ShiroTheme.Text, FontStyles.Bold).Fit(9f);
-            ShiroUIKit.Place(v.Title, Pad, y, 150, 16);
+            v.Title.richText = true;
+            ShiroUIKit.Place(v.Title, Pad, y, 186, 16);
             v.Stats = ShiroUIKit.Label(page, name + "Stats", "", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Right).Fit(9f);
-            ShiroUIKit.Place(v.Stats, Pad + 150, y, CW - 150, 16);
+            ShiroUIKit.Place(v.Stats, Pad + 190, y, CW - 190, 16);
             var box = ShiroUIKit.Panel(page, name + "Box", ShiroTheme.GlassRaised, 8f);
             ShiroUIKit.Place(box, Pad, y + 18, CW, ChartH);
-            v.Top = ShiroUIKit.Label(box.transform, "Top", "", 10f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.TopLeft);
-            ShiroUIKit.Place(v.Top, 5, 3, 24, 12);
-            v.Bottom = ShiroUIKit.Label(box.transform, "Bottom", "", 10f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.BottomLeft);
-            ShiroUIKit.Place(v.Bottom, 5, ChartH - 15, 24, 12);
+            for (int i = 0; i < v.Axis.Length; i++)
+            {
+                v.Axis[i] = ShiroUIKit.Label(box.transform, $"Axis_{i}", "", 9f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Right);
+                v.Axis[i].gameObject.SetActive(false);
+            }
             var go = new GameObject("Chart", typeof(RectTransform));
             go.transform.SetParent(box.transform, false);
             v.Chart = go.AddComponent<ShiroLineChart>();
@@ -970,7 +1075,7 @@ namespace ShiroMR.UI
             v.Chart.BandLow = bandLow;
             v.Chart.BandHigh = bandHigh;
             v.Chart.BandColour = NormalBand;
-            ShiroUIKit.Place(v.Chart, 30, 6, CW - 36, ChartH - 12);
+            ShiroUIKit.Place(v.Chart, 30, ChartPlotTop, CW - 36, ChartPlotH);
             v.Empty = ShiroUIKit.Label(box.transform, "Empty", "", 12f, ShiroTheme.TextDim, FontStyles.Normal, TextAlignmentOptions.Center, true).Fit(9f);
             ShiroUIKit.Place(v.Empty, 30, 0, CW - 36, ChartH);
             return v;

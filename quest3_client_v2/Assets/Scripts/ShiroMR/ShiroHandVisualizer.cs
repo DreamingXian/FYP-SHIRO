@@ -103,6 +103,13 @@ namespace ShiroMR
         [HideInInspector] public float LeftIndexHoverDistance = 999f;
         [HideInInspector] public bool IsLeftIndexTouching = false;
 
+        // Version 2: the same feedback from the new interface's buttons (ShiroPokeInteractor),
+        // kept apart from the version 1 slate's, which resets its own every frame
+        [HideInInspector] public float PokeRightHoverDistance = 999f;
+        [HideInInspector] public bool PokeRightTouching = false;
+        [HideInInspector] public float PokeLeftHoverDistance = 999f;
+        [HideInInspector] public bool PokeLeftTouching = false;
+
         private const int TotalBones = 26;
         private const int OutlinePointCount = 27;
 
@@ -511,11 +518,16 @@ namespace ShiroMR
         private void UpdateTouchReticleCursors()
         {
             // Right Hand Reticle
-            UpdateSingleReticle(_rightReticleRoot, _rightReticleRingMat, _rightReticleBeadMat, RightIndexTipPosition, IsRightHandTracked, RightIndexHoverDistance, IsRightIndexTouching);
+            UpdateSingleReticle(_rightReticleRoot, _rightReticleRingMat, _rightReticleBeadMat, RightIndexTipPosition, IsRightHandTracked,
+                Mathf.Min(RightIndexHoverDistance, PokeRightHoverDistance), IsRightIndexTouching || PokeRightTouching);
 
-            // Left Hand Reticle (active when menu is pinned in room)
-            bool isMenuPinned = (ShiroHandSlate.Instance != null && ShiroHandSlate.Instance.isPinnedToWorld && ShiroHandSlate.Instance.isSlateVisible);
-            UpdateSingleReticle(_leftReticleRoot, _leftReticleRingMat, _leftReticleBeadMat, LeftIndexTipPosition, IsLeftHandTracked && isMenuPinned, LeftIndexHoverDistance, IsLeftIndexTouching);
+            // Left Hand Reticle. Version 2: the left fingertip presses the new interface's buttons
+            // too, so it has the same dot whenever the hand is tracked; not while the version 1
+            // slate hangs on the left hand itself (that hand cannot press it).
+            var slate = ShiroHandSlate.Instance;
+            bool slateOnLeftHand = slate != null && slate.isSlateVisible && !slate.isPinnedToWorld;
+            UpdateSingleReticle(_leftReticleRoot, _leftReticleRingMat, _leftReticleBeadMat, LeftIndexTipPosition, IsLeftHandTracked && !slateOnLeftHand,
+                Mathf.Min(LeftIndexHoverDistance, PokeLeftHoverDistance), IsLeftIndexTouching || PokeLeftTouching);
         }
 
         private void UpdateSingleReticle(GameObject root, Material ringMat, Material beadMat, Vector3 tipPos, bool isTracked, float hoverDist, bool isTouching)

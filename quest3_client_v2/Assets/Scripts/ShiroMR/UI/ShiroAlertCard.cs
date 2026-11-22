@@ -8,7 +8,8 @@
 //   - "Show me" folds the card into a small bar low in the view and shows a red
 //     arrow toward the patient, whose tag in the room flashes red, or toward their
 //     bed when they have no tag in the room (no position yet); "Open" brings the
-//     card back. Not available when the patient is in another ward.
+//     card back. Not available when the patient is in another ward. The arrow goes
+//     once the alert is answered, and while the ward panel is open.
 //   - "Mute" silences the alarm tone of this headset ("Unmute" turns it back on).
 // The card grows to fit its text; nothing is cut.
 // Answered elsewhere (dashboard, another headset): the card turns green, says who
@@ -425,13 +426,20 @@ namespace ShiroMR.UI
             }
         }
 
-        /// <summary>"Show me": a red arrow at the edge of the view, toward the patient's tag (or bed).</summary>
+        /// <summary>
+        /// "Show me": a red arrow at the edge of the view, toward the patient's tag (or bed).
+        /// Only with the bar on view and while the alert still waits for a response: not for
+        /// an alert answered elsewhere, and not while the ward panel is open (the bar steps
+        /// aside then), so the arrow is never left behind on its own.
+        /// </summary>
         private void UpdateArrow(ShiroAlertManager.HeadsetAlert cur)
         {
             if (_arrow == null) return;
             Vector3 target = Vector3.zero;
-            bool found = _mode == Mode.Bar && cur != null && TryFindTarget(cur.incident, out target, out _);
-            if (!found) { _arrow.gameObject.SetActive(false); return; }
+            bool waiting = cur != null && cur.status != ShiroAlertManager.AlertStatus.AcknowledgedElsewhere;
+            bool barOnView = _mode == Mode.Bar && _bar != null && _bar.gameObject.activeSelf;
+            bool found = barOnView && waiting && TryFindTarget(cur.incident, out target, out _);
+            if (!found) { if (_arrow.gameObject.activeSelf) _arrow.gameObject.SetActive(false); return; }
 
             Vector3 toTarget = target - _head.position;
             if (Vector3.Angle(_head.forward, toTarget) < LookedAtAngle) { _arrow.gameObject.SetActive(false); return; }
