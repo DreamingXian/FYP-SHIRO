@@ -157,6 +157,11 @@ namespace ShiroMR
         private float _dragDistance = 2.0f;
         private Vector3 _customBedOffset = Vector3.zero;
         private bool _isManuallyLocked = false;
+        // Move (away from the bed) moves the tag only: the patient's position and its floor circle
+        // stay where the edge server / linking puts them. The tag keeps the offset it was given
+        // (so it still follows the patient) until Automatic.
+        private bool _hudMovedByHand;
+        private Vector3 _defaultHudOffset;
 
         // Person linking (8D): the panel follows a person seen by the depth sensor
         private bool _linkingActive;
@@ -175,6 +180,7 @@ namespace ShiroMR
 
         private void Start()
         {
+            _defaultHudOffset = hudOffset;
             if (Camera.main != null)
             {
                 _cameraTransform = Camera.main.transform;
@@ -220,11 +226,14 @@ namespace ShiroMR
                     }
                     else
                     {
-                        _targetPosition = newPos;
-                        transform.position = newPos;
-                        hudOffset = newPos - detectedPersonPosition;
+                        // Only the tag moves; the patient's place (this object, the floor circle)
+                        // is left to the position updates
+                        _hudContainer.transform.position = newPos;
+                        hudOffset = _hudContainer.transform.localPosition;
+                        _hudMovedByHand = true;
                     }
-                    _glideReady = false;   // after the drag: hold from where it was let go
+                    if (trackingState == PatientTrackingState.BedDocked)
+                        _glideReady = false;   // after the drag: hold from where it was let go
 
                     // Face user smoothly while dragging
                     if (_cameraTransform != null)
@@ -241,7 +250,7 @@ namespace ShiroMR
                 {
                     // Drag released!
                     _isPanelDragging = false;
-                    SetStatusBanner("Tag moved", 3.0f, ShiroTheme.GoodText);
+                    SetStatusBanner(trackingState == PatientTrackingState.BedDocked ? "Tag moved" : "Tag moved: it follows the patient from here (Automatic puts it back)", 4.0f, ShiroTheme.GoodText);
                 }
             }
             else
@@ -323,6 +332,10 @@ namespace ShiroMR
         /// The decision uses the position lightly smoothed (0.12 s), so one noisy reading does
         /// not move the place; the calculated position itself is left as it is.
         /// </summary>
+        // KEY LOGIC (anti-shake): positions arrive 5-7 times a second with noise. The tag keeps a
+        // fixed place (_holdAt) and only picks a new one when the smoothed position is more than
+        // 15 cm (HoldRadius) away; then it glides there with SmoothDamp. Result: still while the
+        // patient stands, smooth movement while they walk.
         private void GlideToTarget()
         {
             if (!_glideReady || _wasDocked)
@@ -474,7 +487,11 @@ namespace ShiroMR
                 // 15 cm at the card's distance from the person), so it does not sway with the head
                 if (!_sideLayout || _sideRight == Vector3.zero || Vector3.Angle(right, _sideRight) > SideTurnDeg) _sideRight = right;
 
-                if (_hudContainer != null && !_isPanelDragging)
+                if (_hudContainer != null && !_isPanelDragging && _hudMovedByHand)
+                {
+                    _hudContainer.transform.localPosition = hudOffset;   // where the clinician put it
+                }
+                else if (_hudContainer != null && !_isPanelDragging)
                 {
                     Vector3 cardPos = transform.position + _sideRight * SideDistance + Vector3.up * CardHeight;
                     _hudContainer.transform.position = _sideLayout
@@ -916,6 +933,13 @@ namespace ShiroMR
         public void ReturnToAuto()
         {
             _isManuallyLocked = false;
+            if (_hudMovedByHand)
+            {
+                _hudMovedByHand = false;
+                hudOffset = _defaultHudOffset;
+                if (_hudContainer != null && trackingState == PatientTrackingState.InTransit && !_sideLayout)
+                    _hudContainer.transform.localPosition = hudOffset;
+            }
             _hasStationaryLock = false;
             ShiroPatientLinking.Instance?.ReleaseChoice(tagId);
             if (depthLinkState == ShiroMR.Linking.LinkState.LinkedManual)
@@ -1294,7 +1318,7 @@ namespace ShiroMR
             if (_cancelAimBtn != null) _cancelAimBtn.gameObject.SetActive(trackingState == PatientTrackingState.ManualAim);
             if (_autoBtn != null)
             {
-                bool chosenByHand = _isManuallyLocked || depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
+                bool chosenByHand = _isManuallyLocked || _hudMovedByHand || depthLinkState == ShiroMR.Linking.LinkState.LinkedManual;
                 _autoBtn.gameObject.SetActive(trackingState == PatientTrackingState.InTransit && chosenByHand);
             }
             if (_dockToggleBtn != null)

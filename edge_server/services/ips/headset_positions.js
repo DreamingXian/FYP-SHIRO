@@ -93,6 +93,12 @@ function insideWard(x, y, dim, margin = OUTSIDE_MARGIN_M) {
  * else the Bluetooth position (source BLE). The Bluetooth position is always
  * included as ble_x / ble_y when known (has_ble).
  */
+// KEY LOGIC: sensor fusion by priority. Three sources can place a patient; the shown
+// position (x, y) is the most accurate one available:
+//   HEADSET  a headset's depth sensor sees the person (centimetres)
+//   LIDAR    the room's LiDAR follows the person (about 0.1 m)
+//   BLE      Bluetooth signal strength only (about 1 m)
+// ble_x / ble_y always carry the Bluetooth estimate, so the maps can show both.
 function positionFields(ble, headset, lidar = null) {
   const fields = {
     source: headset ? 'HEADSET' : lidar ? 'LIDAR' : 'BLE',

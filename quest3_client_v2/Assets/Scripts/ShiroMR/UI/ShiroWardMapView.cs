@@ -1,7 +1,7 @@
 // =============================================================================
 // Project SHIRO - headset app version 2: the ward map on the ward panel
 //
-// The ward from above: walls, door, beds (with their names), each patient where
+// The ward from above: walls, door, obstacles, beds (with their names), each patient where
 // the edge server last placed their wristband (status colour; red and blinking
 // with an alert; grey when not heard for 10 s), and the clinician (a blue arrow,
 // where they look). A tap on a patient opens them (the ward panel's patient view).
@@ -92,7 +92,8 @@ namespace ShiroMR.UI
                 _status.color = ShiroTheme.TextDim;
                 return;
             }
-            string key = $"{ward.ward_id}|{ward.length_x}|{ward.width_y}|{ward.beds?.Count}|{ward.door?.wall}|{ward.door?.x}";
+            // Redrawn only when the plan changes (walls, door, beds, obstacles), not every refresh
+            string key = $"{ward.ward_id}|{ward.length_x}|{ward.width_y}|{ward.beds?.Count}|{ward.obstacles?.Count}|{ward.door?.wall}|{ward.door?.x}";
             if (key != _drawnKey) DrawRoom(ward, key);
 
             var mr = ShiroMRManager.Instance;
@@ -160,6 +161,28 @@ namespace ShiroMR.UI
                 else if (side == "WEST") AddRect("Door", 0, d, dt, dw, ShiroTheme.Warn, 0f);
             }
 
+            // Obstacles from the ward plan (cabinets, sinks, tables): x, y is the corner nearest the
+            // ward origin, width along x, length along y (as WardVisualizer builds them in 3D).
+            // Drawn before the beds, so a bed is never hidden under one.
+            if (ward.obstacles != null)
+            {
+                var block = new Color(ShiroTheme.Warn.r, ShiroTheme.Warn.g, ShiroTheme.Warn.b, 0.22f);
+                foreach (var o in ward.obstacles)
+                {
+                    if (o == null || o.width <= 0 || o.length <= 0) continue;
+                    AddRect($"Obstacle_{o.id}", o.x, o.y, o.width, o.length, block, 2f);
+                    string name = !string.IsNullOrEmpty(o.label) ? o.label : o.type;
+                    if (string.IsNullOrEmpty(name) || o.width * _scale < 18f) continue;   // too small for a name
+                    var ol = ShiroUIKit.Label(_room, $"ObstacleName_{o.id}", name, 9f, ShiroTheme.TextDim, FontStyles.Italic, TextAlignmentOptions.Center).Fit(6f);
+                    var ort = ol.rectTransform;
+                    ort.anchorMin = ort.anchorMax = Vector2.zero;
+                    ort.pivot = new Vector2(0.5f, 0.5f);
+                    ort.sizeDelta = new Vector2(o.width * _scale - 2f, Mathf.Min(12f, o.length * _scale));
+                    ort.anchoredPosition = new Vector2((o.x + o.width / 2f) * _scale, (o.y + o.length / 2f) * _scale);
+                    _static.Add(ol.gameObject);
+                }
+            }
+
             if (ward.beds != null)
             {
                 foreach (var b in ward.beds)
@@ -174,7 +197,9 @@ namespace ShiroMR.UI
                     rt.anchorMin = rt.anchorMax = Vector2.zero;
                     rt.pivot = new Vector2(0.5f, 0.5f);
                     rt.sizeDelta = new Vector2(Mathf.Max(30f, sx * _scale - 2f), 14f);
-                    rt.anchoredPosition = new Vector2((b.x + sx / 2f) * _scale, (b.y + sy / 2f) * _scale);
+                    // At the bed's top end, so a patient's dot in the bed (its middle) does not hide it
+                    float ly = sy * _scale >= 40f ? (b.y + sy) * _scale - 9f : (b.y + sy / 2f) * _scale;
+                    rt.anchoredPosition = new Vector2((b.x + sx / 2f) * _scale, ly);
                     _static.Add(lbl.gameObject);
                 }
             }
@@ -190,7 +215,9 @@ namespace ShiroMR.UI
 
         private void ClearStatic()
         {
-            foreach (var go in _static) if (go != null) UnityEngine.Object.Destroy(go);
+            // Destroy does nothing outside Play mode (the preview tool draws two wards in turn)
+            foreach (var go in _static)
+                if (go != null) { if (Application.isPlaying) UnityEngine.Object.Destroy(go); else UnityEngine.Object.DestroyImmediate(go); }
             _static.Clear();
             _drawnKey = "";
         }
@@ -310,10 +337,10 @@ namespace ShiroMR.UI
 
         // ----- Preview (sample data, editor tool) -----
 
-        internal void PreviewMark(string tag, float x, float y, float secondsAgo)
+        internal void PreviewMark(string tag, float x, float y, float secondsAgo, string wardId)
         {
             if (!_marks.TryGetValue(tag, out var m)) { m = new Mark { Tag = tag }; _marks[tag] = m; }
-            m.X = x; m.Y = y; m.Ward = null; m.Seen = Time.time - secondsAgo;
+            m.X = x; m.Y = y; m.Ward = wardId; m.Seen = Time.time - secondsAgo;
         }
     }
 }

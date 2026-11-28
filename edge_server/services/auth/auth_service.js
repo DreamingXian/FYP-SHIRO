@@ -187,6 +187,12 @@ function recordFailure(map, key, maxFailures, lockMs) {
  * Throws 401 for a wrong username or password (the same answer for both),
  * 429 while the account is locked after repeated failures.
  */
+// KEY LOGIC (sign-in): the password is checked against its scrypt hash (passwords.js:
+// salted and deliberately slow, so a stolen table does not reveal passwords). A random
+// session token goes to the browser as an HttpOnly cookie (scripts cannot read it); the
+// database stores only the token's SHA-256 hash. Five wrong passwords lock the account
+// for a while. Headsets do not sign in: they pair once with a 6-digit code
+// (createPairingCode / pairHeadset) and then use their own token, which an admin can revoke.
 async function login(username, password, ip = null) {
   const key = typeof username === 'string' ? username.trim().toLowerCase().slice(0, 64) : '';
   const locked = lockRemainingMs(loginFailures, key);

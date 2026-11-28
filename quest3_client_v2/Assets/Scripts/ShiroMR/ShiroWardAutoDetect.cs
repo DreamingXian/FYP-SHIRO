@@ -130,6 +130,10 @@ namespace ShiroMR
 
         // ----- Which ward am I in? -----
 
+        // KEY LOGIC: once a second: is the head inside the active ward's rectangle (aligned)? If
+        // not, is it inside another ward whose saved spatial anchor was found? Staying there for
+        // 2 s switches the active ward, and that ward's anchor aligns it. Uses the headset's own
+        // tracking, not the BLE anchors (those only place the wristbands).
         private void CheckPosition(ShiroNetworkManager net)
         {
             Camera cam = Camera.main;

@@ -118,6 +118,15 @@ async function startMqttBroker(port, credentials) {
   });
 
   // Intercept incoming publish packets
+  // KEY LOGIC: the entry point of all sensor data. Every MQTT message an anchor (or the LiDAR
+  // node) publishes arrives here. The pipeline for one anchor message:
+  //   1. checked (size, JSON, fields, ranges; anchor_mac must match the login client ID)
+  //   2. normalizeTelemetry: the wristband's values, NULL when not measured
+  //   3. ipsService.recordAnchorReading: RSSI -> filter -> distance -> position
+  //   4. alertService.evaluateTelemetry: fall or abnormal heart rate -> incident
+  //   5. broadcastToClients: the dashboard and headsets get it over WebSocket
+  // Aedes (an MQTT broker written in JavaScript) runs inside this Node.js process, so no
+  // separate broker (such as Mosquitto) has to be installed and started.
   aedesInstance.on('publish', (packet, client) => {
     if (!client) return; // Ignore internal broker messages
 

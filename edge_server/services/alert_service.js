@@ -256,6 +256,13 @@ async function recordIncident(incidentData) {
  * and raises an incident when a fall is flagged or the vitals rules are met.
  * Returns the incident that was raised, or null.
  */
+// KEY LOGIC: decides whether one telemetry message raises an incident.
+//   Fall: the wristband already confirmed it on-chip. Several anchors hear the same fall
+//         packet, and the wristband repeats it for 45 s, so the fall tracker turns all of
+//         them into ONE incident (same wristband + same fall counter).
+//   Vitals: only readings with skin contact; the two-tier rules of vitals_evaluator.js
+//         (extreme for 5 s, or abnormal confirmed over time) avoid alarms from one bad beat.
+// recordIncident then stores it in MySQL (INC-YYYYMMDD-NNNN) and broadcasts it.
 async function evaluateTelemetry(telemetry, detectedTag, tagMac) {
   if (!telemetry) return null;
   const key = String(detectedTag || tagMac || 'UNKNOWN').toUpperCase();

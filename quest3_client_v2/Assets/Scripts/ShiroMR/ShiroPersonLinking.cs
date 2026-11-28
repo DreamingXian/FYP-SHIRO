@@ -22,7 +22,9 @@
 // Every candidate gets a score from four factors:
 //   - distance to the Bluetooth position (wide: Bluetooth is inaccurate),
 //   - height compared with the patient's height (neutral when not recorded,
-//     or when the measured height may be cut off at the top of the view),
+//     or when the measured height may be cut off at the top of the view;
+//     a taller person is ruled out, a shorter one only scores lower, as the
+//     patient may be sitting or bending),
 //   - movement compared with the wristband's motion sensor (neutral when
 //     unknown),
 //   - a bonus for the person linked a moment ago (hysteresis).
@@ -56,6 +58,7 @@ namespace ShiroMR.Linking
         public float CurrentBonus = 1.5f;      // hysteresis for the linked person
         public float HeightTolerance = 0.08f;  // m: within this the height matches fully
         public float HeightSigma = 0.10f;      // m: fall-off beyond the tolerance
+        public float ShorterFloor = 0.5f;      // factor never below this for a shorter person (sitting, bending)
         public float MovingSpeed = 0.15f;      // m/s: a person faster than this is moving
         public float MotionMismatch = 0.5f;    // factor when wristband and person disagree
     }
@@ -65,6 +68,7 @@ namespace ShiroMR.Linking
         public int TrackId;
         public float Score;
         public float Distance;
+        public float Height;
         public float HeightFactor;
         public float MotionFactor;
     }
@@ -133,6 +137,7 @@ namespace ShiroMR.Linking
                 {
                     TrackId = t.Id,
                     Distance = d,
+                    Height = t.Height,
                     HeightFactor = HeightFactor(t, patientHeightM),
                     MotionFactor = MotionFactor(t, motion),
                 };
@@ -229,6 +234,8 @@ namespace ShiroMR.Linking
                 State = LinkState.BleOnly;
                 Reason = lostNote ?? (!hasBle ? "no wristband position yet"
                        : _candidates.Count == 0 ? $"nobody within {s.LinkDistance:0.0} m of the wristband: Bluetooth position"
+                       : best != null && patientHeightM > 0f && best.HeightFactor < 0.5f
+                           ? $"the person near the wristband is {best.Height:0.00} m, taller than the patient ({patientHeightM:0.00} m): Bluetooth position"
                        : "no person fits well enough: Bluetooth position");
             }
             LinkedHeight = 0f;
@@ -262,9 +269,14 @@ namespace ShiroMR.Linking
             var s = Settings;
             if (patientHeightM <= 0f) return 1f;                // not recorded: neutral
             if (t.HeightMaybeCut) return t.Height <= patientHeightM + s.HeightTolerance ? 1f : 0.3f;
+            bool shorter = t.Height < patientHeightM;
             float diff = Math.Abs(t.Height - patientHeightM) - s.HeightTolerance;
             if (diff <= 0f) return 1f;
-            return Math.Max(0.1f, (float)Math.Exp(-diff * diff / (2 * s.HeightSigma * s.HeightSigma)));
+            float f = (float)Math.Exp(-diff * diff / (2 * s.HeightSigma * s.HeightSigma));
+            // Nobody stands taller than their recorded height, but a patient sitting in a chair,
+            // bending, or with the top of the head measured low looks shorter: shorter only
+            // lowers the score (the matching height still wins), taller rules the person out.
+            return Math.Max(shorter ? s.ShorterFloor : 0.1f, f);
         }
 
         private float MotionFactor(Track t, WristMotion motion)

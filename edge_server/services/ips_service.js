@@ -316,6 +316,19 @@ async function reloadWardAnchorsCache() {
 /**
  * Record an incoming anchor RSSI packet and compute real-time tag position
  */
+// KEY LOGIC: the Bluetooth positioning pipeline, run for every RSSI reading (an anchor
+// hearing a wristband, about 7 times a second per anchor):
+//   steps 1-3  which wristband (enrolled ID) and which anchor (its ward and x, y, z)
+//   step 4     median of the last 5 readings, then the 1D Kalman filter (filterRssi)
+//   step 5     path-loss model RSSI -> distance, capped by the room and by walking speed
+//   -          3D distance projected to the floor (anchor height vs wristband at 0.85 m)
+//   step 6     3+ anchors: weighted least squares + refinement inside the room;
+//              2 anchors: weighted centroid; 1 anchor: its own position (low confidence)
+//   steps 7-8  motion state (from the wristband's accelerometer): STATIONARY locks the
+//              position (no drift), WALKING follows at most 1.3 m/s, SETTLING takes the
+//              median of the last readings
+//   broadcast  at most about 6.7 times a second to the dashboard and headsets, with the
+//              better LiDAR / headset position when one exists (positionFields)
 function recordAnchorReading({ anchorId, anchorMac, tagId, tagMac, rawRssi, timestamp }) {
   if (!tagId || isNaN(rawRssi) || rawRssi >= 0 || rawRssi < -110) return;
 

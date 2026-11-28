@@ -121,6 +121,11 @@ namespace ShiroMR
 
         // ----- events from the edge server -----
 
+        // KEY LOGIC: an incident from the edge server (fall, critical heart rate, left the ward)
+        // becomes a headset alert: the patient's tag turns red and flashes, a two-tone alarm
+        // plays, and the alert card opens in front of the clinician. "I'm responding" sends the
+        // acknowledgement (REST); the first acknowledgement anywhere wins, and the others
+        // show who responded.
         private void HandleNewAlert(IncidentAlert incident)
         {
             if (incident == null || string.IsNullOrEmpty(incident.incident_id)) return;

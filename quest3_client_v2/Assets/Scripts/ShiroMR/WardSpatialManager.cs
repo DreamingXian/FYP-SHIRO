@@ -250,6 +250,10 @@ namespace ShiroMR
         /// Converts 2D Ward Coordinates (X = Width, Y = Length) and Elevation (Z = Up)
         /// to Unity 3D World Space coordinates.
         /// </summary>
+        // KEY LOGIC: two coordinate systems. The edge server works in ward metres (x along the
+        // room, y across it, (0, 0) = the ward's corner). Unity works in world metres (y is up).
+        // wardOrigin is a Transform placed at the ward's corner by the room alignment: ward
+        // (x, y) is its local (x, height, y), and TransformPoint turns that into the real place.
         public Vector3 WardToWorldPosition(float wardX, float wardY, float elevation = 0.85f)
         {
             if (wardOrigin == null) return new Vector3(wardX, elevation, wardY);
@@ -542,6 +546,13 @@ namespace ShiroMR
         /// Uses the ward's actual geometry (SOUTH, NORTH, EAST, WEST) and user perspective (inside vs hallway)
         /// to snap the virtual digital twin directly to the physical entrance with millimeter precision.
         /// </summary>
+        // KEY LOGIC: room alignment from two points. The clinician points at the floor at the left
+        // and right side of the real door frame. The plan says where that door is in ward
+        // coordinates. Two matching points fix everything on a flat floor:
+        //   rotation = angle of the real door line - angle of the planned door line (yaw only)
+        //   position = real door middle - rotation * planned door middle
+        // The floor height comes from the pointed points (the depth raycast hits the real floor).
+        // The measured door width is compared with the plan as a check of the aim (Room setup).
         public bool AlignWardByDoorFrame(WardConfig ward, Vector3 physLeftPost, Vector3 physRightPost, bool standingInside, out float measuredWidth, out float calculatedYaw)
         {
             measuredWidth = 0f;
@@ -704,6 +715,12 @@ namespace ShiroMR
         /// Creates a native Meta Quest Spatial Anchor, localizes it with Quest SLAM vision map,
         /// and saves it to device persistent storage so it stays locked across restarts and headset removals.
         /// </summary>
+        // KEY LOGIC: a Meta spatial anchor is a point the headset's own tracking remembers in
+        // the real room, even after a restart. One is saved at the aligned ward origin; its ID
+        // (UUID) is stored on the headset and on the edge server (one per headset and ward).
+        // Next time the headset loads the anchor, finds it in the room, and the ward is
+        // aligned again with no pointing. ShiroWardAutoDetect uses the same anchors to tell
+        // which ward the headset is in.
         public async Task<string> SaveNativeSpatialAnchorAsync(string wardId)
         {
             if (wardOrigin == null) return null;

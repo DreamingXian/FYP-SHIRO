@@ -1194,6 +1194,12 @@ namespace ShiroMR.Detection
             }
         }
 
+        // KEY LOGIC: what each detected object is (the colour of its line in Depth view):
+        //   NotPerson       (grey)   wrong size for a person: under 0.9 m, over 2.1 m, too long or big
+        //   StillObject     (yellow) person-sized but has not moved: a cabinet, a coat stand
+        //   PersonCandidate (green)  person-sized AND moved 0.4 m within 10 s, with evidence
+        // Only green ones can be linked to a wristband (ShiroPersonLinking). The "Move rule"
+        // test switch turns the movement requirement off (then height alone decides).
         public TrackKind Classify(Track t)
         {
             var s = Settings;

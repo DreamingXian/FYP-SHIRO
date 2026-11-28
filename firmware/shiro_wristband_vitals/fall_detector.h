@@ -108,6 +108,15 @@ class FallDetector {
     check = FallCheck();
   }
 
+  // KEY LOGIC: fall detection as a state machine on the total acceleration (SMV, in g),
+  // 50 samples a second. A real fall has three phases in this order, and all must be seen:
+  //   MONITORING   -> SMV drops below 0.5 g     (the body is falling: "free-fall")
+  //   FREEFALL     -> lasted at least 150 ms    (a short dip from a hand swing is ignored)
+  //   AWAIT_IMPACT -> SMV above 2.5 g within 500 ms (hitting the floor)
+  //   POST_IMPACT  -> after 0.5 s settling, 2 s of stillness (lying on the floor)
+  //   CONFIRMED    -> the fall is broadcast with its counter and measured values
+  // Any phase that does not complete in time goes back to MONITORING, so sitting
+  // down fast, clapping or dropping the arm does not raise an alarm.
   // Feeds one acceleration sample (total magnitude in g) taken at nowMs.
   // Returns true exactly once per fall: on the sample that confirms it.
   bool update(float smv, uint32_t nowMs) {

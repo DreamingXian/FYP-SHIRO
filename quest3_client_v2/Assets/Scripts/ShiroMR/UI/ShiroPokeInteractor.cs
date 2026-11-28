@@ -148,6 +148,10 @@ namespace ShiroMR.UI
                 if (!Measure(b, f.Pos, out bool inside, out bool insideWide, out float depth, out float area)) continue;
                 if (inside && depth > -NearUi && depth < 0.05f) near = true;
 
+                // KEY LOGIC (pressing with a finger, like a real button): a button is "armed" when
+                // the fingertip is clearly in front of it, and pressed once when the armed
+                // fingertip reaches its surface. It cannot press again until the finger comes back
+                // out, so a finger resting on a button, or tracking that blinks, never repeats.
                 // Reached the surface of a button it was armed for: a press
                 if (inside && depth >= PressAt && depth <= PushedThrough && f.Armed.Contains(b) && area < pressArea)
                 {

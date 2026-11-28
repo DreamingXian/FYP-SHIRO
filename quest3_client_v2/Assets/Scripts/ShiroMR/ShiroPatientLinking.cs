@@ -228,6 +228,12 @@ namespace ShiroMR
 
         // ----- Linking after every depth update -----
 
+        // KEY LOGIC: five times a second, for each patient tag: (1) a patient in their own bed,
+        // or a tag placed by hand, is left alone; (2) otherwise its PersonLinker compares the
+        // wristband's Bluetooth position with the people the depth sensor sees (distance,
+        // recorded height, motion); (3) when linked, the tag follows that person (accurate to
+        // centimetres) and the position is reported to the edge server (PATIENT_SEEN), so the
+        // web map and other headsets also show the patient where this headset sees them.
         private void HandleDetection()
         {
             if (!LinkingEnabled) return;

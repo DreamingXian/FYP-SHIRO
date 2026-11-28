@@ -242,9 +242,9 @@ namespace ShiroMR.EditorTools
                 new TrackedSubject { full_name = "Rajesh Kumar", device_id = "TAG-003", assigned_bed_id = "BED-001-03" },
             };
             object map = Get<object>(panel, "_map");
-            Call(map, "PreviewMark", "TAG-001", 0.75f, 3.9f, 1f);
-            Call(map, "PreviewMark", "TAG-002", 2.6f, 1.4f, 1f);
-            Call(map, "PreviewMark", "TAG-003", 4.4f, 2.2f, 30f);
+            Call(map, "PreviewMark", "TAG-001", 0.75f, 3.9f, 1f, "WARD-001");
+            Call(map, "PreviewMark", "TAG-002", 2.6f, 1.4f, 1f, "WARD-001");
+            Call(map, "PreviewMark", "TAG-003", 4.4f, 2.2f, 30f, "WARD-001");
             Get<TextMeshProUGUI>(panel, "_mapWard").text = "Ward A - Medical (this ward)";
             Call(map, "Refresh", ward, subjects, true, false, null);
             Shoot(canvas, Path.Combine(dir, "panel_map.png"), true);
@@ -265,23 +265,26 @@ namespace ShiroMR.EditorTools
                 new TrackedSubject { full_name = "Lim Mei Ling", device_id = "TAG-004", assigned_bed_id = "BED-002-01", assigned_ward_id = "WARD-002" },
                 new TrackedSubject { full_name = "Nur Aina", device_id = "TAG-005", assigned_bed_id = "BED-002-02", assigned_ward_id = "WARD-002" },
             };
-            Call(map, "PreviewMark", "TAG-004", 2.4f, 1.6f, 2f);
-            Call(map, "PreviewMark", "TAG-005", 1.2f, 4.5f, 2f);
+            Call(map, "PreviewMark", "TAG-004", 2.4f, 1.6f, 2f, "WARD-002");
+            Call(map, "PreviewMark", "TAG-005", 1.2f, 4.5f, 2f, "WARD-002");
             Get<TextMeshProUGUI>(panel, "_mapWard").text = "Ward B - Surgical Recovery";
             Call(map, "Refresh", other, otherSubjects, true, true, null);
             Shoot(canvas, Path.Combine(dir, "panel_map_other_ward.png"), true);
 
-            // Settings (stage 4): the ward found automatically, what that means; not paired
+            // Settings (stage 4): the ward found automatically (the one in the header), what that means
             var settings = (ShiroSettingsView)Call(panel, "PreviewSettings");
-            Get<TextMeshProUGUI>(settings, "_wardName").text = "Ward B - Surgical Recovery";
+            Get<TextMeshProUGUI>(settings, "_wardName").text = "Ward A - Medical";
             Get<UnityEngine.UI.Image>(settings, "_wardDot").color = ShiroTheme.Good;
             var state = Get<TextMeshProUGUI>(settings, "_wardState");
             state.text = "Found automatically: you are inside this ward.";
             state.color = ShiroTheme.GoodText;
             Get<TextMeshProUGUI>(settings, "_wardHint").text = "Set it up once: then tags stand in place and it is found by itself.";
             var conn = Get<TextMeshProUGUI>(settings, "_connection");
-            conn.text = "Not connected to the edge server at 192.168.1.229:3000.\nHS-7F3A2C1B is not paired yet: Pair headset.";
-            conn.color = ShiroTheme.WarnText;
+            conn.text = "Connected to the edge server at 192.168.100.229:3000.\nHS-7F3A2C1B is paired.";
+            conn.color = ShiroTheme.Text;
+            var autoBtn = Get<ShiroButton>(settings, "_autoBtn");
+            autoBtn.SetText("Automatic: on");
+            autoBtn.SetInteractable(true);
             Shoot(canvas, Path.Combine(dir, "panel_settings.png"), true);
 
             // Choose by hand: three wards, this one shown
@@ -297,7 +300,7 @@ namespace ShiroMR.EditorTools
 
             // Room setup: steps 1 to 3 done, step 4 now (check and save), the longest message
             ShowView(settings, 2);
-            Get<TextMeshProUGUI>(settings, "_setupTitle").text = "Room setup: Ward B - Surgical Recovery";
+            Get<TextMeshProUGUI>(settings, "_setupTitle").text = "Room setup: Ward A - Medical";
             Call(settings, "SetSetupSteps", 3, false);
             Get<ShiroButton>(settings, "_saveBtn").SetInteractable(true);
             Get<ShiroButton>(settings, "_startBtn").SetText("Align again");

@@ -745,6 +745,11 @@ namespace ShiroMR
         /// <summary>
         /// Start High-Speed Real-Time WebSocket Streaming Client (Single Thread-Safe Background Task)
         /// </summary>
+        // KEY LOGIC: the headset's live link to the edge server. A background task (not Unity's
+        // main thread) opens ws://server:3000 with this headset's pairing token, sends a
+        // handshake (headset ID, ward, battery), a heartbeat every few seconds, and receives
+        // JSON messages; it reconnects by itself when the link drops. REST calls (ward plan,
+        // alerts, patient history) use UnityWebRequest with the same token (Authorize).
         private void StartWebSocketConnection()
         {
             if (!IsPaired) return; // the server refuses a headset without its token
@@ -894,6 +899,12 @@ namespace ShiroMR
         /// <summary>
         /// Parse and Route WebSocket Messages to Unity Event Listeners
         /// </summary>
+        // KEY LOGIC: every message from the edge server comes here, on the background thread.
+        // Its "type" decides what it is (IPS_POSITION_UPDATE, TELEMETRY, alerts...). Unity
+        // objects may only be touched on the main thread, so each message is put in
+        // _mainThreadQueue and Update() raises the C# event from there (OnPositionUpdated,
+        // OnTelemetryUpdated, ...). The other scripts subscribe to those events: this is the
+        // observer / publish-subscribe pattern, so the network code knows nothing about the UI.
         private void ProcessIncomingJson(string json)
         {
             try

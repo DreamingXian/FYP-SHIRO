@@ -26,6 +26,14 @@ function isNormal(bpm, spo2, limits) {
   return bpmOk && spo2Ok;
 }
 
+// KEY LOGIC: two tiers, so one noisy reading never raises an alarm:
+//   Tier 1 EXTREME   (heart rate > 160 or < 40): alarm when it stays extreme for 5 s
+//   Tier 2 ABNORMAL  (heart rate > 120 or < 50): alarm when abnormal readings continue for
+//                    30 s, or are confirmed in 2 separate measurement cycles within 10 min
+//                    (the wristband measures every 3 min in its power-saving mode)
+// After an alarm the same wristband is quiet for 12 s. SpO2 is shown but not used for
+// alarms (spo2AlarmsEnabled = false): the sensor is not calibrated (bench test evidence).
+// The clock is passed in (now), so the unit tests can play minutes of readings instantly.
 function createVitalsEvaluator({ config = thresholds.vitals, now = () => Date.now() } = {}) {
   // key (wristband) -> {
   //   extremeSince, extremeLast,          Tier 1 timer

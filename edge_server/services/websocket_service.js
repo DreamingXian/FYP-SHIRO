@@ -211,6 +211,10 @@ function sendCommandError(ws, action, message) {
  * A socket is accepted only from this server's own pages or a non-browser client,
  * and only with a signed-in session (dashboard) or a paired headset's token.
  */
+// KEY LOGIC: checked BEFORE a WebSocket is accepted: the request must come from this
+// server's own pages (no cross-site page can open it) and carry a valid session cookie
+// (dashboard) or headset token. Commands that arrive later are checked again per role
+// (decideCommand): a headset may report what it sees, but not change calibration.
 function verifyClient(info, done) {
   if (isCrossSiteRequest(info.req)) {
     done(false, 403, 'Forbidden');
@@ -315,6 +319,9 @@ function initWebSocketServer(httpServer) {
   return wss;
 }
 
+// KEY LOGIC: push, not polling. Every position, telemetry and alert is sent to all open
+// sockets the moment it happens; each client keeps only what it shows (for example the
+// headset keeps positions of its own ward).
 function broadcastToClients(data) {
   if (!wss) return;
   const payload = JSON.stringify(data);

@@ -21,6 +21,9 @@ internal static class LinkingTests
         run("linking: a person chosen by hand is kept even far from the wristband, until lost", ManualChoice);
         run("linking: the linked person lost: back to the Bluetooth position", LinkedLost);
         run("linking: a height cut off at the top of the view is not held against the person", CutHeightNeutral);
+        run("linking: a shorter person alone at the wristband (1.25 m, patient 1.65 m: sitting) is linked", ShorterAloneLinks);
+        run("linking: a shorter person still loses to one of the recorded height", MatchingBeatsShorter);
+        run("linking: a taller person (1.95 m, patient 1.65 m) is not linked, and the reason says so", TallerNotLinked);
         run("choosing by hand: the ray picks the person it points at; nobody when it misses or points away", PickerAims);
         run("choosing by hand: a person 4 m away is picked, and kept as chosen whatever the wristband says", PickerThenManual);
     }
@@ -180,6 +183,36 @@ internal static class LinkingTests
         var other = Person(2, 0.3f, 1.2f, 1.2f);
         l.Update(L(close, other), true, 0f, 1.2f, WristMotion.Unknown, 1.60f, 0f);
         Equal(1, l.LinkedTrackId, "the one whose top is out of view (could be 1.60 m)");
+    }
+
+    private static void ShorterAloneLinks()
+    {
+        foreach (float h in new[] { 1.20f, 1.25f, 1.30f })
+        {
+            var l = new PersonLinker();
+            l.Update(L(Person(1, 0.3f, 3f, h)), true, 0f, 3f, WristMotion.Unknown, 1.65f, 0f);
+            Equal(LinkState.Linked, l.State, $"{h:0.00} m person");
+            // The wristband says "still" and the person stands still: linked too
+            var l2 = new PersonLinker();
+            l2.Update(L(Person(1, 0.4f, 3f, h, speed: 0.4f)), true, 0f, 3f, WristMotion.Still, 1.65f, 0f);
+            Equal(LinkState.Linked, l2.State, $"{h:0.00} m person, motion not matching");
+        }
+    }
+
+    private static void MatchingBeatsShorter()
+    {
+        var l = new PersonLinker();
+        l.Update(L(Person(1, -0.3f, 3f, 1.25f), Person(2, 0.3f, 3f, 1.63f)), true, 0f, 3f, WristMotion.Unknown, 1.65f, 0f);
+        Equal(LinkState.Linked, l.State, "state");
+        Equal(2, l.LinkedTrackId, "the 1.63 m person");
+    }
+
+    private static void TallerNotLinked()
+    {
+        var l = new PersonLinker();
+        l.Update(L(Person(1, 0.3f, 3f, 1.95f)), true, 0f, 3f, WristMotion.Unknown, 1.65f, 0f);
+        Equal(LinkState.BleOnly, l.State, "state");
+        True(l.Reason.Contains("taller"), $"reason says why ({l.Reason})");
     }
 
     // A ray from a hand at (0, 1.3, 0) towards a point

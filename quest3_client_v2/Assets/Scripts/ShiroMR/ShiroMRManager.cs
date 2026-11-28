@@ -315,6 +315,9 @@ namespace ShiroMR
             }
         }
 
+        // KEY LOGIC: a position update from the edge server moves the patient's tag. The
+        // server sends several sources; TryGetBest picks the most accurate one:
+        // another headset's depth sensor (cm) > the LiDAR (about 0.1 m) > Bluetooth (about 1 m).
         private void HandlePositionUpdated(IpsPositionUpdate pos)
         {
             if (pos == null || string.IsNullOrEmpty(pos.tag_id)) return;
