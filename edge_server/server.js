@@ -22,6 +22,11 @@ const SHUTDOWN_TIMEOUT_MS = 8000;
 let httpServer = null;
 let shuttingDown = false;
 
+// KEY LOGIC: start-up order matters. The database comes first (the server refuses to run
+// without it), then the in-memory caches the hot path needs (anchor positions, enrolled
+// devices, wristband-patient bindings), background timers, then the MQTT broker (port 1883,
+// for the ESP32 anchors), then one HTTP server on port 3000 that serves the dashboard,
+// the REST API and the WebSocket (dashboard and headset) on the same port.
 async function bootstrap() {
   // The banner is console output for the person starting the server, not a log entry
   console.log('\n======================================================');

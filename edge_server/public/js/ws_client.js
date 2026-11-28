@@ -2,6 +2,11 @@
 // WebSocket Client Module: Real-time Data Streaming & Dispatcher
 // =============================================================================
 
+// KEY LOGIC: one WebSocket per dashboard tab, opened to the same host (the session cookie is
+// sent with it). Each message has a "type"; dispatch() calls every page that registered for
+// that type with on(type, callback) (publish-subscribe). If the link drops, it reconnects
+// every 2 s, unless the session has ended; the status pill turns red meanwhile, because
+// alarms cannot arrive while it is disconnected.
 class WSClient {
   constructor() {
     this.ws = null;

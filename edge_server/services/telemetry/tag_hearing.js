@@ -61,6 +61,9 @@ function recordHearing(tagMac, anchorMac, rssi, now = Date.now()) {
  * @returns {{anchorMac: string, rssi: number, heardBy: number} | null}
  *          null when no anchor has heard it within HEARD_WITHIN_MS
  */
+// KEY LOGIC: for a 1 Hz live-vitals request, only ONE anchor may connect to the wristband
+// (two connecting at once would both fail). The anchor chosen is the one that hears it
+// most strongly: the median RSSI of the last few seconds, per anchor.
 function strongestAnchor(tagMac, now = Date.now()) {
   const anchors = heard.get(tagMac);
   if (!anchors) return null;

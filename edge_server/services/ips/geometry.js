@@ -18,6 +18,16 @@ function getMedian(arr) {
  * Anchors with stronger signals (shorter distances) receive exponentially higher weights.
  * This prevents a single obstructed / NLOS anchor from skewing the true position.
  */
+// KEY LOGIC: how three or more distances become one (x, y).
+// Each anchor i says "the wristband is on a circle of radius d_i around (x_i, y_i)":
+//   (x - x_i)^2 + (y - y_i)^2 = d_i^2
+// Subtracting the reference anchor's equation (the strongest one) removes x^2 and y^2,
+// leaving straight-line equations  A * [x, y] = b,  one row per other anchor.
+// With noise they never meet in one point, so we take the least-squares answer of the
+// weighted normal equations  (A^T W A) [x, y] = A^T W b,  solved here as a 2 x 2 system
+// (Cramer's rule). Near anchors get more weight, because RSSI error grows with distance.
+// If the anchors are almost in one line the 2 x 2 matrix is singular (det ~ 0): then
+// the weighted centroid below is used instead.
 function solveWeightedTrilateration(anchorPoints) {
   if (!anchorPoints || anchorPoints.length < 3) return null;
 
@@ -61,6 +71,9 @@ function solveWeightedTrilateration(anchorPoints) {
  * Starting from initial coordinates, takes a few gradient descent steps
  * to minimize true Euclidean distance error strictly within room bounds.
  */
+// KEY LOGIC: the straight-line solution above is a first guess. Eight small gradient-descent
+// steps then reduce the real circle errors (|distance to anchor| - d_i), and the point is
+// clamped 15 cm inside the walls after every step: a patient cannot be outside the room.
 function refinePositionWithinRoom(initialPos, anchorPoints, roomDim) {
   let curX = Math.max(0.15, Math.min(roomDim.length_x - 0.15, initialPos.x));
   let curY = Math.max(0.15, Math.min(roomDim.width_y - 0.15, initialPos.y));

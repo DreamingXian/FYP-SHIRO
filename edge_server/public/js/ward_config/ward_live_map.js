@@ -806,6 +806,10 @@
    * Main Canvas Render Loop
    * Uses velocity-clamped easing: dots smoothly walk at realistic speeds rather than flashing!
    */
+  // KEY LOGIC: the map is an HTML5 canvas redrawn with requestAnimationFrame. Positions
+  // from the WebSocket are only targets; each frame moves a dot towards its target at
+  // walking speed at most (0.75 m/s, or 0.45 m/s when the patient is still), so a dot glides
+  // and never jumps. The loop stops while the page or tab is hidden (no wasted CPU).
   function renderLoop(frameTimestamp) {
     if (!isLiveMapActive) { animationFrameId = null; return; }
     // Another page or a hidden browser tab: stop (resumeLiveMap starts it again)
@@ -870,6 +874,8 @@
     return { scale, offsetX, offsetY, roomX, roomY, cHeight };
   }
 
+  // Ward metres -> canvas pixels: one scale for both axes (no stretching); the canvas y axis
+  // points down, the ward's y axis up, hence cHeight - ...
   function metricToCanvas(mx, my, t) {
     // Room origin (0,0) is at Bottom-Left: Y axis points upward in physical space
     const px = t.offsetX + mx * t.scale;

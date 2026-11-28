@@ -143,6 +143,11 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
 #endif
   }
 
+  // KEY LOGIC: called for every BLE advertisement the anchor hears. It keeps only SHIRO
+  // wristbands (magic bytes "SH" in the manufacturer data, or the wristband's name / service
+  // UUID), records the RSSI (signal strength: used for the position), and decodes the
+  // telemetry packet (shiro::decodePacket). The latest result per wristband is kept in a
+  // small table; loop() publishes it to the edge server over MQTT about 6.7 times a second.
   void handleAdvertisement(BLEAdvertisedDevice& advertisedDevice) {
     bool isWristband = false;
     bool decoded = false;
@@ -279,6 +284,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 // -----------------------------------------------------------------------------
 // BLE GATT Client Command Dispatcher (Relays Edge Server Commands to Tags)
 // -----------------------------------------------------------------------------
+// KEY LOGIC: the only time a BLE connection is made. The edge server picks the anchor that
+// hears this wristband most strongly (tag_hearing.strongestAnchor) and sends it an MQTT
+// command; the anchor stops scanning, connects to the wristband, writes "ACTIVE" to its
+// control characteristic (the wristband then streams vitals at 1 Hz for 120 s), disconnects
+// and resumes scanning.
 void executeActiveModeCommand(const char* targetMacStr) {
   if (!targetMacStr || strlen(targetMacStr) < 11) return;
 

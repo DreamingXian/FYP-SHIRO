@@ -287,6 +287,11 @@ uint8_t currentMotionCode() {
   return shiro::MOTION_STATIONARY;
 }
 
+// KEY LOGIC: the wristband never connects to anything for normal monitoring. It puts its
+// readings (the 15-byte packet of shiro_packet.h: heart rate, SpO2, motion, battery,
+// fall flags) into the "manufacturer data" of its BLE advertisement, which it repeats
+// every 62.5-100 ms. Every anchor in range hears the same broadcast: one anchor measures
+// the signal strength (for the position) and decodes the vitals at the same time.
 void updateBleAdvertisement() {
   if (deviceConnected) {
     // Crucial: Do NOT modify BLE advertisement while a GATT client connection is active
@@ -685,6 +690,9 @@ void loop() {
     }
   }
 
+  // KEY LOGIC: two power modes. Passive (normal): the pulse sensor sleeps and measures once
+  // every 3 minutes. Active (1 Hz streaming for 120 s): after a confirmed fall, or when the
+  // edge server asks for live vitals (the anchor writes "ACTIVE" over a short BLE connection).
   // 2. Power-Saving & Throttling Management (Section 4.2.1)
   // Decoupled from touchState: Active 1Hz mode only triggers on confirmed fall emergency or remote inspection
   bool shouldBeActive = isFallEmergency || (now < activeModeEndTime);

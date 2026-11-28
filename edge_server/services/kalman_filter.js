@@ -3,6 +3,15 @@
 // =============================================================================
 const defaultCalibration = require('../config/calibration_config');
 
+// KEY LOGIC: why a Kalman filter on RSSI.
+// The signal strength (RSSI) of one BLE broadcast jumps by several dB from packet to
+// packet (reflections, the body blocking the signal). Each wristband-anchor pair has its
+// own filter that keeps one number, the best estimate of the "true" RSSI, and how
+// unsure it is (p). Each new reading moves the estimate only part of the way towards
+// the reading: K (0..1) is that share.
+//   R = how noisy one reading is (large R: trust readings less, smoother but slower)
+//   Q = how fast the true value may change (large Q: follows a walking patient sooner)
+// The median filter before it (ips_service.filterRssi) removes single outliers first.
 class KalmanFilter1D {
   constructor(r = defaultCalibration.KALMAN_R, q = defaultCalibration.KALMAN_Q, initialEstimate = -65.0) {
     this.R = r; // Measurement noise covariance
@@ -12,6 +21,7 @@ class KalmanFilter1D {
     this.initialized = false;
   }
 
+  /** One new RSSI reading in, the smoothed RSSI out. */
   update(measurement) {
     if (!this.initialized) {
       this.x = measurement;
@@ -72,6 +82,12 @@ function updateCalibration(newA, newN) {
   return activeCalibration;
 }
 
+// KEY LOGIC: log-distance path-loss model, RSSI (dBm) -> distance (m).
+//   RSSI = A - 10 * n * log10(d)   so   d = 10 ^ ((A - RSSI) / (10 * n))
+//   A = the RSSI measured at 1 m from this anchor (e.g. -59 dBm)
+//   n = how fast the signal fades in this room (2 in free space, about 2-4 indoors)
+// A and n are calibrated per anchor on the dashboard (landmark calibration), because
+// each board and antenna, and each wall position, hears differently.
 function calculateDistance(rssi, A = null, n = null, anchorId = null) {
   let effectiveA = A;
   let effectiveN = n;
